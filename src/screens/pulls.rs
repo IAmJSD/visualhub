@@ -612,24 +612,42 @@ impl Hub {
             .child(widgets::dim("Click any line to leave a review comment on it."))
             .child(widgets::spacer())
             .child(widgets::primary("review-top", "Review changes", review_form(repo, number)));
-        let (files, loading, more) = match self.fetch_list(&spec, cx) {
-            Fetched::Items { items, loading, more } => (items, loading, more),
-            Fetched::Failed(error) => return widgets::col().gap_3().child(header).child(widgets::error_box(&error)).into_any_element(),
+        // Every page, without asking: the tree needs the whole list.
+        let (files, loading) = loop {
+            match self.fetch_list(&spec, cx) {
+                Fetched::Items { more: true, loading: false, .. } => {
+                    let next = self.page(&spec.id) + 1;
+                    self.pages.insert(spec.id.clone(), next);
+                }
+                Fetched::Items { items, loading, .. } => break (items, loading),
+                Fetched::Failed(error) => return widgets::col().gap_3().child(header).child(widgets::error_box(&error)).into_any_element(),
+            }
         };
         if files.is_empty() {
             let body = if loading { widgets::loading() } else { widgets::card().child(widgets::empty("No files changed.")).into_any_element() };
             return widgets::col().gap_3().child(header).child(body).into_any_element();
         }
 
-        // One file at a time on the right, picked from the list on the left.
+        // One file at a time on the right, picked from a tree on the left.
+        let paths: Vec<String> = files.iter().map(|f| f.s("filename")).collect();
+        let order = tree_order(&FileTree::build(&paths, |_| true));
         let key = format!("pr.file:{repo}#{number}");
         let chosen = self.choice(&key, "");
-        let selected = files.iter().position(|f| f.s("filename") == chosen).unwrap_or(0);
+        let selected = paths.iter().position(|f| *f == chosen).or_else(|| order.first().copied()).unwrap_or(0);
         let comments_on = |name: &str| -> Vec<Value> {
             comments.iter().filter(|c| c.s("path") == name && c.has("line")).cloned().collect()
         };
 
         let p = palette();
+        let search_id = format!("pr-file-search:{repo}#{number}");
+        let query = self.field_text(&search_id).trim().to_lowercase();
+        let search = self.input(&search_id, "Filter files…", cx).w_full();
+        let tree = FileTree::build(&paths, |path| query.is_empty() || path.to_lowercase().contains(&query));
+        let fold_prefix = format!("pr.dir:{repo}#{number}:");
+        let mut entries = Vec::new();
+        // While filtering every folder is open, so matches are never hidden.
+        tree_entries(&tree, "", 0, &mut entries, &|dir| query.is_empty() && self.is_open(&format!("{fold_prefix}{dir}")));
+
         let mut picker = div()
             .id("pr-file-list")
             .flex()
@@ -637,72 +655,66 @@ impl Hub {
             .max_h(px(720.0))
             .overflow_y_scroll()
             .py_1();
-        let mut last_dir = None;
-        for (i, file) in files.iter().enumerate() {
-            let name = file.s("filename");
-            let (dir, base) = match name.rsplit_once('/') {
-                Some((dir, base)) => (dir.to_string(), base.to_string()),
-                None => (String::new(), name.clone()),
-            };
-            if last_dir.as_ref() != Some(&dir) {
-                if !dir.is_empty() {
-                    picker = picker.child(
-                        widgets::row()
-                            .gap_1p5()
-                            .px_3()
-                            .pt_2()
-                            .pb_1()
-                            .child(icon("folder", 12.0, p.text_dim))
-                            .child(div().text_size(px(11.0)).text_color(rgb(p.text_dim)).text_ellipsis().overflow_hidden().whitespace_nowrap().child(dir.clone())),
-                    );
+        if entries.is_empty() && !loading {
+            picker = picker.child(div().p_3().child(widgets::faint("No files match.")));
+        }
+        for (n, entry) in entries.into_iter().enumerate() {
+            let indent = px(10.0 + entry.depth as f32 * 14.0);
+            let row = div()
+                .id(("pr-tree", n))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1p5()
+                .h(px(26.0))
+                .pl(indent)
+                .pr_3()
+                .cursor_pointer();
+            picker = picker.child(match entry.kind {
+                Entry::Dir { path, label, open } => {
+                    let fold_key = format!("{fold_prefix}{path}");
+                    row.hover(|s| s.bg(rgb(p.hover)))
+                        .on_click(crate::hub::on(Act::run(move |hub, _, cx| {
+                            // Folders start open; the set holds the closed ones.
+                            if !hub.open.remove(&fold_key) {
+                                hub.open.insert(fold_key.clone());
+                            }
+                            cx.notify();
+                        })))
+                        .child(icon(if open { "chevron-down" } else { "chevron-right" }, 12.0, p.text_dim))
+                        .child(icon("folder", 13.0, p.text_dim))
+                        .child(div().flex_1().min_w_0().text_size(px(12.0)).text_color(rgb(p.text_dim)).text_ellipsis().overflow_hidden().whitespace_nowrap().child(label))
                 }
-                last_dir = Some(dir.clone());
-            }
-            let (mark, color) = match file.s("status").as_str() {
-                "added" => ("plus", widgets::green()),
-                "removed" => ("minus", widgets::red()),
-                "renamed" => ("arrow-right", widgets::yellow()),
-                _ => ("dot", widgets::yellow()),
-            };
-            let noted = comments_on(&name).len();
-            picker = picker.child(
-                div()
-                    .id(("pr-file", i))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .h(px(28.0))
-                    .px_3()
-                    .when(!dir.is_empty(), |d| d.pl_6())
-                    .cursor_pointer()
-                    .when(i == selected, |d| d.bg(rgb(p.selection_bg)))
-                    .when(i != selected, |d| d.hover(|s| s.bg(rgb(p.hover))))
-                    .tooltip(crate::ui::tip(name.clone(), None))
-                    .on_click(crate::hub::on(Act::choose(key.clone(), name.clone())))
-                    .child(icon(mark, 12.0, color))
-                    .child(div().flex_1().min_w_0().text_size(px(12.0)).text_ellipsis().overflow_hidden().whitespace_nowrap().child(base))
-                    .when(noted > 0, |d| d.child(widgets::row().gap_0p5().child(icon("comment", 11.0, p.text_dim)).child(widgets::faint(noted.to_string()))))
-                    .child(div().text_size(px(11.0)).text_color(rgb(widgets::green())).child(format!("+{}", file.i("additions"))))
-                    .child(div().text_size(px(11.0)).text_color(rgb(widgets::red())).child(format!("−{}", file.i("deletions")))),
-            );
+                Entry::File { index, label } => {
+                    let file = &files[index];
+                    let name = paths[index].clone();
+                    let (mark, color) = match file.s("status").as_str() {
+                        "added" => ("plus", widgets::green()),
+                        "removed" => ("minus", widgets::red()),
+                        "renamed" => ("arrow-right", widgets::yellow()),
+                        _ => ("dot", widgets::yellow()),
+                    };
+                    let noted = comments_on(&name).len();
+                    row.when(index == selected, |d| d.bg(rgb(p.selection_bg)))
+                        .when(index != selected, |d| d.hover(|s| s.bg(rgb(p.hover))))
+                        .tooltip(crate::ui::tip(name.clone(), None))
+                        .on_click(crate::hub::on(Act::choose(key.clone(), name)))
+                        // Lines up with a folder's chevron.
+                        .child(div().w(px(12.0)).flex_none())
+                        .child(icon(mark, 12.0, color))
+                        .child(div().flex_1().min_w_0().text_size(px(12.0)).text_ellipsis().overflow_hidden().whitespace_nowrap().child(label))
+                        .when(noted > 0, |d| d.child(widgets::row().gap_0p5().child(icon("comment", 11.0, p.text_dim)).child(widgets::faint(noted.to_string()))))
+                        .child(div().text_size(px(11.0)).text_color(rgb(widgets::green())).child(format!("+{}", file.i("additions"))))
+                        .child(div().text_size(px(11.0)).text_color(rgb(widgets::red())).child(format!("−{}", file.i("deletions"))))
+                }
+            });
         }
         if loading {
             picker = picker.child(widgets::loading());
-        } else if more {
-            let id = spec.id.clone();
-            picker = picker.child(div().p_2().child(widgets::btn(
-                "files-more",
-                "Load more files",
-                Act::run(move |hub, _, cx| {
-                    let next = hub.page(&id) + 1;
-                    hub.pages.insert(id.clone(), next);
-                    cx.notify();
-                }),
-            )));
         }
+        let position = order.iter().position(|&i| i == selected).unwrap_or(0);
         let picker = widgets::card()
-            .w(px(280.0))
+            .w(px(300.0))
             .flex_none()
             .child(
                 widgets::row()
@@ -712,8 +724,9 @@ impl Hub {
                     .border_color(rgb(p.divider))
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(format!("{} files", pr.i("changed_files"))))
                     .child(widgets::spacer())
-                    .child(widgets::faint(format!("{} of {}", selected + 1, files.len()))),
+                    .child(widgets::faint(format!("{} of {}", position + 1, files.len()))),
             )
+            .child(div().p_2().border_b_1().border_color(rgb(p.divider)).child(search))
             .child(picker);
 
         let file = &files[selected];
@@ -723,9 +736,9 @@ impl Hub {
             widgets::ibtn(id, icon_name, label, act).disabled(to.is_none())
         };
         let nav = widgets::row()
-            .child(step("file-prev", "chevron-left", "Previous file", selected.checked_sub(1).and_then(|i| files.get(i))))
+            .child(step("file-prev", "chevron-left", "Previous file", position.checked_sub(1).and_then(|n| order.get(n)).map(|&i| &files[i])))
             .child(widgets::spacer())
-            .child(step("file-next", "chevron-right", "Next file", files.get(selected + 1)));
+            .child(step("file-next", "chevron-right", "Next file", order.get(position + 1).map(|&i| &files[i])));
         let diff = self.diff_file(&format!("prf{number}-{selected}"), file, Some(&target), &comments_on(&name), cx);
 
         widgets::col()
@@ -945,4 +958,88 @@ impl Hub {
             ))
             .into_any_element()
     }
+}
+
+/// Changed files as folders and files, for the PR file picker.
+#[derive(Default)]
+struct FileTree {
+    dirs: std::collections::BTreeMap<String, FileTree>,
+    /// (name, index into the file list)
+    files: Vec<(String, usize)>,
+}
+
+impl FileTree {
+    /// The tree of the paths `keep` accepts.
+    fn build(paths: &[String], keep: impl Fn(&str) -> bool) -> FileTree {
+        let mut root = FileTree::default();
+        for (i, path) in paths.iter().enumerate() {
+            if !keep(path) {
+                continue;
+            }
+            let mut node = &mut root;
+            let mut parts: Vec<&str> = path.split('/').collect();
+            let name = parts.pop().unwrap_or_default();
+            for part in parts {
+                node = node.dirs.entry(part.to_string()).or_default();
+            }
+            node.files.push((name.to_string(), i));
+        }
+        root.sort();
+        root
+    }
+
+    fn sort(&mut self) {
+        self.files.sort_by(|a, b| a.0.cmp(&b.0));
+        self.dirs.values_mut().for_each(FileTree::sort);
+    }
+
+    /// A folder with nothing but one folder in it reads as one row:
+    /// `app/packages/status-page-edge`.
+    fn squash<'a>(mut label: String, mut node: &'a FileTree) -> (String, &'a FileTree) {
+        while node.files.is_empty() && node.dirs.len() == 1 {
+            let (name, only) = node.dirs.iter().next().unwrap();
+            label = format!("{label}/{name}");
+            node = only;
+        }
+        (label, node)
+    }
+}
+
+enum Entry {
+    Dir { path: String, label: String, open: bool },
+    File { index: usize, label: String },
+}
+
+struct TreeEntry {
+    depth: usize,
+    kind: Entry,
+}
+
+/// The rows to draw, folders first; `closed` says which folders are shut.
+fn tree_entries(node: &FileTree, prefix: &str, depth: usize, out: &mut Vec<TreeEntry>, closed: &dyn Fn(&str) -> bool) {
+    for (name, child) in &node.dirs {
+        let (label, child) = FileTree::squash(name.clone(), child);
+        let path = if prefix.is_empty() { label.clone() } else { format!("{prefix}/{label}") };
+        let open = !closed(&path);
+        out.push(TreeEntry { depth, kind: Entry::Dir { path: path.clone(), label, open } });
+        if open {
+            tree_entries(child, &path, depth + 1, out, closed);
+        }
+    }
+    for (name, index) in &node.files {
+        out.push(TreeEntry { depth, kind: Entry::File { index: *index, label: name.clone() } });
+    }
+}
+
+/// Every file in the order the tree shows them, for previous/next.
+fn tree_order(tree: &FileTree) -> Vec<usize> {
+    let mut entries = Vec::new();
+    tree_entries(tree, "", 0, &mut entries, &|_| false);
+    entries
+        .into_iter()
+        .filter_map(|e| match e.kind {
+            Entry::File { index, .. } => Some(index),
+            Entry::Dir { .. } => None,
+        })
+        .collect()
 }

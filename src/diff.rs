@@ -100,8 +100,6 @@ pub struct ReviewTarget {
     pub commit: String,
 }
 
-const CAP: usize = 400;
-
 fn colors(kind: Kind) -> (Option<u32>, Option<u32>) {
     // (row fill, gutter fill)
     let light = is_light();
@@ -130,7 +128,6 @@ impl Hub {
         let p = palette();
         let name = file.s("filename");
         let collapsed_key = format!("{id}:collapsed");
-        let all_key = format!("{id}:all");
         let collapsed = self.is_open(&collapsed_key);
         let status = file.s("status");
         let status_color = match status.as_str() {
@@ -196,20 +193,14 @@ impl Hub {
                 .into_any_element();
         }
         let lines = parse(&patch);
-        let show_all = self.is_open(&all_key);
-        let total = lines.len();
         let mut body = div()
             .id(ElementId::Name(format!("{id}-body").into()))
             .flex()
             .flex_col()
             .font_family(widgets::MONO)
             .text_size(px(12.0))
-            .line_height(px(20.0))
-            .overflow_x_scroll();
+            .line_height(px(20.0));
         for (i, line) in lines.iter().enumerate() {
-            if i >= CAP && !show_all {
-                break;
-            }
             let (fill, gutter) = colors(line.kind);
             let number = |n: Option<u32>| {
                 div()
@@ -230,14 +221,16 @@ impl Hub {
                 .id(ElementId::Name(format!("{id}-l{i}").into()))
                 .flex()
                 .flex_row()
-                .min_w_full()
+                .w_full()
                 .when_some(fill, |d, f| d.bg(rgb(f)));
             if line.kind == Kind::Hunk {
                 row = row.child(
                     div()
+                        .flex_1()
+                        .min_w_0()
                         .pl(px(104.0))
+                        .pr_4()
                         .text_color(rgb(p.text_dim))
-                        .whitespace_nowrap()
                         .child(line.text.clone()),
                 );
             } else {
@@ -245,9 +238,12 @@ impl Hub {
                     .child(number(line.old))
                     .child(number(line.new))
                     .child(div().w(px(16.0)).flex_none().pl_1().child(sign))
+                    // Long lines wrap rather than scroll; the gutters
+                    // stretch down beside them.
                     .child(
                         div()
-                            .whitespace_nowrap()
+                            .flex_1()
+                            .min_w_0()
                             .pr_4()
                             .child(line.text.replace('\t', "    ")),
                     );
@@ -289,18 +285,6 @@ impl Hub {
             }
         }
         card = card.child(body);
-        if total > CAP && !show_all {
-            card = card.child(
-                div().p_2().flex().justify_center().child(widgets::btn(
-                    ElementId::Name(format!("{id}-all").into()),
-                    format!("Show all {total} lines"),
-                    Act::run(move |hub, _, cx| {
-                        hub.open.insert(all_key.clone());
-                        cx.notify();
-                    }),
-                )),
-            );
-        }
         card.into_any_element()
     }
 
