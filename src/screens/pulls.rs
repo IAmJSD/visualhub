@@ -574,9 +574,46 @@ impl Hub {
                 .bg(rgb(p.deep_bg))
                 .border_b_1()
                 .border_color(rgb(p.divider));
+            // One line each: mark, name, where it ran and how long, and
+            // the links.
             for (i, run) in runs.iter().enumerate() {
+                let (mark, color) = status_icon(&run.s("status"), &run.s("conclusion"));
+                let took = time::span(&run.s("started_at"), &run.s("completed_at"));
+                let summary = match (run.s("conclusion").as_str(), took.is_empty()) {
+                    ("", _) => run.s("status").replace('_', " "),
+                    (c, true) => c.to_string(),
+                    (c, false) => format!("{c} in {took}"),
+                };
                 let row = check_row(repo, run);
-                list = list.child(self.render_row(&format!("merge-check-{i}"), row, cx));
+                let rerun = row.actions.into_iter().find(|a| a.label == "Re-run");
+                list = list.child(
+                    div()
+                        .id(("merge-check", i))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .h(px(32.0))
+                        .px_4()
+                        .text_size(px(12.0))
+                        .hover(|s| s.bg(rgb(p.hover)))
+                        .child(icon(mark, 14.0, color))
+                        .child(div().flex_none().font_weight(gpui::FontWeight::SEMIBOLD).child(run.s("name")))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_color(rgb(p.text_dim))
+                                .text_ellipsis()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .child(format!("{}  ·  {summary}", run.s("app.name"))),
+                        )
+                        .when_some(rerun, |d, a| {
+                            d.child(crate::ui::Link::new(("merge-check-rerun", i), "Re-run").on_click(crate::hub::on(a.act)))
+                        })
+                        .child(crate::ui::Link::new(("merge-check-details", i), "Details").on_click(crate::hub::on(row.open))),
+                );
             }
             card = card.child(list);
         }
