@@ -14,7 +14,66 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, AnyElement, InteractiveElement as _, StatefulInteractiveElement as _, Context, ElementId, FontWeight, IntoElement as _, ParentElement as _, Styled as _};
 use crate::ui::{icon, palette, DropdownButton};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
+
+/// A commit with its authors and the length of its history.
+const COMMIT_HEAD: &str = "query($o: String!, $n: String!, $r: String!) { repository(owner: $o, name: $n) { object(expression: $r) { ... on Commit { oid messageHeadline committedDate history(first: 1) { totalCount } authors(first: 10) { nodes { name avatarUrl user { login avatarUrl } } } } } } }";
+
+/// Commit authors (GraphQL `authors.nodes`) with repeats dropped.
+pub fn distinct_authors(authors: &[Value]) -> Vec<Value> {
+    let mut seen = Vec::new();
+    authors
+        .iter()
+        .filter(|a| {
+            let key = if a.has("user.login") { a.s("user.login") } else { a.s("name") };
+            !seen.contains(&key) && {
+                seen.push(key);
+                true
+            }
+        })
+        .cloned()
+        .collect()
+}
+
+/// "a and b" or "a, b and c", each name with an account opening its
+/// profile. Clicks stop here, so a name inside a clickable row opens the
+/// person rather than the row.
+pub fn author_names(id: &str, authors: &[Value]) -> gpui::Div {
+    let mut names = widgets::row().gap_1();
+    for (i, a) in authors.iter().enumerate() {
+        if i > 0 {
+            names = names.child(widgets::dim(if i + 1 == authors.len() { "and" } else { "," }));
+        }
+        let login = a.s("user.login");
+        names = names.child(if login.is_empty() {
+            div().text_color(rgb(palette().text)).child(a.s("name")).into_any_element()
+        } else {
+            let go = Act::Go(Route::User { login: login.clone() });
+            crate::ui::Link::new(ElementId::Name(format!("{id}-author-{i}").into()), login)
+                .text_color(rgb(palette().text))
+                .on_click(move |_e, window, cx| {
+                    cx.stop_propagation();
+                    crate::hub::perform(go.clone(), window, cx);
+                })
+                .into_any_element()
+        });
+    }
+    names
+}
+
+/// 12345 as "12,345".
+fn thousands(n: i64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
 
 /// A form that makes a branch from another branch, tag or commit.
 pub fn new_branch_form(repo: &str, name: &str) -> Act {
@@ -433,14 +492,14 @@ impl Hub {
         let picker = self.ref_picker(repo, &git_ref, cx);
         let branches = self.fetch(&format!("/repos/{repo}/branches?per_page=100"), cx).ready().map(|v| v.list("").len()).unwrap_or(0);
         let tags = self.fetch(&format!("/repos/{repo}/tags?per_page=100"), cx).ready().map(|v| v.list("").len()).unwrap_or(0);
-        let latest = self.fetch(&format!("/repos/{repo}/commits?sha={}&per_page=1", enc(&git_ref)), cx);
         let mut latest_row = widgets::row().px_4().py_2().bg(rgb(palette().deep_bg)).border_b_1().border_color(rgb(palette().divider));
-        if let Some(c) = latest.ready().and_then(|v| v.list("").first().cloned()) {
-            let avatar = self.avatar(&c.s("author.avatar_url"), 20.0, cx);
-            let sha = c.s("sha");
+        let head = self.commit_head(repo, &git_ref, cx);
+        let total = head.as_ref().map(|c| c.i("history.totalCount")).unwrap_or(0);
+        if let Some(c) = head {
+            let sha = c.s("oid");
+            let authors = self.commit_authors("latest", c.list("authors.nodes"), cx);
             latest_row = latest_row
-                .child(avatar)
-                .child(widgets::h3(if c.has("author.login") { c.s("author.login") } else { c.s("commit.author.name") }))
+                .child(authors)
                 .child(
                     div()
                         .flex_1()
@@ -449,10 +508,10 @@ impl Hub {
                         .whitespace_nowrap()
                         .text_ellipsis()
                         .text_color(rgb(palette().text_dim))
-                        .child(json::first_line(&c.s("commit.message"))),
+                        .child(c.s("messageHeadline")),
                 )
                 .child(widgets::btn("latest-sha", sha.chars().take(7).collect::<String>(), Act::Go(Route::Commit { repo: repo.to_string(), sha })).h(px(22.0)))
-                .child(widgets::dim(time::ago(&c.s("commit.author.date"))));
+                .child(widgets::dim(time::ago(&c.s("committedDate"))));
         }
         let repo_s = repo.to_string();
         let main = widgets::col()
@@ -465,7 +524,12 @@ impl Hub {
                     .child(widgets::ibtn("branches-count", "branch", format!("{branches} branches"), Act::Go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Branches })))
                     .child(widgets::ibtn("tags-count", "tag", format!("{tags} tags"), Act::Go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Tags })))
                     .child(widgets::spacer())
-                    .child(widgets::ibtn("history", "history", "History", Act::Go(Route::Repo { repo: repo_s, tab: RepoTab::Commits }))),
+                    .child(widgets::ibtn(
+                        "history",
+                        "history",
+                        if total > 0 { format!("{} commits", thousands(total)) } else { "History".to_string() },
+                        Act::Go(Route::Repo { repo: repo_s, tab: RepoTab::Commits }),
+                    )),
             )
             .child(widgets::card().child(latest_row).child(listing))
             .child(readme);
@@ -485,6 +549,8 @@ impl Hub {
         let listing = ready!(self.fetch(&api, cx));
         let mut entries: Vec<Value> = listing.list("").to_vec();
         entries.sort_by_key(|e| (e.s("type") != "dir", e.s("name").to_lowercase()));
+        let paths: Vec<String> = entries.iter().map(|e| e.s("path")).collect();
+        let last = self.last_commits(repo, git_ref, &paths, cx);
         let p = palette();
         let mut col = div().flex().flex_col();
         if !path.is_empty() {
@@ -521,13 +587,44 @@ impl Hub {
                     file: kind != "dir",
                 }),
             };
+            let last = last.get(&e.s("path"));
+            let message = last.map(|c| {
+                let sha = c.s("oid");
+                let go = Act::Go(Route::Commit { repo: repo.to_string(), sha });
+                div()
+                    .id(ElementId::Name(format!("entry-commit-{i}").into()))
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_color(rgb(p.text_dim))
+                    .hover(|s| s.text_color(rgb(p.accent_hover)))
+                    .child(c.s("messageHeadline"))
+                    .on_click(move |_e, window, cx| {
+                        cx.stop_propagation();
+                        crate::hub::perform(go.clone(), window, cx);
+                    })
+            });
             col = col.child(
                 widgets::list_row(ElementId::Name(format!("entry-{i}").into()), act)
                     .py_1()
                     .items_center()
                     .child(icon(icon_name, 16.0, color))
-                    .child(div().flex_1().child(e.s("name")))
-                    .when(kind == "file", |d| d.child(widgets::faint(json::bytes(e.i("size"))))),
+                    .child(
+                        div()
+                            .w(px(240.0))
+                            .flex_none()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(e.s("name")),
+                    )
+                    .child(match message {
+                        Some(m) => m.into_any_element(),
+                        None => div().flex_1().into_any_element(),
+                    })
+                    .when_some(last, |d, c| d.child(widgets::faint(time::ago(&c.s("committedDate"))))),
             );
         }
         col.into_any_element()
@@ -551,6 +648,65 @@ impl Hub {
             .child(widgets::card_header().child(icon("book", 16.0, palette().text_dim)).child(widgets::h3("README")))
             .child(div().p_6().child(body))
             .into_any_element()
+    }
+
+    /// The commit `rev` points at, with its authors (co-authors resolved
+    /// to accounts) and how many commits lead up to it.
+    pub fn commit_head(&mut self, repo: &str, rev: &str, cx: &mut Context<Self>) -> Option<Value> {
+        let (owner, name) = repo.split_once('/')?;
+        let vars = json!({ "o": owner, "n": name, "r": rev });
+        let data = self.fetch_gql(&format!("/repos/{repo}/commits"), COMMIT_HEAD, vars, cx);
+        data.ready().map(|v| v.at("repository.object").clone()).filter(|c| c.has("oid"))
+    }
+
+    /// The last commit to touch each of `paths` at `git_ref`, by path.
+    /// Asked for in batches so a big directory doesn't make one huge query.
+    fn last_commits(&mut self, repo: &str, git_ref: &str, paths: &[String], cx: &mut Context<Self>) -> HashMap<String, Value> {
+        let mut found = HashMap::new();
+        let Some((owner, name)) = repo.split_once('/') else {
+            return found;
+        };
+        for chunk in paths.chunks(50) {
+            let fields: String = chunk
+                .iter()
+                .enumerate()
+                .map(|(i, path)| format!("e{i}: history(first: 1, path: {}) {{ nodes {{ oid messageHeadline committedDate }} }} ", Value::String(path.clone())))
+                .collect();
+            let query = format!("query($o: String!, $n: String!, $r: String!) {{ repository(owner: $o, name: $n) {{ object(expression: $r) {{ ... on Commit {{ {fields}}} }} }} }}");
+            let vars = json!({ "o": owner, "n": name, "r": git_ref });
+            if let Some(data) = self.fetch_gql(&format!("/repos/{repo}/commits"), &query, vars, cx).ready() {
+                let commit = data.at("repository.object");
+                for (i, path) in chunk.iter().enumerate() {
+                    if let Some(c) = commit.list(&format!("e{i}.nodes")).first() {
+                        found.insert(path.clone(), c.clone());
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    /// A commit's authors as overlapping avatars and "a and b", each
+    /// opening that person's profile.
+    pub fn commit_authors(&mut self, id: &str, authors: &[Value], cx: &mut Context<Self>) -> AnyElement {
+        let authors = distinct_authors(authors);
+        widgets::row()
+            .gap_2()
+            .flex_none()
+            .child(self.author_avatars(&authors, cx))
+            .child(author_names(id, &authors).font_weight(FontWeight::SEMIBOLD))
+            .into_any_element()
+    }
+
+    /// Authors' avatars, overlapping.
+    pub fn author_avatars(&mut self, authors: &[Value], cx: &mut Context<Self>) -> AnyElement {
+        let mut avatars = div().flex().flex_row().flex_none();
+        for (i, a) in authors.iter().enumerate() {
+            let url = if a.has("user.avatarUrl") { a.s("user.avatarUrl") } else { a.s("avatarUrl") };
+            let avatar = self.avatar(&url, 20.0, cx);
+            avatars = avatars.child(div().when(i > 0, |d| d.ml(px(-6.0))).child(avatar));
+        }
+        avatars.into_any_element()
     }
 
     fn repo_about(&mut self, repo: &str, info: &Value, cx: &mut Context<Self>) -> AnyElement {

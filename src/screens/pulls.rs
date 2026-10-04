@@ -687,8 +687,9 @@ impl Hub {
             base
         );
         let mut col = widgets::col().gap_3();
-        for (i, c) in cmp.list("commits").iter().enumerate() {
-            let row = commit_row(repo, c);
+        let mut rows: Vec<Row> = cmp.list("commits").iter().map(|c| commit_row(repo, c)).collect();
+        self.resolve_authors(&mut rows, cx);
+        for (i, row) in rows.into_iter().enumerate() {
             col = col.child(self.render_row(&format!("cmp-c{i}"), row, cx));
         }
         let commits = widgets::card().child(col);
@@ -720,6 +721,7 @@ pub fn commit_row(repo: &str, c: &Value) -> Row {
     let mut row = Row::new(first_line(&c.s("commit.message")))
         .avatar(c.s("author.avatar_url"))
         .meta(format!("{who} committed {}", time::ago(&c.s("commit.author.date"))))
+        .commit(repo, sha.clone(), format!("committed {}", time::ago(&c.s("commit.author.date"))))
         .right(sha.chars().take(7).collect::<String>())
         .open(Act::Go(Route::Commit {
             repo: repo.to_string(),
@@ -749,7 +751,17 @@ impl Hub {
         let p = palette();
         let message = c.s("commit.message");
         let (headline, rest) = message.split_once('\n').unwrap_or((&message, ""));
-        let avatar = self.avatar(&c.s("author.avatar_url"), 24.0, cx);
+        // GraphQL resolves co-authors to accounts; until it answers (or if
+        // it can't), show the REST author.
+        let authors = match self.commit_head(repo, sha, cx) {
+            Some(head) => self.commit_authors("commit", head.list("authors.nodes"), cx),
+            None => {
+                let login = c.s("author.login");
+                let name = if login.is_empty() { c.s("commit.author.name") } else { login.clone() };
+                let author = json!([{ "name": name, "avatarUrl": c.s("author.avatar_url"), "user": if login.is_empty() { Value::Null } else { json!({ "login": login }) } }]);
+                self.commit_authors("commit", author.list(""), cx)
+            }
+        };
         let mut files = widgets::col().gap_3();
         for (i, f) in c.list("files").to_vec().iter().enumerate() {
             files = files.child(self.diff_file(&format!("cf-{i}"), f, None, &[], cx));
@@ -795,8 +807,7 @@ impl Hub {
                             .bg(rgb(p.deep_bg))
                             .border_t_1()
                             .border_color(rgb(p.divider))
-                            .child(avatar)
-                            .child(widgets::h3(if c.has("author.login") { c.s("author.login") } else { c.s("commit.author.name") }))
+                            .child(authors)
                             .child(widgets::dim(format!("committed {}", time::ago(&c.s("commit.author.date")))))
                             .when(c.b("commit.verification.verified"), |d| d.child(widgets::tag("Verified", widgets::green())))
                             .child(widgets::spacer())

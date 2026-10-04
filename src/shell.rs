@@ -223,8 +223,12 @@ impl Hub {
                 hub.jump(&text, cx);
             }),
         );
+        let placeholder = match &route {
+            Route::User { login } | Route::Org { login } => format!("Search in @{login}, or jump to owner/repo, #123, @user…   ( / )"),
+            _ => "Jump to owner/repo, #123, @user, or search…   ( / )".to_string(),
+        };
         let jump = self
-            .input("jump", "Jump to owner/repo, #123, @user, or search…   ( / )", cx)
+            .input("jump", &placeholder, cx)
             .w(px(380.0));
         let me = self.me.clone();
         let avatar = self.avatar(&me.s("avatar_url"), 22.0, cx);
@@ -444,8 +448,13 @@ impl Hub {
                 return;
             }
         }
-        self.set_field("search.q", text);
-        self.choices.insert("search.applied".into(), text.to_string());
+        // On someone's profile, a search looks only at their things.
+        let text = match &self.route {
+            Route::User { login } | Route::Org { login } if !text.contains("user:") && !text.contains("org:") => format!("user:{login} {text}"),
+            _ => text.to_string(),
+        };
+        self.set_field("search.q", &text);
+        self.choices.insert("search.applied".into(), text);
         self.go(Route::Search, cx);
         cx.notify();
     }

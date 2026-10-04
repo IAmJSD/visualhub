@@ -8,7 +8,7 @@
 //! and the row actions.
 
 use crate::hub::{on, with_query, Act, Hub, Load, MenuEntry};
-use crate::json;
+use crate::json::{self, Json as _};
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -42,6 +42,18 @@ pub struct Row {
     pub actions: Vec<RowAct>,
     /// Inline buttons rather than a ⋯ menu, for one or two actions.
     pub inline: bool,
+    /// A commit whose authors (co-authors too) should lead the row.
+    pub commit: Option<CommitRef>,
+    /// Those authors, once GraphQL has resolved them.
+    pub authors: Vec<Value>,
+}
+
+/// A commit a row is about, and what the meta line says after its
+/// authors' names ("committed 2 hours ago").
+pub struct CommitRef {
+    pub repo: String,
+    pub sha: String,
+    pub after: String,
 }
 
 impl Row {
@@ -59,6 +71,8 @@ impl Row {
             open: Act::None,
             actions: Vec::new(),
             inline: false,
+            commit: None,
+            authors: Vec::new(),
         }
     }
 
@@ -127,6 +141,17 @@ impl Row {
             label: label.into(),
             act,
             danger: true,
+        });
+        self
+    }
+
+    /// Lead with the authors of `sha` in `repo` once they're known, then
+    /// `after`; `meta` is what shows until then.
+    pub fn commit(mut self, repo: impl Into<String>, sha: impl Into<String>, after: impl Into<String>) -> Self {
+        self.commit = Some(CommitRef {
+            repo: repo.into(),
+            sha: sha.into(),
+            after: after.into(),
         });
         self
     }
@@ -254,8 +279,9 @@ impl Hub {
         if items.is_empty() && !loading {
             return card.child(widgets::empty(spec.empty.clone())).into_any_element();
         }
-        for (i, item) in items.iter().enumerate() {
-            let row = (spec.row)(item);
+        let mut rows: Vec<Row> = items.iter().map(|item| (spec.row)(item)).collect();
+        self.resolve_authors(&mut rows, cx);
+        for (i, row) in rows.into_iter().enumerate() {
             card = card.child(self.render_row(&format!("{}#{i}", spec.id), row, cx));
         }
         if loading {
@@ -277,9 +303,57 @@ impl Hub {
         card.into_any_element()
     }
 
+    /// Fill in the authors of rows about commits, asking GraphQL for each
+    /// repository's commits in batches. The batches follow list order, so
+    /// loading another page reuses the batches already answered.
+    pub fn resolve_authors(&mut self, rows: &mut [Row], cx: &mut Context<Self>) {
+        let mut by_repo: Vec<(String, Vec<usize>)> = Vec::new();
+        for (i, row) in rows.iter().enumerate() {
+            let Some(commit) = &row.commit else { continue };
+            match by_repo.iter_mut().find(|(repo, _)| *repo == commit.repo) {
+                Some((_, list)) => list.push(i),
+                None => by_repo.push((commit.repo.clone(), vec![i])),
+            }
+        }
+        for (repo, indices) in by_repo {
+            let Some((owner, name)) = repo.split_once('/') else { continue };
+            for chunk in indices.chunks(PER_PAGE) {
+                let fields: String = chunk
+                    .iter()
+                    .enumerate()
+                    .map(|(n, &i)| {
+                        let sha = Value::String(rows[i].commit.as_ref().map(|c| c.sha.clone()).unwrap_or_default());
+                        format!("c{n}: object(oid: {sha}) {{ ... on Commit {{ authors(first: 10) {{ nodes {{ name avatarUrl user {{ login avatarUrl }} }} }} }} }} ")
+                    })
+                    .collect();
+                let query = format!("query($o: String!, $n: String!) {{ repository(owner: $o, name: $n) {{ {fields}}} }}");
+                let vars = serde_json::json!({ "o": owner, "n": name });
+                let Some(data) = self.fetch_gql(&format!("/repos/{repo}/commits"), &query, vars, cx).ready().cloned() else { continue };
+                for (n, &i) in chunk.iter().enumerate() {
+                    rows[i].authors = crate::screens::repo::distinct_authors(data.list(&format!("repository.c{n}.authors.nodes")));
+                }
+            }
+        }
+    }
+
     pub fn render_row(&mut self, id: &str, row: Row, cx: &mut Context<Self>) -> AnyElement {
         let p = palette();
-        let leading: Option<AnyElement> = if let Some(url) = &row.avatar {
+        let (leading, meta): (Option<AnyElement>, Option<AnyElement>) = match &row.commit {
+            Some(commit) if !row.authors.is_empty() => (
+                Some(self.author_avatars(&row.authors, cx)),
+                Some(
+                    crate::screens::repo::author_names(id, &row.authors)
+                        .text_size(px(12.0))
+                        .child(widgets::dim(commit.after.clone()))
+                        .into_any_element(),
+                ),
+            ),
+            _ => (None, None),
+        };
+        let meta = meta.or_else(|| (!row.meta.is_empty()).then(|| widgets::dim(row.meta.clone()).into_any_element()));
+        let leading: Option<AnyElement> = if leading.is_some() {
+            leading
+        } else if let Some(url) = &row.avatar {
             Some(self.avatar(url, 20.0, cx))
         } else {
             row.icon.map(|(name, color)| {
@@ -318,7 +392,7 @@ impl Hub {
             .min_w_0()
             .gap(px(2.0))
             .child(title)
-            .when(!row.meta.is_empty(), |d| d.child(widgets::dim(row.meta.clone())))
+            .children(meta)
             .when(!row.body.is_empty(), |d| {
                 d.child(
                     div()

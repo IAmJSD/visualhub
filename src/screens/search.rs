@@ -74,7 +74,11 @@ impl Hub {
                 }),
                 "commits" => ListSpec::new(format!("/search/commits?q={q}{sort_q}"), |c| {
                     let repo = c.s("repository.full_name");
-                    commit_row(&repo, c).meta(format!("{repo}  ·  {}", first_line(&c.s("commit.author.name"))))
+                    let mut row = commit_row(&repo, c).meta(format!("{repo}  ·  {}", first_line(&c.s("commit.author.name"))));
+                    if let Some(commit) = &mut row.commit {
+                        commit.after = format!("committed to {repo}");
+                    }
+                    row
                 }),
                 "topics" => ListSpec::new(format!("/search/topics?q={q}"), |t| {
                     let name = t.s("name");

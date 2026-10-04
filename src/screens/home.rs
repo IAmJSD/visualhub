@@ -27,10 +27,16 @@ fn event_row(e: &Value) -> Row {
         "PushEvent" => {
             let branch = p.s("ref").trim_start_matches("refs/heads/").to_string();
             let commits: Vec<String> = p.list("commits").iter().map(|c| format!("• {}", json::first_line(&c.s("message")))).collect();
+            // The events API stopped sending commit counts, so only say
+            // how many when it does.
             let n = if p.i("size") > 0 { p.i("size") } else { p.i("distinct_size") };
             (
                 "commit",
-                format!("{actor} pushed {} to {branch} in {repo}", if n == 1 { "1 commit".to_string() } else { format!("{n} commits") }),
+                match n {
+                    0 => format!("{actor} pushed to {branch}"),
+                    1 => format!("{actor} pushed 1 commit to {branch}"),
+                    n => format!("{actor} pushed {n} commits to {branch}"),
+                },
                 commits.join("\n"),
                 Act::Go(Route::Repo { repo: repo.clone(), tab: RepoTab::Commits }),
             )
@@ -40,21 +46,21 @@ fn event_row(e: &Value) -> Row {
             if p.s("ref_type") == "repository" {
                 format!("{actor} created repository {repo}")
             } else {
-                format!("{actor} created {} {} in {repo}", p.s("ref_type"), p.s("ref"))
+                format!("{actor} created {} {}", p.s("ref_type"), p.s("ref"))
             },
             p.s("description"),
             repo_act,
         ),
-        "DeleteEvent" => ("trash", format!("{actor} deleted {} {} in {repo}", p.s("ref_type"), p.s("ref")), String::new(), repo_act),
+        "DeleteEvent" => ("trash", format!("{actor} deleted {} {}", p.s("ref_type"), p.s("ref")), String::new(), repo_act),
         "IssuesEvent" => (
             "issue",
-            format!("{actor} {} issue #{} in {repo}", p.s("action"), p.i("issue.number")),
+            format!("{actor} {} issue #{}", p.s("action"), p.i("issue.number")),
             p.s("issue.title"),
             Act::Go(Route::Issue { repo: repo.clone(), number: p.i("issue.number") as u64 }),
         ),
         "IssueCommentEvent" => (
             "comment",
-            format!("{actor} commented on #{} in {repo}", p.i("issue.number")),
+            format!("{actor} commented on #{}", p.i("issue.number")),
             format!("{}\n{}", p.s("issue.title"), json::clip(&p.s("comment.body"), 200)),
             if p.has("issue.pull_request") {
                 Act::Go(Route::Pull { repo: repo.clone(), number: p.i("issue.number") as u64, tab: PullTab::Conversation })
@@ -65,7 +71,7 @@ fn event_row(e: &Value) -> Row {
         "PullRequestEvent" => (
             "pr",
             format!(
-                "{actor} {} pull request #{} in {repo}",
+                "{actor} {} pull request #{}",
                 if p.s("action") == "closed" && p.b("pull_request.merged") { "merged".to_string() } else { p.s("action") },
                 p.i("number")
             ),
@@ -74,39 +80,42 @@ fn event_row(e: &Value) -> Row {
         ),
         "PullRequestReviewEvent" => (
             "eye",
-            format!("{actor} reviewed pull request #{} in {repo}", p.i("pull_request.number")),
+            format!("{actor} reviewed pull request #{}", p.i("pull_request.number")),
             p.s("pull_request.title"),
             Act::Go(Route::Pull { repo: repo.clone(), number: p.i("pull_request.number") as u64, tab: PullTab::Conversation }),
         ),
         "PullRequestReviewCommentEvent" => (
             "comment",
-            format!("{actor} commented on a review in #{} in {repo}", p.i("pull_request.number")),
+            format!("{actor} commented on a review in #{}", p.i("pull_request.number")),
             json::clip(&p.s("comment.body"), 200),
             Act::Go(Route::Pull { repo: repo.clone(), number: p.i("pull_request.number") as u64, tab: PullTab::Files }),
         ),
         "ReleaseEvent" => (
             "tag",
-            format!("{actor} released {} in {repo}", if p.s("release.name").is_empty() { p.s("release.tag_name") } else { p.s("release.name") }),
+            format!("{actor} released {}", if p.s("release.name").is_empty() { p.s("release.tag_name") } else { p.s("release.name") }),
             json::clip(&p.s("release.body"), 200),
             Act::Go(Route::Release { repo: repo.clone(), id: p.i("release.id") as u64 }),
         ),
         "PublicEvent" => ("globe", format!("{actor} made {repo} public"), String::new(), repo_act),
         "MemberEvent" => ("person", format!("{actor} {} {} to {repo}", p.s("action"), p.s("member.login")), String::new(), repo_act),
-        "GollumEvent" => ("book", format!("{actor} edited the wiki in {repo}"), String::new(), Act::Url(format!("{}/{repo}/wiki", crate::api::WEB))),
-        "CommitCommentEvent" => ("comment", format!("{actor} commented on a commit in {repo}"), json::clip(&p.s("comment.body"), 200), repo_act),
+        "GollumEvent" => ("book", format!("{actor} edited the wiki"), String::new(), Act::Url(format!("{}/{repo}/wiki", crate::api::WEB))),
+        "CommitCommentEvent" => ("comment", format!("{actor} commented on a commit"), json::clip(&p.s("comment.body"), 200), repo_act),
         "DiscussionEvent" => (
             "discussion",
-            format!("{actor} {} a discussion in {repo}", p.s("action")),
+            format!("{actor} {} a discussion", p.s("action")),
             p.s("discussion.title"),
             Act::Go(Route::Discussion { repo: repo.clone(), number: p.i("discussion.number") as u64 }),
         ),
         "SponsorshipEvent" => ("heart", format!("{actor} sponsored someone"), String::new(), Act::None),
-        other => ("dot", format!("{actor} — {other} in {repo}"), String::new(), repo_act),
+        other => ("dot", format!("{actor} — {other}"), String::new(), repo_act),
     };
+    // The repository goes under the line unless the line already names it.
+    let ago = time::ago(&e.s("created_at"));
+    let meta = if text.contains(&repo) { ago } else { format!("{repo}  ·  {ago}") };
     Row::new(text)
         .avatar(e.s("actor.avatar_url"))
         .icon(icon_name, widgets::gray())
-        .meta(time::ago(&e.s("created_at")))
+        .meta(meta)
         .body(body)
         .open(open)
 }
