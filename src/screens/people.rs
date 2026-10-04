@@ -7,13 +7,14 @@ use crate::form::{Field, FormSpec};
 use crate::hub::{on, Act, Hub, Load, Req, Route, RepoTab};
 use crate::json::{self, Json as _};
 use crate::ready;
-use crate::resource::{ListSpec, Row};
+use super::home::{describe_event, EventText};
+use crate::resource::{Fetched, ListSpec, Row};
 use crate::time;
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _, Styled as _};
 use crate::ui::{icon, palette};
-use serde_json::json;
+use serde_json::{json, Value};
 
 const PROFILE: &str = "query($l: String!) {
   user(login: $l) {
@@ -218,15 +219,142 @@ impl Hub {
                     .child(widgets::card().p_3().child(div().id("calendar").overflow_x_scroll().child(grid)));
             }
         }
-        let activity = ListSpec::new(format!("/users/{login}/events/public"), |e| {
-            Row::new(format!("{} in {}", e.s("type").trim_end_matches("Event"), e.s("repo.name")))
-                .icon("dot", widgets::gray())
-                .meta(time::ago(&e.s("created_at")))
-                .open(Act::Go(Route::Repo { repo: e.s("repo.name"), tab: RepoTab::Code }))
-        })
-        .empty("No recent public activity.");
-        let activity = self.list(&activity, cx);
+        let activity = self.activity_timeline(login, cx);
         col.child(widgets::h3("Recent activity")).child(activity).into_any_element()
+    }
+
+    /// A user's public events as a timeline, grouped by day.
+    fn activity_timeline(&mut self, login: &str, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette();
+        let spec = ListSpec::new(format!("/users/{login}/events/public"), |_| Row::new(""));
+        let (events, loading, more) = match self.fetch_list(&spec, cx) {
+            Fetched::Items { items, loading, more } => (items, loading, more),
+            Fetched::Failed(error) => return widgets::error_box(&error),
+        };
+        if events.is_empty() {
+            return if loading { widgets::loading() } else { widgets::card().child(widgets::empty("No recent public activity.")).into_any_element() };
+        }
+
+        let today = time::now().div_euclid(86_400);
+        let day_of = |e: &Value| time::parse(&e.s("created_at")).map(|t| t.div_euclid(86_400));
+        let mut timeline = widgets::card().p_4().gap_0();
+        for (i, e) in events.iter().enumerate() {
+            let day = day_of(e);
+            let first_of_day = i == 0 || day_of(&events[i - 1]) != day;
+            let last_of_day = i + 1 == events.len() || day_of(&events[i + 1]) != day;
+            if first_of_day {
+                let heading = match day {
+                    Some(d) if d == today => "Today".to_string(),
+                    Some(d) if d == today - 1 => "Yesterday".to_string(),
+                    _ => time::date(&e.s("created_at")),
+                };
+                timeline = timeline.child(
+                    div()
+                        .when(i > 0, |d| d.pt_3())
+                        .pb_2()
+                        .text_size(px(12.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(p.text_dim))
+                        .child(heading),
+                );
+            }
+
+            let repo = e.s("repo.name");
+            let EventText { icon: icon_name, text, body, open } = describe_event(e);
+            let tint = match icon_name {
+                "star" => widgets::yellow(),
+                "trash" => widgets::red(),
+                "pr" if text.starts_with("merged") => widgets::purple(),
+                "pr" | "tag" | "repo" | "branch" => widgets::green(),
+                _ => p.text_dim,
+            };
+            let mut sentence = text.clone();
+            if let Some(first) = sentence.get(0..1) {
+                sentence.replace_range(0..1, &first.to_uppercase());
+            }
+            let rail = div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .flex_none()
+                .w(px(28.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .flex_none()
+                        .size(px(28.0))
+                        .rounded_full()
+                        .bg(rgb(p.control_bg))
+                        .border_1()
+                        .border_color(rgb(p.panel_edge))
+                        .child(icon(icon_name, 14.0, tint)),
+                )
+                .when(!last_of_day, |d| d.child(div().w(px(2.0)).flex_1().bg(rgb(p.divider))));
+            let mut detail = widgets::col().gap(px(2.0)).min_w_0();
+            for line in body.lines().filter(|l| !l.trim().is_empty()).take(4) {
+                detail = detail.child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(p.text_dim))
+                        .text_ellipsis()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .child(json::clip(line, 140)),
+                );
+            }
+            let content = widgets::col()
+                .flex_1()
+                .min_w_0()
+                .gap_1()
+                .pt(px(5.0))
+                .when(!last_of_day, |d| d.pb_4())
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap_x_1()
+                        .child(sentence)
+                        .when(!text.contains(&repo), |d| {
+                            d.child(widgets::dim("in")).child(div().font_weight(FontWeight::SEMIBOLD).child(repo.clone()))
+                        }),
+                )
+                .child(detail);
+            timeline = timeline.child(
+                div()
+                    .id(("activity", i))
+                    .flex()
+                    .flex_row()
+                    .gap_3()
+                    .px_2()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(p.hover)))
+                    .on_click(on(open))
+                    .child(rail)
+                    .child(content)
+                    .child(div().flex_none().pt(px(6.0)).child(widgets::faint(time::ago(&e.s("created_at"))))),
+            );
+        }
+        if loading {
+            timeline = timeline.child(widgets::loading());
+        } else if more {
+            let id = spec.id.clone();
+            timeline = timeline.child(
+                div().flex().justify_center().pt_3().child(widgets::btn(
+                    "activity-more",
+                    "Show older activity",
+                    Act::run(move |hub, _, cx| {
+                        let next = hub.page(&id) + 1;
+                        hub.pages.insert(id.clone(), next);
+                        cx.notify();
+                    }),
+                )),
+            );
+        }
+        timeline.into_any_element()
     }
 
     pub fn org(&mut self, login: &str, cx: &mut Context<Self>) -> AnyElement {

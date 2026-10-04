@@ -10,17 +10,25 @@ use crate::widgets;
 use gpui::{div, px, AnyElement, Context, IntoElement as _, ParentElement as _, Styled as _};
 use serde_json::Value;
 
-/// How a feed event reads.
-fn event_row(e: &Value) -> Row {
-    let actor = e.s("actor.login");
+/// What an event says, without who did it: an icon, a sentence starting
+/// with the verb ("pushed 2 commits to main"), any detail under it, and
+/// where clicking it goes.
+pub struct EventText {
+    pub icon: &'static str,
+    pub text: String,
+    pub body: String,
+    pub open: Act,
+}
+
+pub fn describe_event(e: &Value) -> EventText {
     let repo = e.s("repo.name");
     let p = e.at("payload");
     let repo_act = Act::Go(Route::Repo { repo: repo.clone(), tab: RepoTab::Code });
     let (icon_name, text, body, open) = match e.s("type").as_str() {
-        "WatchEvent" => ("star", format!("{actor} starred {repo}"), String::new(), repo_act),
+        "WatchEvent" => ("star", format!("starred {repo}"), String::new(), repo_act),
         "ForkEvent" => (
             "fork",
-            format!("{actor} forked {repo} to {}", p.s("forkee.full_name")),
+            format!("forked {repo} to {}", p.s("forkee.full_name")),
             String::new(),
             Act::Go(Route::Repo { repo: p.s("forkee.full_name"), tab: RepoTab::Code }),
         ),
@@ -33,9 +41,9 @@ fn event_row(e: &Value) -> Row {
             (
                 "commit",
                 match n {
-                    0 => format!("{actor} pushed to {branch}"),
-                    1 => format!("{actor} pushed 1 commit to {branch}"),
-                    n => format!("{actor} pushed {n} commits to {branch}"),
+                    0 => format!("pushed to {branch}"),
+                    1 => format!("pushed 1 commit to {branch}"),
+                    n => format!("pushed {n} commits to {branch}"),
                 },
                 commits.join("\n"),
                 Act::Go(Route::Repo { repo: repo.clone(), tab: RepoTab::Commits }),
@@ -44,23 +52,23 @@ fn event_row(e: &Value) -> Row {
         "CreateEvent" => (
             if p.s("ref_type") == "repository" { "repo" } else { "branch" },
             if p.s("ref_type") == "repository" {
-                format!("{actor} created repository {repo}")
+                format!("created repository {repo}")
             } else {
-                format!("{actor} created {} {}", p.s("ref_type"), p.s("ref"))
+                format!("created {} {}", p.s("ref_type"), p.s("ref"))
             },
             p.s("description"),
             repo_act,
         ),
-        "DeleteEvent" => ("trash", format!("{actor} deleted {} {}", p.s("ref_type"), p.s("ref")), String::new(), repo_act),
+        "DeleteEvent" => ("trash", format!("deleted {} {}", p.s("ref_type"), p.s("ref")), String::new(), repo_act),
         "IssuesEvent" => (
             "issue",
-            format!("{actor} {} issue #{}", p.s("action"), p.i("issue.number")),
+            format!("{} issue #{}", p.s("action"), p.i("issue.number")),
             p.s("issue.title"),
             Act::Go(Route::Issue { repo: repo.clone(), number: p.i("issue.number") as u64 }),
         ),
         "IssueCommentEvent" => (
             "comment",
-            format!("{actor} commented on #{}", p.i("issue.number")),
+            format!("commented on #{}", p.i("issue.number")),
             format!("{}\n{}", p.s("issue.title"), json::clip(&p.s("comment.body"), 200)),
             if p.has("issue.pull_request") {
                 Act::Go(Route::Pull { repo: repo.clone(), number: p.i("issue.number") as u64, tab: PullTab::Conversation })
@@ -71,7 +79,7 @@ fn event_row(e: &Value) -> Row {
         "PullRequestEvent" => (
             "pr",
             format!(
-                "{actor} {} pull request #{}",
+                "{} pull request #{}",
                 if p.s("action") == "closed" && p.b("pull_request.merged") { "merged".to_string() } else { p.s("action") },
                 p.i("number")
             ),
@@ -80,41 +88,48 @@ fn event_row(e: &Value) -> Row {
         ),
         "PullRequestReviewEvent" => (
             "eye",
-            format!("{actor} reviewed pull request #{}", p.i("pull_request.number")),
+            format!("reviewed pull request #{}", p.i("pull_request.number")),
             p.s("pull_request.title"),
             Act::Go(Route::Pull { repo: repo.clone(), number: p.i("pull_request.number") as u64, tab: PullTab::Conversation }),
         ),
         "PullRequestReviewCommentEvent" => (
             "comment",
-            format!("{actor} commented on a review in #{}", p.i("pull_request.number")),
+            format!("commented on a review in #{}", p.i("pull_request.number")),
             json::clip(&p.s("comment.body"), 200),
             Act::Go(Route::Pull { repo: repo.clone(), number: p.i("pull_request.number") as u64, tab: PullTab::Files }),
         ),
         "ReleaseEvent" => (
             "tag",
-            format!("{actor} released {}", if p.s("release.name").is_empty() { p.s("release.tag_name") } else { p.s("release.name") }),
+            format!("released {}", if p.s("release.name").is_empty() { p.s("release.tag_name") } else { p.s("release.name") }),
             json::clip(&p.s("release.body"), 200),
             Act::Go(Route::Release { repo: repo.clone(), id: p.i("release.id") as u64 }),
         ),
-        "PublicEvent" => ("globe", format!("{actor} made {repo} public"), String::new(), repo_act),
-        "MemberEvent" => ("person", format!("{actor} {} {} to {repo}", p.s("action"), p.s("member.login")), String::new(), repo_act),
-        "GollumEvent" => ("book", format!("{actor} edited the wiki"), String::new(), Act::Url(format!("{}/{repo}/wiki", crate::api::WEB))),
-        "CommitCommentEvent" => ("comment", format!("{actor} commented on a commit"), json::clip(&p.s("comment.body"), 200), repo_act),
+        "PublicEvent" => ("globe", format!("made {repo} public"), String::new(), repo_act),
+        "MemberEvent" => ("person", format!("{} {} to {repo}", p.s("action"), p.s("member.login")), String::new(), repo_act),
+        "GollumEvent" => ("book", format!("edited the wiki"), String::new(), Act::Url(format!("{}/{repo}/wiki", crate::api::WEB))),
+        "CommitCommentEvent" => ("comment", format!("commented on a commit"), json::clip(&p.s("comment.body"), 200), repo_act),
         "DiscussionEvent" => (
             "discussion",
-            format!("{actor} {} a discussion", p.s("action")),
+            format!("{} a discussion", p.s("action")),
             p.s("discussion.title"),
             Act::Go(Route::Discussion { repo: repo.clone(), number: p.i("discussion.number") as u64 }),
         ),
-        "SponsorshipEvent" => ("heart", format!("{actor} sponsored someone"), String::new(), Act::None),
-        other => ("dot", format!("{actor} — {other}"), String::new(), repo_act),
+        "SponsorshipEvent" => ("heart", "sponsored someone".to_string(), String::new(), Act::None),
+        other => ("dot", format!("did {}", other.trim_end_matches("Event")), String::new(), repo_act),
     };
+    EventText { icon: icon_name, text, body, open }
+}
+
+/// How a feed event reads.
+fn event_row(e: &Value) -> Row {
+    let repo = e.s("repo.name");
+    let EventText { icon, text, body, open } = describe_event(e);
     // The repository goes under the line unless the line already names it.
     let ago = time::ago(&e.s("created_at"));
     let meta = if text.contains(&repo) { ago } else { format!("{repo}  ·  {ago}") };
-    Row::new(text)
+    Row::new(format!("{} {text}", e.s("actor.login")))
         .avatar(e.s("actor.avatar_url"))
-        .icon(icon_name, widgets::gray())
+        .icon(icon, widgets::gray())
         .meta(meta)
         .body(body)
         .open(open)
