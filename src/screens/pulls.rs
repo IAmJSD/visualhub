@@ -467,33 +467,43 @@ impl Hub {
             "rebase" => "--rebase",
             _ => "--merge",
         };
-        let footer = widgets::row()
-            .flex_wrap()
+        // Fixed places: the merge button left, the branch buttons right,
+        // the command-line hint on its own line, so nothing reflows.
+        let footer = widgets::col()
             .gap_3()
             .p_4()
             .bg(rgb(p.deep_bg))
-            .child(main)
-            .child(widgets::dim("You can also merge this with the command line."))
-            .child(crate::ui::Link::new("merge-cli", "Copy the command").on_click(crate::hub::on(Act::Copy(format!("gh pr merge {number} {flag} --repo {repo}")))))
-            .child(widgets::spacer())
-            .child(widgets::btn(
-                "update-branch",
-                "Update branch",
-                Req::rest("PUT", format!("{pr_path}/update-branch"))
-                    .body(json!({ "expected_head_sha": sha }))
-                    .ok("Branch update queued")
-                    .inval(pr_path.clone())
-                    .act(),
-            ))
-            .child(widgets::btn(
-                "auto-merge",
-                if auto_merge_on { "Disable auto-merge" } else { "Enable auto-merge" },
-                auto,
-            ));
+            .child(
+                widgets::row()
+                    .gap_2()
+                    .child(main)
+                    .child(widgets::spacer())
+                    .child(widgets::btn(
+                        "update-branch",
+                        "Update branch",
+                        Req::rest("PUT", format!("{pr_path}/update-branch"))
+                            .body(json!({ "expected_head_sha": sha }))
+                            .ok("Branch update queued")
+                            .inval(pr_path.clone())
+                            .act(),
+                    ))
+                    .child(widgets::btn(
+                        "auto-merge",
+                        if auto_merge_on { "Disable auto-merge" } else { "Enable auto-merge" },
+                        auto,
+                    )),
+            )
+            .child(
+                widgets::row()
+                    .gap_1()
+                    .child(widgets::dim("You can also merge this with the command line."))
+                    .child(crate::ui::Link::new("merge-cli", "Copy the command").on_click(crate::hub::on(Act::Copy(format!("gh pr merge {number} {flag} --repo {repo}"))))),
+            );
 
         // A status: a filled circle with its mark, a title and a line.
-        let status = |id: &str, mark: &str, color: u32, title: String, sub: String, open: Option<Act>| {
-            let clickable = open.is_some();
+        // `open` is what clicking does and the chevron that says so.
+        let status = |id: &str, mark: &str, color: u32, title: String, sub: String, open: Option<(Act, &'static str)>| {
+            let chevron = open.as_ref().map(|(_, c)| *c);
             div()
                 .id(gpui::ElementId::Name(id.to_string().into()))
                 .flex()
@@ -522,14 +532,55 @@ impl Hub {
                         .child(div().text_size(px(15.0)).font_weight(gpui::FontWeight::SEMIBOLD).child(title))
                         .when(!sub.is_empty(), |d| d.child(widgets::dim(sub))),
                 )
-                .when(clickable, |d| d.child(icon("chevron-right", 14.0, p.text_dim)))
-                .when_some(open, |d, act| d.cursor_pointer().hover(|s| s.bg(rgb(p.hover))).on_click(crate::hub::on(act)))
+                .when_some(chevron, |d, c| d.child(icon(c, 14.0, p.text_dim)))
+                .when_some(open, |d, (act, _)| d.cursor_pointer().hover(|s| s.bg(rgb(p.hover))).on_click(crate::hub::on(act)))
         };
-        let checks_tab = Act::Go(Route::Pull { repo: repo.to_string(), number, tab: PullTab::Checks });
+        // The checks open in place, as on github.com.
+        let open_key = format!("merge.checks:{repo}#{number}");
+        let expanded = self.is_open(&open_key);
+        let toggle = Act::run(move |hub, _, cx| {
+            if !hub.open.remove(&open_key) {
+                hub.open.insert(open_key.clone());
+            }
+            cx.notify();
+        });
+        let runs: Vec<Value> = checks.ready().map(|v| v.list("check_runs").to_vec()).unwrap_or_default();
         card = card
             .border_color(rgb(if mergeable && bad == 0 { widgets::green() } else { p.edge }))
-            .child(status("merge-checks", check_icon, check_color, check_title, check_sub, Some(checks_tab)))
-            .child(status("merge-state", merge_icon, merge_color, merge_title.to_string(), merge_sub.to_string(), None));
+            .child(status(
+                "merge-checks",
+                check_icon,
+                check_color,
+                check_title,
+                check_sub,
+                (!runs.is_empty()).then_some((toggle, if expanded { "chevron-down" } else { "chevron-right" })),
+            ));
+        if expanded {
+            // Failing first, then running, then the rest, by name.
+            let rank = |c: &Value| match (c.s("status").as_str(), c.s("conclusion").as_str()) {
+                (_, "failure" | "timed_out" | "cancelled" | "action_required" | "startup_failure") => 0,
+                ("completed", _) => 2,
+                _ => 1,
+            };
+            let mut runs = runs;
+            runs.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.s("name").cmp(&b.s("name"))));
+            let mut list = div()
+                .id("merge-check-list")
+                .flex()
+                .flex_col()
+                .max_h(px(360.0))
+                .overflow_y_scroll()
+                .track_scroll(&self.scroller("merge-check-list"))
+                .bg(rgb(p.deep_bg))
+                .border_b_1()
+                .border_color(rgb(p.divider));
+            for (i, run) in runs.iter().enumerate() {
+                let row = check_row(repo, run);
+                list = list.child(self.render_row(&format!("merge-check-{i}"), row, cx));
+            }
+            card = card.child(list);
+        }
+        card = card.child(status("merge-state", merge_icon, merge_color, merge_title.to_string(), merge_sub.to_string(), None));
         if auto_merge_on {
             card = card.child(status(
                 "merge-auto",
