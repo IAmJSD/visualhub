@@ -8,6 +8,7 @@ mod assets;
 mod autoscroll;
 mod diff;
 mod form;
+mod highlight;
 mod hub;
 mod json;
 mod markdown;

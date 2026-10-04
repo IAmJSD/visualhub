@@ -193,6 +193,10 @@ impl Hub {
                 .into_any_element();
         }
         let lines = parse(&patch);
+        // Coloured as the file's language, restarting at each hunk.
+        let texts: Vec<String> = lines.iter().map(|l| if l.kind == Kind::Hunk { String::new() } else { l.text.replace('\t', "    ") }).collect();
+        let breaks: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| l.kind == Kind::Hunk).map(|(i, _)| i).collect();
+        let colours = crate::highlight::lines(crate::highlight::syntax_for(&name), &texts, &breaks);
         let mut body = div()
             .id(ElementId::Name(format!("{id}-body").into()))
             .flex()
@@ -245,7 +249,7 @@ impl Hub {
                             .flex_1()
                             .min_w_0()
                             .pr_4()
-                            .child(line.text.replace('\t', "    ")),
+                            .child(crate::highlight::styled(&texts[i], colours.as_ref().map(|c| c[i].as_slice()))),
                     );
                 if let Some(target) = review {
                     let (side, at) = match line.kind {

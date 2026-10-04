@@ -1083,7 +1083,7 @@ impl Hub {
                 let md = self.markdown(&format!("file-{path}"), &text, cx);
                 div().id("file-md").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroller("file-md")).p_6().child(md).into_any_element()
             } else {
-                numbered_lines(&text, self.list_scroller("file-lines"))
+                numbered_lines(&text, path, self.list_scroller("file-lines"))
             }
         };
         if is_image {
@@ -1114,9 +1114,10 @@ impl Hub {
 }
 
 /// Monospace lines with numbers, virtualised so large files stay quick.
-pub fn numbered_lines(text: &str, scroll: gpui::UniformListScrollHandle) -> AnyElement {
+pub fn numbered_lines(text: &str, path: &str, scroll: gpui::UniformListScrollHandle) -> AnyElement {
     let p = palette();
     let lines: std::rc::Rc<Vec<String>> = std::rc::Rc::new(text.lines().map(|l| l.replace('\t', "    ")).collect());
+    let colours = crate::highlight::lines(crate::highlight::syntax_for(path), &lines, &[]);
     let count = lines.len();
     let width = (count.to_string().len() as f32) * 8.0 + 24.0;
     gpui::uniform_list("file-lines", count, move |range, _window, _cx| {
@@ -1135,7 +1136,7 @@ pub fn numbered_lines(text: &str, scroll: gpui::UniformListScrollHandle) -> AnyE
                             .text_color(rgb(p.text_faint))
                             .child((i + 1).to_string()),
                     )
-                    .child(div().whitespace_nowrap().child(lines[i].clone()))
+                    .child(div().whitespace_nowrap().child(crate::highlight::styled(&lines[i], colours.as_ref().map(|c| c[i].as_slice()))))
             })
             .collect()
     })

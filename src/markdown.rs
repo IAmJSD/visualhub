@@ -513,14 +513,18 @@ impl WhenHead for gpui::Div {
 pub fn code_block(id: ElementId, lang: &str, code: &str) -> AnyElement {
     let p = palette();
     let code = code.strip_suffix('\n').unwrap_or(code);
+    let source: Vec<String> = code.split('\n').map(|l| l.replace('\t', "    ")).collect();
+    // The fence's tag names the language: ```rust, ```ts, ```shell.
+    let tag = lang.split([',', ' ', '{']).next().unwrap_or("");
+    let colours = crate::highlight::lines(crate::highlight::syntax_for(tag), &source, &[]);
     let mut lines = div().flex().flex_col();
-    for line in code.split('\n') {
-        let line = line.replace('\t', "    ");
+    for (i, line) in source.iter().enumerate() {
+        let line = if line.is_empty() { " " } else { line.as_str() };
         lines = lines.child(
             div()
                 .whitespace_nowrap()
                 .min_h(px(18.0))
-                .child(if line.is_empty() { " ".to_string() } else { line }),
+                .child(crate::highlight::styled(line, colours.as_ref().map(|c| c[i].as_slice()))),
         );
     }
     let mut block = div()
