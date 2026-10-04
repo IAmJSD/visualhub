@@ -498,6 +498,7 @@ impl Hub {
             Route::Org { login } => self.org(login, cx),
             Route::Team { org, slug } => self.team(org, slug, cx),
             Route::Gists => self.gists(cx),
+            Route::Conflicts { repo, number } => self.conflicts_page(repo, *number, cx),
             Route::NewRepo { owner } => self.new_repo(owner.as_deref(), cx),
             Route::NewGist => self.new_gist(cx),
             Route::Gist { id } => self.gist(id, cx),

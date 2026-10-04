@@ -471,6 +471,16 @@ impl Hub {
             .px_4()
             .text_size(px(13.0))
             .into_any_element()
+        } else if state == "dirty" {
+            // Conflicts: no merging until they're settled, here.
+            widgets::btn("resolve-conflicts", "Resolve conflicts", Act::Go(Route::Conflicts { repo: repo.to_string(), number }))
+                .h(px(32.0))
+                .px_4()
+                .text_size(px(13.0))
+                .into_any_element()
+        } else if matches!(state.as_str(), "unknown" | "") {
+            // Still working out whether it can merge.
+            widgets::row().gap_2().child(crate::ui::Spinner::new("merge-wait").size(14.0)).child(widgets::dim("Checking whether this can merge…")).into_any_element()
         } else {
             widgets::split_btn("merge", method_label, merge_form, methods)
         };

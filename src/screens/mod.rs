@@ -2,6 +2,7 @@
 
 pub mod actions;
 pub mod common;
+pub mod conflicts;
 pub mod create;
 pub mod discussions;
 pub mod gists;

@@ -65,6 +65,8 @@ pub enum Route {
     Tree { repo: String, git_ref: String, path: String, file: bool },
     Issue { repo: String, number: u64 },
     Pull { repo: String, number: u64, tab: PullTab },
+    /// Resolving a pull request's merge conflicts.
+    Conflicts { repo: String, number: u64 },
     Commit { repo: String, sha: String },
     Compare { repo: String, base: String, head: String },
     Run { repo: String, id: u64 },
@@ -95,6 +97,7 @@ impl Route {
             | Route::Tree { repo, .. }
             | Route::Issue { repo, .. }
             | Route::Pull { repo, .. }
+            | Route::Conflicts { repo, .. }
             | Route::Commit { repo, .. }
             | Route::Compare { repo, .. }
             | Route::Run { repo, .. }
@@ -118,6 +121,7 @@ impl Route {
             Route::Tree { repo, path, .. } => format!("{repo}/{path}"),
             Route::Issue { repo, number } => format!("{repo}#{number}"),
             Route::Pull { repo, number, .. } => format!("{repo}#{number}"),
+            Route::Conflicts { repo, number } => format!("Conflicts in {repo}#{number}"),
             Route::Commit { repo, sha } => format!("{repo}@{}", &sha[..sha.len().min(7)]),
             Route::Compare { repo, base, head } => format!("{repo} {base}...{head}"),
             Route::Run { repo, id } => format!("{repo} run {id}"),
@@ -181,6 +185,7 @@ impl Route {
             ),
             Route::Issue { repo, number } => format!("{w}/{repo}/issues/{number}"),
             Route::Pull { repo, number, .. } => format!("{w}/{repo}/pull/{number}"),
+            Route::Conflicts { repo, number } => format!("{w}/{repo}/pull/{number}/conflicts"),
             Route::Commit { repo, sha } => format!("{w}/{repo}/commit/{sha}"),
             Route::Compare { repo, base, head } => format!("{w}/{repo}/compare/{base}...{head}"),
             Route::Run { repo, id } => format!("{w}/{repo}/actions/runs/{id}"),
@@ -230,6 +235,10 @@ pub fn route_for_url(url: &str) -> Option<Route> {
                     tab: RepoTab::Code,
                 },
                 ["issues", n, ..] if num(n).is_some() => Route::Issue {
+                    repo,
+                    number: num(n)?,
+                },
+                ["pull", n, "conflicts"] => Route::Conflicts {
                     repo,
                     number: num(n)?,
                 },
@@ -620,6 +629,8 @@ pub struct Hub {
     pub stale: HashSet<String>,
     /// Polls waiting to fire, by their prefixes.
     pub polls: HashSet<String>,
+    /// Merge-conflict editors in progress, by "repo#number".
+    pub conflicts: HashMap<String, crate::screens::conflicts::SessionLoad>,
     /// Commit authors as GraphQL resolved them, by SHA.
     pub commit_people: HashMap<String, Vec<Value>>,
     /// Expanded rows and sections, by id.
@@ -666,6 +677,7 @@ impl Hub {
             list_scrollers: HashMap::new(),
             frame: 0,
             commit_people: HashMap::new(),
+            conflicts: HashMap::new(),
             stale: HashSet::new(),
             polls: HashSet::new(),
             open: HashSet::new(),
