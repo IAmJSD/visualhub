@@ -238,10 +238,15 @@ pub fn route_for_url(url: &str) -> Option<Route> {
                     repo,
                     number: num(n)?,
                 },
-                ["pull", n, ..] => Route::Pull {
+                ["pull", n, rest @ ..] => Route::Pull {
                     repo,
                     number: num(n)?,
-                    tab: PullTab::Conversation,
+                    tab: match rest.first().copied() {
+                        Some("files") => PullTab::Files,
+                        Some("commits") => PullTab::Commits,
+                        Some("checks") => PullTab::Checks,
+                        _ => PullTab::Conversation,
+                    },
                 },
                 ["discussions", n, ..] if num(n).is_some() => Route::Discussion {
                     repo,
@@ -782,7 +787,12 @@ impl Hub {
         self.token_source = source;
         self.check_scopes();
         self.auth = Auth::SignedIn;
-        self.route = Route::Home;
+        // VISUALHUB_OPEN=<a github.com URL> starts on that page, for
+        // screenshots and for working on one screen.
+        self.route = std::env::var("VISUALHUB_OPEN")
+            .ok()
+            .and_then(|url| route_for_url(&url))
+            .unwrap_or(Route::Home);
         self.back.clear();
         self.forward.clear();
     }
