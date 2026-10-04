@@ -460,9 +460,26 @@ impl Hub {
                         .push(if done { "☑ " } else { "☐ " }, Flags::default());
                 }
                 Event::Html(html) | Event::InlineHtml(html) => {
-                    if let Some(src) = img_src(&html) {
+                    if let Some(tag) = img_tag(&html) {
                         b.flush_paragraph();
-                        let image = self.image(&src, cx);
+                        // A <picture> may offer a dark-mode version.
+                        let src = match tag.dark_src {
+                            Some(dark) if !crate::ui::is_light() => dark,
+                            _ => tag.src,
+                        };
+                        let image = self.image_sized(&src, tag.width, tag.height, cx);
+                        let image = match tag.href {
+                            Some(href) => div()
+                                .id(b.next_id())
+                                .cursor_pointer()
+                                .on_click(move |_, window, cx| {
+                                    let href = href.clone();
+                                    perform(Act::run(move |hub, _, cx| hub.open_link(&href, cx)), window, cx);
+                                })
+                                .child(image)
+                                .into_any_element(),
+                            None => image,
+                        };
                         b.push_el(image);
                     } else if html.contains("<br") {
                         b.inline().push("\n", Flags::default());
@@ -582,6 +599,49 @@ fn strip_tags(html: &str) -> String {
 }
 
 /// The `src` of an `<img>` tag, which is how GitHub embeds uploads.
+/// An `<img>` as README HTML writes it: where it is, the size it asks
+/// for, a `<picture>`'s dark-mode source, and the link around it.
+struct ImgTag {
+    src: String,
+    width: Option<f32>,
+    height: Option<f32>,
+    dark_src: Option<String>,
+    href: Option<String>,
+}
+
+/// The value of `name="…"` in the tag starting at `tag`.
+fn attr(html: &str, tag: &str, name: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let at = lower.find(tag)?;
+    let end = lower[at..].find('>').map_or(html.len(), |e| at + e);
+    let inside = &html[at..end];
+    let inside_lower = &lower[at..end];
+    let key = format!(" {name}=");
+    let start = inside_lower.find(&key)? + key.len();
+    let rest = &inside[start..];
+    let quote = rest.chars().next()?;
+    if quote == '"' || quote == '\'' {
+        let rest = &rest[1..];
+        Some(rest[..rest.find(quote)?].to_string())
+    } else {
+        Some(rest[..rest.find([' ', '>']).unwrap_or(rest.len())].to_string())
+    }
+}
+
+fn img_tag(html: &str) -> Option<ImgTag> {
+    let src = img_src(html)?;
+    // "120" or "120px"; a percentage can't be honoured without the
+    // column's width, so it's left to the image's own size.
+    let size = |name: &str| attr(html, "<img", name).and_then(|v| v.trim_end_matches("px").parse::<f32>().ok());
+    let dark_src = html.to_ascii_lowercase().contains("prefers-color-scheme: dark").then(|| {
+        let lower = html.to_ascii_lowercase();
+        let at = lower.find("prefers-color-scheme: dark")?;
+        let start = lower[..at].rfind("<source")?;
+        attr(&html[start..], "<source", "srcset").map(|s| s.split_whitespace().next().unwrap_or("").to_string())
+    }).flatten();
+    Some(ImgTag { src, width: size("width"), height: size("height"), dark_src, href: attr(html, "<a", "href") })
+}
+
 fn img_src(html: &str) -> Option<String> {
     let lower = html.to_ascii_lowercase();
     let at = lower.find("<img")?;
@@ -684,6 +744,17 @@ mod tests {
         assert_eq!(short_url("https://github.com/Infrawrench/schist/commit/0123456789abcdef", here), ("0123456".into(), true));
         assert_eq!(short_url("https://github.com/Infrawrench/schist/pull/138/files", here).0, "https://github.com/Infrawrench/schist/pull/138/files");
         assert_eq!(short_url("https://example.com/a", here).0, "https://example.com/a");
+    }
+
+    #[test]
+    fn picture_tags() {
+        let html = r#"<a href="https://leanercloud.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://x/dark"><img src="https://x/light" alt="L" width="120"></picture></a>"#;
+        let tag = img_tag(html).unwrap();
+        assert_eq!(tag.src, "https://x/light");
+        assert_eq!(tag.dark_src.as_deref(), Some("https://x/dark"));
+        assert_eq!(tag.width, Some(120.0));
+        assert_eq!(tag.height, None);
+        assert_eq!(tag.href.as_deref(), Some("https://leanercloud.com"));
     }
 
     #[test]

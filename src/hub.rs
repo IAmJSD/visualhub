@@ -1371,10 +1371,18 @@ impl Hub {
 
     /// An image in a document, at its own size up to the column's width.
     pub fn image(&mut self, url: &str, cx: &mut Context<Self>) -> gpui::AnyElement {
-        use gpui::{div, img, px, IntoElement as _, ParentElement as _, Styled as _};
+        self.image_sized(url, None, None, cx)
+    }
+
+    /// An image at the size its HTML asked for; the other side follows
+    /// the picture's own proportions.
+    pub fn image_sized(&mut self, url: &str, width: Option<f32>, height: Option<f32>, cx: &mut Context<Self>) -> gpui::AnyElement {
+        use gpui::{div, img, prelude::FluentBuilder as _, px, IntoElement as _, ParentElement as _, Styled as _};
         let p = crate::ui::palette();
         match self.load_image(url.to_string(), cx) {
             Some(image) => img(image)
+                .when_some(width, |i, w| i.w(px(w)))
+                .when_some(height, |i, h| i.h(px(h)))
                 .max_w(px(760.0))
                 .max_h(px(560.0))
                 .into_any_element(),
