@@ -7,6 +7,8 @@
 //! keys may be dotted (`config.url`) to build nested bodies.
 
 use crate::hub::{Act, Hub, Modal, Req, Then};
+use crate::json::Json as _;
+use crate::picker::{PickItem, Picker};
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -32,6 +34,59 @@ pub enum Kind {
     List,
     /// Raw JSON, sent as parsed.
     Json,
+    /// Picked from a list the API gives: one, or several.
+    Dropdown(Rc<Dropdown>),
+}
+
+/// Where a dropdown field's choices come from and how each reads.
+pub struct Dropdown {
+    pub path: String,
+    pub multi: bool,
+    /// The choice offered for "none" in a one-pick dropdown.
+    pub none: Option<String>,
+    pub option: Rc<dyn Fn(&Value) -> DropOption>,
+}
+
+/// One choice: what is sent, and how it is shown.
+pub struct DropOption {
+    pub value: Value,
+    pub label: String,
+    pub detail: String,
+    pub avatar: Option<String>,
+    /// A label's hex colour.
+    pub color: Option<String>,
+}
+
+impl DropOption {
+    pub fn new(value: impl Into<Value>, label: impl Into<String>) -> Self {
+        DropOption {
+            value: value.into(),
+            label: label.into(),
+            detail: String::new(),
+            avatar: None,
+            color: None,
+        }
+    }
+
+    pub fn detail(mut self, text: impl Into<String>) -> Self {
+        self.detail = text.into();
+        self
+    }
+
+    pub fn avatar(mut self, url: impl Into<String>) -> Self {
+        self.avatar = Some(url.into());
+        self
+    }
+
+    pub fn color(mut self, hex: impl Into<String>) -> Self {
+        self.color = Some(hex.into());
+        self
+    }
+}
+
+/// A dropdown's picks as they are kept: one JSON value per line.
+fn picks(text: &str) -> Vec<Value> {
+    text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
 }
 
 #[derive(Clone)]
@@ -100,6 +155,24 @@ impl Field {
         let mut field = Self::new(key, label, Kind::Choice(options.clone()));
         field.value = options.first().map(|o| o.0.clone()).unwrap_or_default();
         field
+    }
+
+    /// Several of the items at `path`, each read by `option`.
+    pub fn dropdown(key: &str, label: &str, path: impl Into<String>, option: impl Fn(&Value) -> DropOption + 'static) -> Self {
+        Self::new(
+            key,
+            label,
+            Kind::Dropdown(Rc::new(Dropdown { path: path.into(), multi: true, none: None, option: Rc::new(option) })),
+        )
+    }
+
+    /// One of the items at `path`, or `none`.
+    pub fn dropdown_one(key: &str, label: &str, path: impl Into<String>, none: &str, option: impl Fn(&Value) -> DropOption + 'static) -> Self {
+        Self::new(
+            key,
+            label,
+            Kind::Dropdown(Rc::new(Dropdown { path: path.into(), multi: false, none: Some(none.to_string()), option: Rc::new(option) })),
+        )
     }
 
     /// A choice among values that are their own labels.
@@ -313,7 +386,7 @@ impl FormValues {
                 Kind::Bool => {
                     bools.insert(field.key.clone(), hub.toggle(&id));
                 }
-                Kind::Choice(_) => {
+                Kind::Choice(_) | Kind::Dropdown(_) => {
                     text.insert(field.key.clone(), hub.choice(&id, &field.value));
                 }
                 _ => {
@@ -368,6 +441,17 @@ impl FormValues {
                     serde_json::from_str(&text)
                         .map_err(|e| format!("{} is not valid JSON: {e}", field.label))?
                 }
+                Kind::Dropdown(dropdown) => {
+                    let mut chosen = picks(&self.s(&field.key));
+                    if chosen.is_empty() && !field.keep_empty {
+                        continue;
+                    }
+                    if dropdown.multi {
+                        Value::Array(chosen)
+                    } else {
+                        chosen.pop().unwrap_or(Value::Null)
+                    }
+                }
                 _ => {
                     let text = self.s(&field.key);
                     if text.is_empty() && !field.keep_empty {
@@ -416,7 +500,7 @@ pub fn reset(hub: &mut Hub, spec: &FormSpec) {
             Kind::Bool => {
                 hub.toggles.insert(id, field.on);
             }
-            Kind::Choice(_) => {
+            Kind::Choice(_) | Kind::Dropdown(_) => {
                 hub.choices.insert(id, field.value.clone());
             }
             _ => {
@@ -624,6 +708,98 @@ impl Hub {
         }
     }
 
+    /// A dropdown field: what is picked, as chips or names, in a box that
+    /// opens the picker of everything there is to pick.
+    fn dropdown_field(&mut self, id: &str, field: &Field, dropdown: &Dropdown, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette();
+        let chosen = picks(&self.choice(id, &field.value));
+        let load = self.fetch(&dropdown.path, cx);
+        let options: Vec<DropOption> = load
+            .ready()
+            .map(|v| v.list("").iter().map(|item| (dropdown.option)(item)).collect())
+            .unwrap_or_default();
+
+        let mut picker = Picker::new(field.label.clone(), "Filter…", dropdown.multi);
+        picker.loading = matches!(load, crate::hub::Load::Loading);
+        if let Some(none) = &dropdown.none {
+            picker = picker.item(PickItem::new(none.clone(), chosen.is_empty(), Act::choose(id.to_string(), "")));
+        }
+        for option in &options {
+            let on = chosen.contains(&option.value);
+            let line = option.value.to_string();
+            let mut item = if dropdown.multi {
+                let (add, remove) = (id.to_string(), id.to_string());
+                let (a, r) = (line.clone(), line.clone());
+                PickItem::toggle(
+                    option.label.clone(),
+                    on,
+                    Act::run(move |hub, _, cx| {
+                        let mut lines: Vec<String> = hub.choice(&add, "").lines().map(str::to_string).collect();
+                        if !lines.contains(&a) {
+                            lines.push(a.clone());
+                        }
+                        hub.choices.insert(add.clone(), lines.join("\n"));
+                        cx.notify();
+                    }),
+                    Act::run(move |hub, _, cx| {
+                        let lines: Vec<String> = hub.choice(&remove, "").lines().filter(|l| *l != r).map(str::to_string).collect();
+                        hub.choices.insert(remove.clone(), lines.join("\n"));
+                        cx.notify();
+                    }),
+                )
+            } else {
+                PickItem::new(option.label.clone(), on, Act::choose(id.to_string(), line))
+            };
+            if let Some(url) = &option.avatar {
+                item = item.avatar(url.clone());
+            }
+            if let Some(color) = &option.color {
+                item = item.color(color.clone());
+            }
+            if !option.detail.is_empty() {
+                item = item.detail(option.detail.clone());
+            }
+            picker = picker.item(item);
+        }
+
+        // What is picked, in the order it was picked.
+        let mut shown = div().flex().flex_row().flex_wrap().items_center().gap_1().flex_1().min_w_0();
+        if chosen.is_empty() {
+            shown = shown.child(widgets::dim(dropdown.none.clone().unwrap_or_else(|| "None yet".into())));
+        }
+        for value in &chosen {
+            let option = options.iter().find(|o| o.value == *value);
+            let label = option.map(|o| o.label.clone()).unwrap_or_else(|| value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()));
+            shown = shown.child(match option {
+                Some(DropOption { color: Some(color), .. }) => widgets::label_chip(&label, color).into_any_element(),
+                Some(DropOption { avatar: Some(url), .. }) => {
+                    let avatar = self.avatar(url, 18.0, cx);
+                    widgets::row().gap_1().pr_1().child(avatar).child(label).into_any_element()
+                }
+                _ => div().pr_1().child(label).into_any_element(),
+            });
+        }
+        div()
+            .id(ElementId::Name(format!("{id}-dropdown").into()))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .min_h(px(30.0))
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(p.edge))
+            .bg(rgb(p.field_bg))
+            .cursor_pointer()
+            .hover(|s| s.border_color(rgb(p.accent)))
+            .on_click(crate::hub::on(picker.act()))
+            .child(shown)
+            .child(crate::ui::icon("chevron-down", 14.0, p.text_dim))
+            .into_any_element()
+    }
+
     fn render_field(&mut self, field: &Field, cx: &mut Context<Self>) -> AnyElement {
         let p = palette();
         let id = format!("form.{}", field.key);
@@ -726,6 +902,7 @@ impl Hub {
                     .child(el)
                     .into_any_element()
             }
+            Kind::Dropdown(dropdown) => self.dropdown_field(&id, field, dropdown, cx),
             Kind::Secret => self.secret_input(&id, "", cx).w_full().into_any_element(),
             Kind::List => self
                 .input(&id, "comma, separated, values", cx)
@@ -742,5 +919,30 @@ impl Hub {
             .child(control)
             .when_some(field.hint.clone(), |d, hint| d.child(widgets::faint(hint)))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn dropdowns_send_what_was_picked() {
+        let option = |v: &Value| DropOption::new(v.clone(), v.to_string());
+        let fields = vec![
+            Field::dropdown("labels", "Labels", "/l", option),
+            Field::dropdown("assignees", "Assignees", "/a", option),
+            Field::dropdown_one("milestone", "Milestone", "/m", "No milestone", option),
+        ];
+        let picked = |values: &[Value]| values.iter().map(Value::to_string).collect::<Vec<_>>().join("\n");
+        let mut text = HashMap::new();
+        text.insert("labels".to_string(), picked(&[json!("bug"), json!("good first issue")]));
+        text.insert("milestone".to_string(), picked(&[json!(3)]));
+        let values = FormValues { text, bools: HashMap::new() };
+        assert_eq!(
+            values.json(&fields).unwrap(),
+            json!({ "labels": ["bug", "good first issue"], "milestone": 3 })
+        );
     }
 }

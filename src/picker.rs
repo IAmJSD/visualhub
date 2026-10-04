@@ -194,6 +194,8 @@ impl Hub {
                     .id(("pick", i))
                     .flex()
                     .flex_row()
+                    // A long list scrolls rather than squeezing its rows.
+                    .flex_none()
                     .items_center()
                     .gap_2()
                     .min_h(px(34.0))

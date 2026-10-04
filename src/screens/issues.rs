@@ -6,7 +6,7 @@ use super::common::{
     CommentActs,
 };
 use crate::picker::{PickItem, Picker};
-use crate::form::{Field, FormSpec};
+use crate::form::{DropOption, Field, FormSpec};
 use crate::hub::{on, Act, Hub, MenuEntry, Req, Route, RepoTab};
 use crate::json::{enc, Json as _};
 use crate::ready;
@@ -26,9 +26,16 @@ pub fn new_issue_form(repo: &str) -> Act {
         .width(640.0)
         .field(Field::text("title", "Title").required())
         .field(Field::multiline("body", "Description").hint("Markdown is supported."))
-        .field(Field::list("labels", "Labels").hint("Comma separated label names."))
-        .field(Field::list("assignees", "Assignees").hint("Comma separated logins."))
-        .field(Field::number("milestone", "Milestone number"))
+        .field(Field::dropdown("labels", "Labels", format!("/repos/{repo}/labels?per_page=100"), |l| {
+            DropOption::new(l.s("name"), l.s("name")).color(l.s("color")).detail(l.s("description"))
+        }))
+        .field(Field::dropdown("assignees", "Assignees", format!("/repos/{repo}/assignees?per_page=100"), |u| {
+            DropOption::new(u.s("login"), u.s("login")).avatar(u.s("avatar_url"))
+        }))
+        .field(Field::dropdown_one("milestone", "Milestone", format!("/repos/{repo}/milestones?state=open&per_page=100"), "No milestone", |m| {
+            let due = if m.has("due_on") { format!("Due {}", time::date(&m.s("due_on"))) } else { "No due date".to_string() };
+            DropOption::new(m.i("number"), m.s("title")).detail(due)
+        }))
         .rest("POST", format!("/repos/{repo}/issues"))
         .ok("Issue created")
         .inval(format!("/repos/{repo}/issues"))
