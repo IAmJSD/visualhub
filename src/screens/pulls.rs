@@ -382,6 +382,7 @@ impl Hub {
             "squash" => format!("{} (#{number})", pr.s("title")),
             _ => format!("Merge pull request #{number} from {}", pr.s("head.label")),
         };
+        let repo_path = format!("/repos/{repo}");
         let merge_form = FormSpec::new(method_label)
             .submit("Confirm merge")
             .width(600.0)
@@ -389,7 +390,7 @@ impl Hub {
             .field(Field::multiline("commit_message", "Commit message").value(if method == "squash" { pr.s("body") } else { pr.s("title") }))
             .field(Field::bool("delete_branch", "Delete the head branch afterwards", false))
             .build_with({
-                let (pr_path, inval_issue, method) = (pr_path.clone(), inval_issue.clone(), method.clone());
+                let (pr_path, repo_path, method) = (pr_path.clone(), repo_path.clone(), method.clone());
                 let (head_repo, head_ref, sha) = (head_repo.clone(), head_ref.clone(), sha.clone());
                 move |values| {
                     let mut body = json!({ "merge_method": method, "sha": sha });
@@ -407,8 +408,9 @@ impl Hub {
                         Ok(merged)
                     })
                     .ok("Pull request merged")
-                    .inval(pr_path.clone())
-                    .inval(inval_issue.clone())
+                    // A merge moves the base branch: its commits, files
+                    // and the repository page are all stale now.
+                    .inval(repo_path.clone())
                     .act())
                 }
             })
