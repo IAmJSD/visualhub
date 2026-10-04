@@ -363,7 +363,7 @@ pub fn discover_tokens() -> Vec<(String, &'static str)> {
 }
 
 pub fn gh_cli_token() -> Option<String> {
-    let mut command = std::process::Command::new("gh");
+    let mut command = std::process::Command::new(crate::cli::gh());
     command.args(["auth", "token"]);
     #[cfg(windows)]
     {

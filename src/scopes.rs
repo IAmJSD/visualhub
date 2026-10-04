@@ -132,7 +132,7 @@ impl Hub {
     /// into the pane until it exits.
     fn run_gh_refresh(&mut self, cx: &mut Context<Self>) {
         let Some(fix) = &mut self.scope_fix else { return };
-        let mut command = Command::new("gh");
+        let mut command = Command::new(crate::cli::gh());
         command
             .args(["auth", "refresh", "--hostname", "github.com", "--scopes", &fix.missing.join(",")])
             // No terminal, so gh prints the code and URL rather than

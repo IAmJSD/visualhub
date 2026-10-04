@@ -4,6 +4,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod api;
+mod cli;
 mod assets;
 mod autoscroll;
 mod diff;
