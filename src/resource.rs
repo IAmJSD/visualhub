@@ -12,9 +12,10 @@ use crate::json::{self, Json as _};
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, AnyElement, Context, ElementId, FontWeight, IntoElement as _, ParentElement as _,
+    div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _,
     SharedString, Styled as _,
 };
+use crate::time;
 use crate::ui::{icon, palette, Button, IconButton};
 use serde_json::Value;
 use std::rc::Rc;
@@ -174,6 +175,8 @@ pub struct ListSpec {
     pub empty: String,
     pub row: RowFn,
     pub filter: Option<Rc<dyn Fn(&Value) -> bool>>,
+    /// People, drawn as a grid of profile cards.
+    pub people: bool,
 }
 
 impl ListSpec {
@@ -187,6 +190,7 @@ impl ListSpec {
             empty: "Nothing here yet.".into(),
             row: Rc::new(row),
             filter: None,
+            people: false,
         }
     }
 
@@ -204,6 +208,12 @@ impl ListSpec {
 
     pub fn empty(mut self, message: impl Into<String>) -> Self {
         self.empty = message.into();
+        self
+    }
+
+    /// Draw the items, which are users, as profile cards.
+    pub fn people(mut self) -> Self {
+        self.people = true;
         self
     }
 
@@ -278,6 +288,9 @@ impl Hub {
         let mut card = widgets::card();
         if items.is_empty() && !loading {
             return card.child(widgets::empty(spec.empty.clone())).into_any_element();
+        }
+        if spec.people {
+            return self.people_grid(spec, &items, loading, more, cx);
         }
         let mut rows: Vec<Row> = items.iter().map(|item| (spec.row)(item)).collect();
         self.resolve_authors(&mut rows, cx);
@@ -451,5 +464,137 @@ impl Hub {
             .child(middle)
             .child(trailing)
             .into_any_element()
+    }
+
+    /// Users as GitHub's profile cards, three across: avatar, login and
+    /// name, where they are or work or when they joined, Follow, and any
+    /// actions the list gives them.
+    fn people_grid(&mut self, spec: &ListSpec, items: &[Value], loading: bool, more: bool, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette();
+        let me = self.login();
+        let mut grid = div().grid().grid_cols(3).gap_x_8();
+        for (i, user) in items.iter().enumerate() {
+            let row = (spec.row)(user);
+            let login = user.s("login");
+            let is_user = user.s("type") != "Organization";
+            // The list only carries the login and avatar; the rest is
+            // the profile, fetched once and kept.
+            let profile = self.fetch(&format!("/users/{login}"), cx).ready().cloned();
+            let detail: Option<(&str, String)> = profile.as_ref().and_then(|u| {
+                if !u.s("location").is_empty() {
+                    Some(("globe", u.s("location")))
+                } else if !u.s("company").is_empty() {
+                    Some(("org", u.s("company")))
+                } else if !u.s("created_at").is_empty() {
+                    Some(("clock", format!("Joined on {}", time::date(&u.s("created_at")))))
+                } else {
+                    None
+                }
+            });
+            let name = profile.as_ref().map(|u| u.s("name")).unwrap_or_default();
+            // What the list says about them beyond their name: "120
+            // commits", a role.
+            let note = if row.meta != name && row.meta != user.s("name") { row.meta.clone() } else { String::new() };
+
+            let mut buttons = div().flex().flex_row().flex_wrap().gap_2();
+            if is_user && login != me {
+                let following = self.fetch_check(&format!("/user/following/{login}"), cx).ready().map(|v| v.b(""));
+                if let Some(following) = following {
+                    let path = format!("/user/following/{login}");
+                    let act = crate::hub::Req::rest(if following { "DELETE" } else { "PUT" }, path.clone())
+                        .ok(if following { format!("Unfollowed {login}") } else { format!("Following {login}") })
+                        .inval(path)
+                        .inval(format!("/users/{login}"))
+                        .act();
+                    buttons = buttons.child(
+                        Button::new(ElementId::Name(format!("{}#{i}-follow", spec.id).into()), if following { "Unfollow" } else { "Follow" })
+                            .h(px(28.0))
+                            .px_3()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .consume_press()
+                            .on_click(on(act)),
+                    );
+                }
+            }
+            for (j, action) in row.actions.into_iter().enumerate() {
+                let mut button = Button::new(ElementId::Name(format!("{}#{i}-act-{j}", spec.id).into()), action.label)
+                    .h(px(28.0))
+                    .px_3()
+                    .text_size(px(12.0))
+                    .consume_press()
+                    .on_click(on(action.act));
+                if action.danger {
+                    button = button.colors(crate::ui::ButtonColors {
+                        bg: Some(p.button_bg),
+                        hover: widgets::red_fill(),
+                        text: widgets::red(),
+                        border: None,
+                    });
+                }
+                buttons = buttons.child(button);
+            }
+
+            let avatar = self.avatar(&user.s("avatar_url"), 48.0, cx);
+            grid = grid.child(
+                div()
+                    .id(ElementId::Name(format!("{}#{i}", spec.id).into()))
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_3()
+                    .py_4()
+                    .min_w_0()
+                    .border_b_1()
+                    .border_color(rgb(p.divider))
+                    .cursor_pointer()
+                    .on_click(on(row.open))
+                    .child(div().flex_none().child(avatar))
+                    .child(
+                        widgets::col()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .flex_wrap()
+                                    .items_baseline()
+                                    .gap_x_2()
+                                    .child(div().text_size(px(15.0)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(p.accent_hover)).child(login.clone()))
+                                    .when(!name.is_empty(), |d| d.child(widgets::dim(name.clone()))),
+                            )
+                            .when_some(detail, |d, (icon_name, text)| {
+                                d.child(
+                                    widgets::row()
+                                        .gap_1p5()
+                                        .child(icon(icon_name, 13.0, p.text_dim))
+                                        .child(div().text_ellipsis().overflow_hidden().whitespace_nowrap().child(text)),
+                                )
+                            })
+                            .when(!note.is_empty(), |d| d.child(widgets::dim(note.clone())))
+                            .child(div().pt_1().child(buttons)),
+                    ),
+            );
+        }
+        let mut col = widgets::col().child(grid);
+        if loading {
+            col = col.child(widgets::loading());
+        } else if more {
+            let id = spec.id.clone();
+            col = col.child(
+                div().flex().justify_center().p_2().child(
+                    Button::new(ElementId::Name(format!("{id}-more").into()), "Load more")
+                        .h(px(28.0))
+                        .on_click(cx.listener(move |hub, _, _, cx| {
+                            let next = hub.page(&id) + 1;
+                            hub.pages.insert(id.clone(), next);
+                            cx.notify();
+                        })),
+                ),
+            );
+        }
+        col.into_any_element()
     }
 }

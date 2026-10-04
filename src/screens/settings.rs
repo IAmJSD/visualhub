@@ -122,7 +122,8 @@ impl Hub {
                 let spec = ListSpec::new("/user/blocks", |u| {
                     user_row(u).action("Unblock", Req::rest("DELETE", format!("/user/blocks/{}", u.s("login"))).ok("Unblocked").inval("/user/blocks").act())
                 })
-                .empty("You haven't blocked anyone.");
+                .empty("You haven't blocked anyone.")
+                .people();
                 let list = self.list(&spec, cx);
                 widgets::col().gap_3().child(widgets::row().child(widgets::spacer()).child(widgets::danger("block-user", "Block a user", block))).child(list).into_any_element()
             }

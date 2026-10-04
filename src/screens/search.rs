@@ -63,7 +63,7 @@ impl Hub {
             let spec = match kind.as_str() {
                 "issues" => ListSpec::new(format!("/search/issues?q={}{sort_q}", enc(&format!("{} is:issue", applied.trim()))), |i| issue_row(i, true)),
                 "pulls" => ListSpec::new(format!("/search/issues?q={}{sort_q}", enc(&format!("{} is:pr", applied.trim()))), |i| issue_row(i, true)),
-                "users" => ListSpec::new(format!("/search/users?q={q}{sort_q}"), user_row),
+                "users" => ListSpec::new(format!("/search/users?q={q}{sort_q}"), user_row).people(),
                 "code" => ListSpec::new(format!("/search/code?q={q}"), |c| {
                     let repo = c.s("repository.full_name");
                     let path = c.s("path");

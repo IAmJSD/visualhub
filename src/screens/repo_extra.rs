@@ -333,7 +333,8 @@ impl Hub {
             "contributors" => {
                 let spec = ListSpec::new(format!("/repos/{repo}/contributors"), |c| {
                     user_row(c).meta(format!("{} commits", c.i("contributions"))).body(String::new())
-                });
+                })
+                .people();
                 self.list(&spec, cx)
             }
             "traffic" => {
@@ -433,11 +434,11 @@ impl Hub {
                 self.list(&spec, cx)
             }
             "stargazers" => {
-                let spec = ListSpec::new(format!("/repos/{repo}/stargazers"), user_row).empty("No stargazers yet.");
+                let spec = ListSpec::new(format!("/repos/{repo}/stargazers"), user_row).empty("No stargazers yet.").people();
                 self.list(&spec, cx)
             }
             "watchers" => {
-                let spec = ListSpec::new(format!("/repos/{repo}/subscribers"), user_row).empty("No watchers.");
+                let spec = ListSpec::new(format!("/repos/{repo}/subscribers"), user_row).empty("No watchers.").people();
                 self.list(&spec, cx)
             }
             _ => {
@@ -556,7 +557,8 @@ impl Hub {
                             ),
                         )
                 })
-                .empty("No collaborators.");
+                .empty("No collaborators.")
+                .people();
                 let list = self.list(&spec, cx);
                 widgets::col()
                     .gap_3()
