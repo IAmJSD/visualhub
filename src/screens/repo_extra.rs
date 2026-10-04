@@ -9,7 +9,7 @@ use crate::resource::{ListSpec, Row};
 use crate::time;
 use crate::widgets::{self, rgb};
 use gpui::{div, AnyElement, InteractiveElement as _, Context, IntoElement as _, ParentElement as _, Styled as _};
-use schist_ui::{icon, palette};
+use crate::ui::{icon, palette};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -964,7 +964,7 @@ impl Hub {
                 widgets::card()
                     .p_4()
                     .gap_2()
-                    .child(widgets::row().child(icon("globe", 16.0, widgets::green())).child(widgets::h3("Your site is live")).child(schist_ui::Link::new("pages-url", v.s("html_url")).url(v.s("html_url"))))
+                    .child(widgets::row().child(icon("globe", 16.0, widgets::green())).child(widgets::h3("Your site is live")).child(crate::ui::Link::new("pages-url", v.s("html_url")).url(v.s("html_url"))))
                     .child(widgets::dim(format!("Status: {}  ·  Source: {} {}", v.s("status"), v.s("source.branch"), v.s("source.path"))))
                     .child(
                         widgets::row()

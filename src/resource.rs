@@ -15,7 +15,7 @@ use gpui::{
     div, px, AnyElement, Context, ElementId, FontWeight, IntoElement as _, ParentElement as _,
     SharedString, Styled as _,
 };
-use schist_ui::{icon, palette, Button, IconButton};
+use crate::ui::{icon, palette, Button, IconButton};
 use serde_json::Value;
 use std::rc::Rc;
 
@@ -342,7 +342,7 @@ impl Hub {
                 .consume_press()
                 .on_click(on(action.act));
                 if action.danger {
-                    button = button.colors(schist_ui::ButtonColors {
+                    button = button.colors(crate::ui::ButtonColors {
                         bg: Some(p.button_bg),
                         hover: widgets::red_fill(),
                         text: widgets::red(),

@@ -14,7 +14,7 @@ use crate::time;
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, AnyElement, Context, ElementId, IntoElement as _, ParentElement as _, Styled as _};
-use schist_ui::palette;
+use crate::ui::palette;
 use serde_json::{json, Value};
 
 pub fn new_issue_form(repo: &str) -> Act {
@@ -727,7 +727,7 @@ impl Hub {
                 widgets::row()
                     .child(widgets::dim("No one —"))
                     .child(
-                        schist_ui::Link::new("assign-self", "assign yourself").on_click(on(
+                        crate::ui::Link::new("assign-self", "assign yourself").on_click(on(
                             with_inval(Req::rest("POST", format!("{path}/assignees")).body(json!({ "assignees": [me] }))).act(),
                         )),
                     ),
@@ -784,7 +784,7 @@ impl Hub {
             widgets::col()
                 .gap_1()
                 .child(m.s("title"))
-                .child(schist_ui::ProgressBar::new(done).h(px(6.0)).w_full())
+                .child(crate::ui::ProgressBar::new(done).h(px(6.0)).w_full())
                 .into_any_element()
         } else {
             widgets::dim("No milestone").into_any_element()

@@ -11,7 +11,7 @@ use crate::time;
 use crate::widgets;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, AnyElement, Context, IntoElement as _, ParentElement as _, Styled as _};
-use schist_ui::{icon, palette};
+use crate::ui::{icon, palette};
 use serde_json::{json, Map, Value};
 
 pub fn new_gist_form() -> Act {

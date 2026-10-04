@@ -11,7 +11,7 @@ use crate::time;
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, AnyElement, Context, ElementId, IntoElement as _, ParentElement as _, Styled as _};
-use schist_ui::{icon, palette};
+use crate::ui::{icon, palette};
 use serde_json::{json, Value};
 
 const LIST: &str = "query($o: String!, $n: String!, $cat: ID) {
@@ -156,7 +156,7 @@ impl Hub {
             } else {
                 "mutation($id: ID!) { addUpvote(input: {subjectId: $id}) { clientMutationId } }"
             };
-            schist_ui::Button::new(ElementId::Name(eid.into()), format!("▲ {count}"))
+            crate::ui::Button::new(ElementId::Name(eid.into()), format!("▲ {count}"))
                 .h(px(24.0))
                 .px_2()
                 .active(has)

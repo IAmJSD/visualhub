@@ -3,19 +3,15 @@ name = "visualhub"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "A native GitHub client built on GPUI and Schist's widget kit"
+description = "A native GitHub client built on GPUI"
 
 [[bin]]
 name = "visualhub"
 path = "src/main.rs"
 
 [dependencies]
-# Schist's widget kit: buttons, fields, popovers, modals and the palette
-# they draw with. Taken from the local checkout so both apps share one
-# set of chrome; it must be built against the same gpui as this crate.
-schist-ui = { path = "../../../schist/crates/ui" }
-# The same fork and revision Schist pins, so `schist-ui`'s elements and
-# ours are the same gpui types.
+# The fork and revision Schist pins; the widget kit in src/ui is copied
+# from Schist and written against it.
 gpui = { git = "https://github.com/IAmJSD/gpui", rev = "0f78678d38c244cc20540f190877d4573be58c9b" }
 anyhow = "1"
 serde_json = "1"

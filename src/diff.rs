@@ -11,7 +11,7 @@ use gpui::{
     div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _,
     ParentElement as _, StatefulInteractiveElement as _, Styled as _,
 };
-use schist_ui::{is_light, palette, IconButton};
+use crate::ui::{is_light, palette, IconButton};
 use serde_json::{json, Value};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

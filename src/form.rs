@@ -13,7 +13,7 @@ use gpui::{
     div, px, AnyElement, Context, ElementId, IntoElement as _, ParentElement as _, SharedString,
     Styled as _,
 };
-use schist_ui::{palette, Button, Checkbox, DropdownButton, LineEdit, TextInput, TextPress};
+use crate::ui::{palette, Button, Checkbox, DropdownButton, LineEdit, TextInput, TextPress};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -519,7 +519,7 @@ impl Hub {
         match self.modal.as_ref()? {
             Modal::Form { spec, error, busy } => {
                 let (spec, error, busy) = (spec.clone(), error.clone(), *busy);
-                let mut modal = schist_ui::Modal::new(spec.title.clone())
+                let mut modal = crate::ui::Modal::new(spec.title.clone())
                     .width(spec.width)
                     .text_size(px(13.0))
                     .p_4()
@@ -551,7 +551,7 @@ impl Hub {
                     .disabled(busy)
                     .on_click(cx.listener(|hub, _, window, cx| hub.submit_modal(window, cx)));
                 let submit = if spec.danger {
-                    submit.colors(schist_ui::ButtonColors {
+                    submit.colors(crate::ui::ButtonColors {
                         bg: Some(widgets::red_fill()),
                         hover: widgets::red(),
                         text: 0xFFFFFF,
@@ -564,7 +564,7 @@ impl Hub {
                     modal
                         .action(
                             div().flex_1().when(busy, |d| {
-                                d.child(schist_ui::Spinner::new("form-busy").size(16.0))
+                                d.child(crate::ui::Spinner::new("form-busy").size(16.0))
                             }),
                         )
                         .action(
@@ -586,7 +586,7 @@ impl Hub {
             } => {
                 let busy = *busy;
                 Some(
-                    schist_ui::Modal::new(title.clone())
+                    crate::ui::Modal::new(title.clone())
                         .width(440.0)
                         .text_size(px(13.0))
                         .p_4()
@@ -596,7 +596,7 @@ impl Hub {
                             m.child(div().text_color(rgb(widgets::red())).child(error))
                         })
                         .action(div().flex_1().when(busy, |d| {
-                            d.child(schist_ui::Spinner::new("confirm-busy").size(16.0))
+                            d.child(crate::ui::Spinner::new("confirm-busy").size(16.0))
                         }))
                         .action(
                             Button::new("confirm-cancel", "Cancel")
@@ -607,7 +607,7 @@ impl Hub {
                             Button::new("confirm-ok", label.clone())
                                 .h(px(28.0))
                                 .disabled(busy)
-                                .colors(schist_ui::ButtonColors {
+                                .colors(crate::ui::ButtonColors {
                                     bg: Some(widgets::red_fill()),
                                     hover: widgets::red(),
                                     text: 0xFFFFFF,

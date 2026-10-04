@@ -14,7 +14,7 @@ use gpui::{
     StatefulInteractiveElement as _, StrikethroughStyle, Styled as _, StyledText, UnderlineStyle,
 };
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
-use schist_ui::palette;
+use crate::ui::palette;
 use std::ops::Range;
 use std::rc::Rc;
 

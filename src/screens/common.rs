@@ -12,7 +12,7 @@ use gpui::{
     div, px, AnyElement, Context, ElementId, FontWeight, IntoElement as _, ParentElement as _,
     Styled as _,
 };
-use schist_ui::{icon, palette, Button, IconButton};
+use crate::ui::{icon, palette, Button, IconButton};
 use serde_json::{json, Value};
 
 /// "owner/name" from any of GitHub's API URLs for a repository or
@@ -204,7 +204,7 @@ pub fn reactions_bar(id: &str, reactions: &Value, base: &str, login: &str, inval
                 .px_2()
                 .rounded_full()
                 .text_size(px(12.0))
-                .colors(schist_ui::ButtonColors {
+                .colors(crate::ui::ButtonColors {
                     bg: Some(p.control_bg),
                     hover: p.hover,
                     text: p.text,

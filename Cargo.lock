@@ -1911,7 +1911,6 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
- "zlib-rs",
 ]
 
 [[package]]
@@ -5112,23 +5111,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "schist-i18n"
-version = "0.15.0"
-dependencies = [
- "flate2",
- "log",
- "sys-locale",
-]
-
-[[package]]
-name = "schist-ui"
-version = "0.15.0"
-dependencies = [
- "gpui",
- "schist-i18n",
-]
-
-[[package]]
 name = "scoped-tls"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6501,7 +6483,6 @@ dependencies = [
  "gpui",
  "log",
  "pulldown-cmark",
- "schist-ui",
  "serde_json",
  "ureq",
 ]
@@ -7869,12 +7850,6 @@ dependencies = [
  "quote",
  "syn 3.0.3",
 ]
-
-[[package]]
-name = "zlib-rs"
-version = "0.6.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34b31d188d9d685a4f9c7b46d6e36631b07058d2cfe190267adce54dc230bf12"
 
 [[package]]
 name = "zmij"

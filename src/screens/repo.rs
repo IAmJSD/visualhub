@@ -12,7 +12,7 @@ use crate::time;
 use crate::widgets::{self, rgb, TabItem};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, AnyElement, InteractiveElement as _, StatefulInteractiveElement as _, Context, ElementId, FontWeight, IntoElement as _, ParentElement as _, Styled as _};
-use schist_ui::{icon, palette, DropdownButton};
+use crate::ui::{icon, palette, DropdownButton};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -339,9 +339,9 @@ impl Hub {
         for t in info.list("topics") {
             let topic = t.as_str().unwrap_or("").to_string();
             topics = topics.child(
-                schist_ui::Chip::new(ElementId::Name(format!("topic-{topic}").into()), topic.clone())
-                    .colors(schist_ui::ChipColors {
-                        bg: if schist_ui::is_light() { 0xDDF4FF } else { 0x121D2F },
+                crate::ui::Chip::new(ElementId::Name(format!("topic-{topic}").into()), topic.clone())
+                    .colors(crate::ui::ChipColors {
+                        bg: if crate::ui::is_light() { 0xDDF4FF } else { 0x121D2F },
                         hover: p.hover,
                         text: p.accent_hover,
                         selected_bg: p.selection_bg,
@@ -395,7 +395,7 @@ impl Hub {
                 let parent = info.s("parent.full_name");
                 d.child(
                     widgets::row().child(widgets::dim("forked from")).child(
-                        schist_ui::Link::new("parent", parent.clone())
+                        crate::ui::Link::new("parent", parent.clone())
                             .text_size(px(12.0))
                             .on_click(on(Act::Go(Route::Repo { repo: parent, tab: RepoTab::Code }))),
                     ),
@@ -403,7 +403,7 @@ impl Hub {
             })
             .when(!info.s("description").is_empty(), |d| d.child(div().text_color(rgb(p.text)).child(info.s("description"))))
             .when(!info.s("homepage").is_empty(), |d| {
-                d.child(schist_ui::Link::new("homepage", info.s("homepage")).url(info.s("homepage")))
+                d.child(crate::ui::Link::new("homepage", info.s("homepage")).url(info.s("homepage")))
             })
             .when(!info.list("topics").is_empty(), |d| d.child(topics))
             .into_any_element()
@@ -640,7 +640,7 @@ impl Hub {
                     div()
                         .id(("contributor", i))
                         .cursor_pointer()
-                        .tooltip(schist_ui::tip(format!("{login} · {} commits", person.i("contributions")), None))
+                        .tooltip(crate::ui::tip(format!("{login} · {} commits", person.i("contributions")), None))
                         .child(avatar)
                         .on_click(on(Act::Go(Route::User { login }))),
                 );
@@ -841,7 +841,7 @@ impl Hub {
             .text_size(px(15.0))
             .child(widgets::tag(git_ref.to_string(), p.text_dim))
             .child(
-                schist_ui::Link::new("crumb-root", repo.rsplit('/').next().unwrap_or(repo).to_string())
+                crate::ui::Link::new("crumb-root", repo.rsplit('/').next().unwrap_or(repo).to_string())
                     .font_weight(FontWeight::SEMIBOLD)
                     .on_click(on(Act::Go(Route::Tree {
                         repo: repo.to_string(),
@@ -857,7 +857,7 @@ impl Hub {
                 row = row.child(div().font_weight(FontWeight::SEMIBOLD).child(part.to_string()));
             } else {
                 row = row.child(
-                    schist_ui::Link::new(ElementId::Name(format!("crumb-{i}").into()), part.to_string()).on_click(on(Act::Go(
+                    crate::ui::Link::new(ElementId::Name(format!("crumb-{i}").into()), part.to_string()).on_click(on(Act::Go(
                         Route::Tree {
                             repo: repo.to_string(),
                             git_ref: git_ref.to_string(),

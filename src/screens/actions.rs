@@ -11,7 +11,7 @@ use crate::time;
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, AnyElement, Context, ElementId, FontWeight, IntoElement as _, ParentElement as _, Styled as _};
-use schist_ui::{icon, palette};
+use crate::ui::{icon, palette};
 use serde_json::{json, Value};
 
 fn dispatch_form(repo: &str, workflow: &Value, default_branch: &str) -> Act {
@@ -395,7 +395,7 @@ impl Hub {
                     let mut card = widgets::card().child(
                         widgets::card_header()
                             .child(
-                                schist_ui::IconButton::new(ElementId::Name(format!("job-fold-{i}").into()), if open { "chevron-down" } else { "chevron-right" })
+                                crate::ui::IconButton::new(ElementId::Name(format!("job-fold-{i}").into()), if open { "chevron-down" } else { "chevron-right" })
                                     .on_click(on(Act::run(move |hub, _, cx| {
                                         if !hub.open.remove(&toggle) {
                                             hub.open.insert(toggle.clone());

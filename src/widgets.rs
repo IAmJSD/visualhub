@@ -1,10 +1,10 @@
-//! Small pieces of GitHub-flavoured chrome built on `schist-ui`: state
+//! Small pieces of GitHub-flavoured chrome built on the widget kit in `ui`: state
 //! pills, label chips, underline tabs, cards, and the placeholders a page
 //! shows while its data is on the way.
 //!
-//! Anything Schist's kit already has (buttons, fields, chips, menus,
-//! modals, spinners) is used from there; these are the things a code host
-//! needs that an image editor does not.
+//! Anything the kit already has (buttons, fields, chips, menus, modals,
+//! spinners) is used from there; these are the things a code host needs
+//! that the image editor the kit came from does not.
 
 use crate::hub::{on, Act, Load};
 use gpui::prelude::FluentBuilder as _;
@@ -12,7 +12,7 @@ use gpui::{
     div, px, AnyElement, Div, ElementId, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
 };
-use schist_ui::{icon, is_light, palette, Button, Spinner};
+use crate::ui::{icon, is_light, palette, Button, Spinner};
 
 #[cfg(target_os = "windows")]
 pub const MONO: &str = "Consolas";
@@ -21,7 +21,7 @@ pub const MONO: &str = "Menlo";
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const MONO: &str = "DejaVu Sans Mono";
 
-/// Body text size. A touch larger than Schist's panel text: these pages
+/// Body text size. A touch larger than the kit's panel text: these pages
 /// are read, not glanced at.
 pub const TEXT: f32 = 13.0;
 
@@ -285,7 +285,7 @@ pub fn counter(n: i64) -> Div {
 
 // -- controls ------------------------------------------------------------
 
-/// A Schist button that performs an act.
+/// A kit button that performs an act.
 pub fn btn(id: impl Into<ElementId>, label: impl Into<SharedString>, act: Act) -> Button {
     Button::new(id, label).h(px(28.0)).on_click(on(act))
 }
@@ -315,7 +315,7 @@ pub fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>, act: Ac
 pub fn danger(id: impl Into<ElementId>, label: impl Into<SharedString>, act: Act) -> Button {
     let p = palette();
     Button::new(id, label)
-        .colors(schist_ui::ButtonColors {
+        .colors(crate::ui::ButtonColors {
             bg: Some(p.button_bg),
             hover: red_fill(),
             text: red(),
@@ -328,7 +328,7 @@ pub fn danger(id: impl Into<ElementId>, label: impl Into<SharedString>, act: Act
 /// A green "positive" button: Merge, New.
 pub fn go_btn(id: impl Into<ElementId>, label: impl Into<SharedString>, act: Act) -> Button {
     Button::new(id, label)
-        .colors(schist_ui::ButtonColors {
+        .colors(crate::ui::ButtonColors {
             bg: Some(green_fill()),
             hover: if is_light() { 0x1A7F37 } else { 0x2EA043 },
             text: 0xFFFFFF,
@@ -343,7 +343,7 @@ pub fn chips(items: Vec<(String, bool, Act)>) -> Div {
     let mut el = div().flex().flex_row().flex_wrap().gap_1();
     for (i, (label, selected, act)) in items.into_iter().enumerate() {
         el = el.child(
-            schist_ui::Chip::new(("chip", i), label)
+            crate::ui::Chip::new(("chip", i), label)
                 .selected(selected)
                 .h(px(24.0))
                 .px_3()
@@ -523,7 +523,7 @@ pub fn bar_chart(id: &str, title: &str, bars: Vec<(String, i64)>, height: f32) -
                 .flex_col()
                 .justify_end()
                 .hover(|s| s.bg(rgb(p.hover)))
-                .tooltip(schist_ui::tip(tip, None))
+                .tooltip(crate::ui::tip(tip, None))
                 .child(
                     div()
                         .w_full()

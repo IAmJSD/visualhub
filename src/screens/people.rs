@@ -12,7 +12,7 @@ use crate::time;
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _, Styled as _};
-use schist_ui::{icon, palette};
+use crate::ui::{icon, palette};
 use serde_json::json;
 
 const PROFILE: &str = "query($l: String!) {
@@ -74,7 +74,7 @@ impl Hub {
         };
         let people = |label: &str, n: i64, tab: &str| {
             let key = format!("user.tab:{login}");
-            schist_ui::Link::new(ElementId::Name(format!("people-{tab}").into()), format!("{n} {label}"))
+            crate::ui::Link::new(ElementId::Name(format!("people-{tab}").into()), format!("{n} {label}"))
                 .text_size(px(12.0))
                 .on_click(on(Act::choose(key, tab)))
         };
@@ -83,7 +83,7 @@ impl Hub {
             .when(!user.s("company").is_empty(), |d| d.child(widgets::icon_text("org", user.s("company"), p.text)))
             .when(!user.s("location").is_empty(), |d| d.child(widgets::icon_text("globe", user.s("location"), p.text)))
             .when(!user.s("email").is_empty(), |d| d.child(widgets::icon_text("mail", user.s("email"), p.text)))
-            .when(!user.s("blog").is_empty(), |d| d.child(schist_ui::Link::new("blog", user.s("blog")).url(if user.s("blog").starts_with("http") { user.s("blog") } else { format!("https://{}", user.s("blog")) })))
+            .when(!user.s("blog").is_empty(), |d| d.child(crate::ui::Link::new("blog", user.s("blog")).url(if user.s("blog").starts_with("http") { user.s("blog") } else { format!("https://{}", user.s("blog")) })))
             .when(!user.s("twitter_username").is_empty(), |d| d.child(widgets::icon_text("mention", format!("@{}", user.s("twitter_username")), p.text)))
             .child(widgets::faint(format!("Joined {}", time::date(&user.s("created_at")))));
         if let Some(orgs) = self.fetch(&format!("/users/{login}/orgs"), cx).ready().cloned() {
@@ -95,7 +95,7 @@ impl Hub {
                         div()
                             .id(("user-org", i))
                             .cursor_pointer()
-                            .tooltip(schist_ui::tip(o.s("login"), None))
+                            .tooltip(crate::ui::tip(o.s("login"), None))
                             .child(avatar)
                             .on_click(on(Act::Go(Route::Org { login: o.s("login") }))),
                     );
@@ -208,7 +208,7 @@ impl Hub {
                                 .size(px(11.0))
                                 .rounded(px(2.0))
                                 .bg(rgb(fill))
-                                .tooltip(schist_ui::tip(format!("{n} contributions on {}", time::date(&format!("{}T00:00:00Z", day.s("date")))), None)),
+                                .tooltip(crate::ui::tip(format!("{n} contributions on {}", time::date(&format!("{}T00:00:00Z", day.s("date")))), None)),
                         );
                     }
                     grid = grid.child(column);
@@ -421,7 +421,7 @@ impl Hub {
                                     .gap_4()
                                     .when(org.b("is_verified"), |d| d.child(widgets::tag("Verified", widgets::green())))
                                     .when(!org.s("location").is_empty(), |d| d.child(widgets::icon_text("globe", org.s("location"), p.text_dim)))
-                                    .when(!org.s("blog").is_empty(), |d| d.child(schist_ui::Link::new("org-blog", org.s("blog")).url(org.s("blog"))))
+                                    .when(!org.s("blog").is_empty(), |d| d.child(crate::ui::Link::new("org-blog", org.s("blog")).url(org.s("blog"))))
                                     .child(widgets::dim(format!("{} public repositories  ·  {} followers", org.i("public_repos"), org.i("followers")))),
                             ),
                     )

@@ -1,5 +1,5 @@
-//! VisualHub: a native GitHub client on GPUI, drawn with Schist's widget
-//! kit. Everything GitHub's web UI does except editing code.
+//! VisualHub: a native GitHub client on GPUI, drawn with a widget kit
+//! copied from Schist. Everything GitHub's web UI does except editing code.
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
@@ -14,6 +14,7 @@ mod resource;
 mod screens;
 mod shell;
 mod time;
+mod ui;
 mod widgets;
 
 use gpui::{

@@ -13,7 +13,7 @@ use crate::time;
 use crate::widgets::{self, rgb, TabItem};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, AnyElement, Context, FontWeight, IntoElement as _, ParentElement as _, Styled as _};
-use schist_ui::{icon, palette};
+use crate::ui::{icon, palette};
 use serde_json::{json, Value};
 
 pub fn new_pull_form(repo: &str, base: &str, head: &str) -> Act {

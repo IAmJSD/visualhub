@@ -3,8 +3,9 @@
 # VisualHub
 
 A native GitHub client written in Rust on [GPUI](https://github.com/IAmJSD/gpui)
-(the IAmJSD fork that Schist uses). Its chrome comes from Schist's widget kit,
-`schist-ui`. VisualHub covers what you do on github.com, except editing code.
+(the IAmJSD fork). Its widgets are adapted from
+[Schist](https://github.com/Infrawrench/schist)'s widget kit. VisualHub covers
+what you do on github.com, except editing code.
 Files, diffs, logs and gists are read-only. Everything else can be done from
 the app.
 
@@ -68,13 +69,15 @@ to a classic-token page with every scope the app uses already selected.
 cargo run --release
 ```
 
-VisualHub depends on Schist's widget kit by path, so a Schist checkout must sit
-next to it as `../../../schist` (that is, `C:\Users\Administrator\schist`
-here). Both use the same pinned GPUI fork revision, so their elements share
-types. `Cargo.lock` started from Schist's lock file to get the same versions.
+The build is self-contained: GPUI comes from the pinned fork revision, and
+nothing else needs to be checked out next to it.
 
 ## How it's built
 
+- `src/ui/`: the widget kit (buttons, text fields, chips, menus, dialogs,
+  spinners, the palette), copied from Schist's `schist-ui` crate under its MIT
+  license (`src/ui/LICENSE-SCHIST`). Only the components the app uses were
+  copied.
 - `src/api.rs`: one blocking `ureq` agent for REST, GraphQL, raw content and
   images. It runs on GPUI's background executor.
 - `src/hub.rs`: the single view. Pages call `fetch(path)`, which returns the

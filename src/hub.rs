@@ -17,7 +17,7 @@ use gpui::{
     App, ClickEvent, ClipboardItem, Context, FocusHandle, Image,
     ImageFormat, KeyDownEvent, Pixels, Point, WeakEntity, Window,
 };
-use schist_ui::{LineEdit, LineEditKey, TextPress};
+use crate::ui::{LineEdit, LineEditKey, TextPress};
 use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -1294,7 +1294,7 @@ impl Hub {
     /// A round avatar, fetched once per URL and size.
     pub fn avatar(&mut self, url: &str, size: f32, cx: &mut Context<Self>) -> gpui::AnyElement {
         use gpui::{div, img, px, IntoElement as _, Styled as _};
-        let p = schist_ui::palette();
+        let p = crate::ui::palette();
         let pixels = (size * 2.0).round() as u32;
         let image = if url.is_empty() {
             None
@@ -1321,7 +1321,7 @@ impl Hub {
     /// An image in a document, at its own size up to the column's width.
     pub fn image(&mut self, url: &str, cx: &mut Context<Self>) -> gpui::AnyElement {
         use gpui::{div, img, px, IntoElement as _, ParentElement as _, Styled as _};
-        let p = schist_ui::palette();
+        let p = crate::ui::palette();
         match self.load_image(url.to_string(), cx) {
             Some(image) => img(image)
                 .max_w(px(760.0))

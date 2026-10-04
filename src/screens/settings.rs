@@ -10,7 +10,7 @@ use crate::time;
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{div, AnyElement, Context, IntoElement as _, ParentElement as _, Styled as _};
-use schist_ui::palette;
+use crate::ui::palette;
 use serde_json::json;
 
 const SECTIONS: [(&str, &str); 11] = [
@@ -186,7 +186,7 @@ impl Hub {
                         ("Dark".into(), theme == Theme::Dark, choose(Theme::Dark)),
                         ("Light".into(), theme == Theme::Light, choose(Theme::Light)),
                     ]))
-                    .child(widgets::dim("Colours come from Schist's palette, so both themes match the Schist editor."))
+                    .child(widgets::dim("Follows the system appearance unless you pick one here."))
                     .into_any_element()
             }
             "session" => {
@@ -202,7 +202,7 @@ impl Hub {
                         card = card.child(
                             widgets::row()
                                 .child(div().w(gpui::px(90.0)).child(name))
-                                .child(schist_ui::ProgressBar::new(used as f32 / limit as f32).flex_1().h(gpui::px(6.0)))
+                                .child(crate::ui::ProgressBar::new(used as f32 / limit as f32).flex_1().h(gpui::px(6.0)))
                                 .child(widgets::dim(format!("{used}/{limit} used"))),
                         );
                     }

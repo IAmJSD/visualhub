@@ -1,4 +1,4 @@
-//! The asset source gpui loads SVGs from. `schist-ui` names its icons as
+//! The asset source gpui loads SVGs from. The widget kit names its icons as
 //! `icons/<name>.svg` and leaves serving them to the host; this is the host.
 
 use gpui::{AssetSource, Result, SharedString};

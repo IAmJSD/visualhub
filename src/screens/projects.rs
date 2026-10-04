@@ -10,7 +10,7 @@ use crate::time;
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _, Styled as _};
-use schist_ui::{icon, palette, IconButton};
+use crate::ui::{icon, palette, IconButton};
 use serde_json::{json, Value};
 
 const SUMMARY: &str = "id title number shortDescription closed updatedAt url public items { totalCount } owner { ... on User { login } ... on Organization { login } }";

@@ -10,7 +10,7 @@ use gpui::{
     InteractiveElement as _, IntoElement, KeyDownEvent, MouseDownEvent, ParentElement as _,
     Render, StatefulInteractiveElement as _, Styled as _, Window, WindowAppearance,
 };
-use schist_ui::{icon, palette, Button, IconButton, MenuItem, Spinner};
+use crate::ui::{icon, palette, Button, IconButton, MenuItem, Spinner};
 
 impl Render for Hub {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -22,7 +22,7 @@ impl Render for Hub {
                 WindowAppearance::Light | WindowAppearance::VibrantLight
             ),
         };
-        schist_ui::set_light(self.light);
+        crate::ui::set_light(self.light);
         let p = palette();
         // Enter-handlers are registered by whatever drew their box.
         self.submits.clear();
@@ -513,7 +513,7 @@ impl Hub {
     fn render_menu(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let menu = self.menu.as_ref()?;
         let (at, entries) = (menu.at, menu.entries.clone());
-        let mut popover = schist_ui::Popover::new("menu")
+        let mut popover = crate::ui::Popover::new("menu")
             .in_flow()
             .min_w(px(220.0))
             .max_w(px(420.0))
@@ -543,7 +543,7 @@ impl Hub {
                         .text_color(rgb(palette().text_dim))
                         .child(text.clone()),
                 ),
-                MenuEntry::Sep => popover.child(schist_ui::menu_separator()),
+                MenuEntry::Sep => popover.child(crate::ui::menu_separator()),
             };
         }
         Some(
