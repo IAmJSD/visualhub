@@ -290,6 +290,33 @@ pub fn load_recent(login: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Each repository's chosen merge method, as `merge.method:{repo}`
+/// choices, from the last run.
+pub fn load_merge_methods() -> Vec<(String, String)> {
+    config_dir()
+        .and_then(|dir| std::fs::read_to_string(dir.join("merge-methods")).ok())
+        .map(|text| {
+            text.lines()
+                .filter_map(|l| l.split_once('\t'))
+                .map(|(repo, method)| (format!("merge.method:{repo}"), method.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Write back every `merge.method:` choice.
+pub fn save_merge_methods(choices: &std::collections::HashMap<String, String>) {
+    let Some(dir) = config_dir() else { return };
+    let mut lines: Vec<String> = choices
+        .iter()
+        .filter_map(|(k, v)| k.strip_prefix("merge.method:").map(|repo| format!("{repo}\t{v}")))
+        .collect();
+    lines.sort();
+    if std::fs::create_dir_all(&dir).is_ok() {
+        let _ = std::fs::write(dir.join("merge-methods"), lines.join("\n"));
+    }
+}
+
 /// Remembering is best-effort: a failed write only costs the list.
 pub fn save_recent(login: &str, repos: &[String]) {
     let Some(dir) = config_dir() else { return };

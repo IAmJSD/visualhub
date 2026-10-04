@@ -2,59 +2,13 @@
 //! repository form.
 
 use super::common::repo_row;
-use crate::form::{Field, FormSpec};
-use crate::hub::{Act, Hub, MenuEntry, Req, Route, RepoTab};
+use crate::hub::{Act, Hub, MenuEntry, Req, Route};
 use crate::json::Json as _;
 use crate::resource::{ListSpec, Row};
 use crate::time;
 use crate::widgets;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{AnyElement, Context, IntoElement as _, ParentElement as _, Styled as _};
-
-/// Create a repository for you, or in `org`.
-pub fn new_repo_form(org: Option<&str>) -> Act {
-    let path = match org {
-        Some(org) => format!("/orgs/{org}/repos"),
-        None => "/user/repos".to_string(),
-    };
-    FormSpec::new(match org {
-        Some(org) => format!("Create a repository in {org}"),
-        None => "Create a new repository".into(),
-    })
-    .submit("Create repository")
-    .width(600.0)
-    .field(Field::text("name", "Repository name").required())
-    .field(Field::text("description", "Description"))
-    .field(Field::text("homepage", "Website"))
-    .field(if org.is_some() {
-        Field::choice("visibility", "Visibility", &[("public", "Public"), ("private", "Private"), ("internal", "Internal")])
-    } else {
-        Field::choice("visibility", "Visibility", &[("public", "Public"), ("private", "Private")])
-    })
-    .field(Field::bool("auto_init", "Add a README file", true))
-    .field(Field::text("gitignore_template", "Add .gitignore").hint("A template name such as Rust, Node, Python; empty for none."))
-    .field(Field::text("license_template", "Choose a license").hint("A license key such as mit, apache-2.0, gpl-3.0; empty for none."))
-    .field(Field::bool("is_template", "Template repository", false))
-    .rest("POST", path)
-    .map(|mut body, values| {
-        if values.s("visibility") == "private" {
-            body["private"] = serde_json::json!(true);
-        }
-        body
-    })
-    .ok("Repository created")
-    .inval("/user/repos")
-    .then(|hub, value, cx| {
-        hub.go(
-            Route::Repo {
-                repo: value.s("full_name"),
-                tab: RepoTab::Code,
-            },
-            cx,
-        )
-    })
-    .act()
-}
 
 impl Hub {
     pub fn repos(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -126,7 +80,7 @@ impl Hub {
                 widgets::row()
                     .child(widgets::title("Repositories"))
                     .child(widgets::spacer())
-                    .child(widgets::go_btn("new-repo", "New repository", new_repo_form(None))),
+                    .child(widgets::go_btn("new-repo", "New repository", Act::Go(Route::NewRepo { owner: None }))),
             )
             .child(
                 widgets::row()

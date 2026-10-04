@@ -482,11 +482,11 @@ impl Hub {
         };
         let extra = if open {
             vec![
-                widgets::btn("close-issue", "Close as completed", close("completed", "Issue closed")).into_any_element(),
-                widgets::btn("close-np", "Close as not planned", close("not_planned", "Issue closed")).into_any_element(),
+                widgets::icon_action("close-issue", "issue-closed", widgets::purple(), "Close as completed", close("completed", "Issue closed")).into_any_element(),
+                widgets::icon_action("close-np", "issue-skip", widgets::gray(), "Close as not planned", close("not_planned", "Issue closed")).into_any_element(),
             ]
         } else {
-            vec![widgets::btn("reopen-issue", "Reopen issue", close("reopened", "Issue reopened")).into_any_element()]
+            vec![widgets::icon_action("reopen-issue", "issue", widgets::green(), "Reopen issue", close("reopened", "Issue reopened")).into_any_element()]
         };
         let submit = post_comment(&field, &format!("/repos/{repo}/issues/{number}/comments"), &inval);
         if issue.b("locked") {

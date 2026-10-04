@@ -328,12 +328,7 @@ pub fn danger(id: impl Into<ElementId>, label: impl Into<SharedString>, act: Act
 /// A green "positive" button: Merge, New.
 pub fn go_btn(id: impl Into<ElementId>, label: impl Into<SharedString>, act: Act) -> Button {
     Button::new(id, label)
-        .colors(crate::ui::ButtonColors {
-            bg: Some(green_fill()),
-            hover: if is_light() { 0x1A7F37 } else { 0x2EA043 },
-            text: 0xFFFFFF,
-            border: None,
-        })
+        .colors(green_colors())
         .h(px(28.0))
         .on_click(on(act))
 }
@@ -548,4 +543,169 @@ pub fn bar_chart(id: &str, title: &str, bars: Vec<(String, i64)>, height: f32) -
         .child(plot)
         .child(row().child(faint(first)).child(spacer()).child(faint(last)))
         .into_any_element()
+}
+
+// -- GitHub's form chrome -----------------------------------------------
+
+fn green_colors() -> crate::ui::ButtonColors {
+    crate::ui::ButtonColors {
+        bg: Some(green_fill()),
+        hover: if is_light() { 0x1A7F37 } else { 0x2EA043 },
+        text: 0xFFFFFF,
+        border: None,
+    }
+}
+
+/// A green button with a ▾ beside it for its other modes: "Squash and
+/// merge ▾", "Create secret gist ▾".
+pub fn split_btn(id: &str, label: impl Into<SharedString>, act: Act, menu: Act) -> AnyElement {
+    let p = palette();
+    row()
+        .gap_0()
+        .flex_none()
+        .child(
+            Button::new(ElementId::Name(format!("{id}-main").into()), label)
+                .colors(green_colors())
+                .h(px(32.0))
+                .px_4()
+                .text_size(px(13.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .rounded_r_none()
+                .on_click(on(act)),
+        )
+        .child(div().w(px(1.0)).h(px(32.0)).bg(rgb(if is_light() { 0x1A7F37 } else { 0x196C2E })))
+        .child(
+            Button::new(ElementId::Name(format!("{id}-more").into()), "")
+                .colors(green_colors())
+                .h(px(32.0))
+                .w(px(32.0))
+                .px_0()
+                .rounded_l_none()
+                .child(icon("chevron-down", 14.0, 0xFFFFFF))
+                .on_click(on(menu)),
+        )
+        .text_color(rgb(p.text))
+        .into_any_element()
+}
+
+/// A grey button showing a choice, with a ▾: "Public ▾", "No license ▾".
+pub fn dropdown_btn(id: impl Into<ElementId>, leading: Option<AnyElement>, label: impl Into<SharedString>, act: Act) -> Button {
+    Button::new(id, "")
+        .h(px(32.0))
+        .px_3()
+        .gap_2()
+        .text_size(px(13.0))
+        .font_weight(FontWeight::SEMIBOLD)
+        .children(leading)
+        .child(div().child(label.into()))
+        .child(icon("chevron-down", 12.0, palette().text_dim))
+        .on_click(on(act))
+}
+
+/// An on/off switch with its state written beside it.
+pub fn switch(id: impl Into<ElementId>, on_now: bool, act: Act) -> AnyElement {
+    let p = palette();
+    let track = if on_now { green_fill() } else { p.control_bg };
+    row()
+        .gap_2()
+        .child(dim(if on_now { "On" } else { "Off" }))
+        .child(
+            div()
+                .id(id)
+                .w(px(44.0))
+                .h(px(24.0))
+                .p(px(2.0))
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(p.edge))
+                .bg(rgb(track))
+                .cursor_pointer()
+                .flex()
+                .flex_row()
+                .when(on_now, |d| d.justify_end())
+                .on_click(on(act))
+                .child(div().size(px(18.0)).rounded_sm().bg(rgb(if on_now { 0xFFFFFF } else { p.text_dim }))),
+        )
+        .into_any_element()
+}
+
+/// One numbered step of a long form, joined to the next by a line.
+pub fn step(n: usize, title: &str, last: bool, body: impl IntoElement) -> AnyElement {
+    let p = palette();
+    // Not `row()`: its items centre, and the rail must run full height.
+    div()
+        .flex()
+        .flex_row()
+        .gap_4()
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .w(px(28.0))
+                .flex_none()
+                .child(
+                    div()
+                        .size(px(28.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .bg(rgb(p.control_bg))
+                        .text_color(rgb(p.text_dim))
+                        .child(n.to_string()),
+                )
+                .when(!last, |d| d.child(div().w(px(2.0)).flex_1().bg(rgb(p.edge)))),
+        )
+        .child(
+            col()
+                .flex_1()
+                .min_w_0()
+                .gap_3()
+                .pb_8()
+                .child(div().pt(px(3.0)).text_size(px(17.0)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
+                .child(body),
+        )
+        .into_any_element()
+}
+
+/// A setting in a card: its name and what it does, and the control.
+pub fn setting_row(title: &str, about: impl Into<SharedString>, control: impl IntoElement, first: bool) -> AnyElement {
+    let p = palette();
+    row()
+        .gap_4()
+        .px_4()
+        .py_3()
+        .when(!first, |d| d.border_t_1().border_color(rgb(p.divider)))
+        .child(
+            col()
+                .flex_1()
+                .min_w_0()
+                .gap_0p5()
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
+                .child(dim(about.into())),
+        )
+        .child(control)
+        .into_any_element()
+}
+
+/// A field's label, with an asterisk when it's required.
+pub fn field_label(text: &str, required: bool) -> Div {
+    row()
+        .gap_0p5()
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(text.to_string())
+        .when(required, |d| d.child(div().text_color(rgb(red())).child("*")))
+}
+
+/// A 32 px grey button led by a coloured icon: "Close pull request".
+pub fn icon_action(id: impl Into<ElementId>, icon_name: &str, color: u32, label: impl Into<SharedString>, act: Act) -> Button {
+    Button::new(id, "")
+        .h(px(32.0))
+        .px_3()
+        .gap_2()
+        .text_size(px(13.0))
+        .child(icon(icon_name, 14.0, color))
+        .child(div().child(label.into()))
+        .on_click(on(act))
 }

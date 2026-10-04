@@ -76,6 +76,9 @@ pub enum Route {
     Team { org: String, slug: String },
     Gists,
     Gist { id: String },
+    /// The New repository page, owned by you or `owner`.
+    NewRepo { owner: Option<String> },
+    NewGist,
     Search,
     Projects,
     Project { id: String },
@@ -125,6 +128,8 @@ impl Route {
             Route::Team { org, slug } => format!("{org}/{slug}"),
             Route::Gists => "Gists".into(),
             Route::Gist { id } => format!("Gist {}", &id[..id.len().min(8)]),
+            Route::NewRepo { .. } => "New repository".into(),
+            Route::NewGist => "New gist".into(),
             Route::Search => "Search".into(),
             Route::Projects => "Projects".into(),
             Route::Project { .. } => "Project".into(),
@@ -184,7 +189,8 @@ impl Route {
             Route::Discussion { repo, number } => format!("{w}/{repo}/discussions/{number}"),
             Route::User { login } | Route::Org { login } => format!("{w}/{login}"),
             Route::Team { org, slug } => format!("{w}/orgs/{org}/teams/{slug}"),
-            Route::Gists | Route::Gist { .. } => "https://gist.github.com".into(),
+            Route::Gists | Route::Gist { .. } | Route::NewGist => "https://gist.github.com".into(),
+            Route::NewRepo { .. } => format!("{w}/new"),
             Route::Search => format!("{w}/search"),
             Route::Projects | Route::Project { .. } => format!("{w}/projects"),
             Route::Codespaces => format!("{w}/codespaces"),
@@ -207,6 +213,7 @@ pub fn route_for_url(url: &str) -> Option<Route> {
     ];
     match parts.as_slice() {
         [] => Some(Route::Home),
+        ["new"] => Some(Route::NewRepo { owner: None }),
         [login] if !reserved.contains(login) => Some(Route::User {
             login: login.to_string(),
         }),
@@ -752,6 +759,7 @@ impl Hub {
     fn signed_in(&mut self, client: Client, me: Value, scopes: String, source: &'static str) {
         self.refresh_token(client, me, scopes);
         self.recent = api::load_recent(&self.me.s("login"));
+        self.choices.extend(api::load_merge_methods());
         self.token_source = source;
         self.check_scopes();
         self.auth = Auth::SignedIn;

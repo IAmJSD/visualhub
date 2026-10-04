@@ -137,11 +137,13 @@ impl Hub {
                 self.list(&spec, cx)
             }
             "followers" => {
-                let spec = ListSpec::new(format!("/users/{login}/followers"), user_row).empty("No followers yet.");
+                let spec = ListSpec::new(format!("/users/{login}/followers"), user_row).empty("No followers yet.")
+                .people();
                 self.list(&spec, cx)
             }
             "following" => {
-                let spec = ListSpec::new(format!("/users/{login}/following"), user_row).empty("Not following anyone.");
+                let spec = ListSpec::new(format!("/users/{login}/following"), user_row).empty("Not following anyone.")
+                .people();
                 self.list(&spec, cx)
             }
             _ => self.user_overview(login, cx),
@@ -435,7 +437,8 @@ impl Hub {
                     }
                     row
                 })
-                .empty("No members you can see.");
+                .empty("No members you can see.")
+                .people();
                 let list = self.list(&spec, cx);
                 widgets::col().gap_3().when(admin, |d| d.child(widgets::row().child(widgets::spacer()).child(widgets::go_btn("invite-member", "Invite member", invite)))).child(list).into_any_element()
             }
@@ -479,7 +482,8 @@ impl Hub {
                         .action("Convert to member", Req::rest("PUT", format!("/orgs/{o}/outside_collaborators/{user}")).ok("Converted to member").inval(format!("/orgs/{o}")).act())
                         .danger("Remove", Req::rest("DELETE", format!("/orgs/{o}/outside_collaborators/{user}")).ok("Removed").inval(format!("/orgs/{o}/outside_collaborators")).act())
                 })
-                .empty("No outside collaborators.");
+                .empty("No outside collaborators.")
+                .people();
                 self.list(&spec, cx)
             }
             "hooks" => self.webhooks(&format!("/orgs/{login}/hooks"), cx),
@@ -511,7 +515,8 @@ impl Hub {
                 let spec = ListSpec::new(format!("/orgs/{login}/blocks"), move |u| {
                     user_row(u).action("Unblock", Req::rest("DELETE", format!("/orgs/{o}/blocks/{}", u.s("login"))).ok("Unblocked").inval(format!("/orgs/{o}/blocks")).act())
                 })
-                .empty("No blocked users.");
+                .empty("No blocked users.")
+                .people();
                 let list = self.list(&spec, cx);
                 widgets::col().gap_3().child(widgets::row().child(widgets::spacer()).child(widgets::danger("block-user", "Block user", block))).child(list).into_any_element()
             }
@@ -555,7 +560,7 @@ impl Hub {
                                     .child(widgets::dim(format!("{} public repositories  ·  {} followers", org.i("public_repos"), org.i("followers")))),
                             ),
                     )
-                    .when(member || admin, |d| d.child(widgets::go_btn("org-new-repo", "New repository", super::repos::new_repo_form(Some(login)))))
+                    .when(member || admin, |d| d.child(widgets::go_btn("org-new-repo", "New repository", Act::Go(Route::NewRepo { owner: Some(login.to_string()) }))))
                     .when(admin, |d| d.child(widgets::btn("org-settings", "Settings", settings)))
                     .child(widgets::btn("org-projects", "Projects", Act::Go(Route::Projects)))
                     .when(member, |d| d.child(widgets::btn("org-leave", "Leave…", Act::Url(format!("{}/settings/organizations", crate::api::WEB))))),
@@ -610,7 +615,8 @@ impl Hub {
                     let login = u.s("login");
                     user_row(u).danger("Remove from team", Req::rest("DELETE", format!("{b}/memberships/{login}")).ok("Member removed").inval(format!("{b}/members")).act())
                 })
-                .empty("No members.");
+                .empty("No members.")
+                .people();
                 let list = self.list(&spec, cx);
                 widgets::col().gap_3().child(widgets::row().child(widgets::spacer()).child(widgets::go_btn("team-add-member", "Add member", add))).child(list).into_any_element()
             }

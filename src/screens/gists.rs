@@ -12,28 +12,7 @@ use crate::widgets;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, AnyElement, Context, IntoElement as _, ParentElement as _, Styled as _};
 use crate::ui::{icon, palette};
-use serde_json::{json, Map, Value};
-
-pub fn new_gist_form() -> Act {
-    FormSpec::new("Create a gist")
-        .submit("Create gist")
-        .width(680.0)
-        .note("A gist is a single shared snippet or note. To add more files, edit it on GitHub afterwards.")
-        .field(Field::text("description", "Description"))
-        .field(Field::text("filename", "File name").value("notes.md").required())
-        .field(Field::multiline("content", "Content").required())
-        .field(Field::bool("public", "Public (otherwise secret)", false))
-        .rest("POST", "/gists")
-        .map(|_, v| {
-            let mut files = Map::new();
-            files.insert(v.s("filename"), json!({ "content": v.s("content") }));
-            json!({ "description": v.s("description"), "public": v.b("public"), "files": files })
-        })
-        .ok("Gist created")
-        .inval("/gists")
-        .then(|hub, value, cx| hub.go(Route::Gist { id: value.s("id") }, cx))
-        .act()
-}
+use serde_json::Value;
 
 pub fn gist_row(g: &Value) -> Row {
     let files: Vec<String> = match g.at("files") {
@@ -63,7 +42,7 @@ impl Hub {
         let spec = ListSpec::new(path, gist_row).empty("No gists.");
         let list = self.list(&spec, cx);
         widgets::page()
-            .child(widgets::row().child(widgets::title("Gists")).child(widgets::spacer()).child(widgets::go_btn("new-gist", "New gist", new_gist_form())))
+            .child(widgets::row().child(widgets::title("Gists")).child(widgets::spacer()).child(widgets::go_btn("new-gist", "New gist", Act::Go(Route::NewGist))))
             .child(widgets::chips(vec![
                 ("Your gists".into(), tab == "mine", Act::choose("gists.tab", "mine")),
                 ("Starred".into(), tab == "starred", Act::choose("gists.tab", "starred")),

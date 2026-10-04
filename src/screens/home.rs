@@ -206,7 +206,7 @@ impl Hub {
                                 widgets::row()
                                     .child(widgets::h3("Top repositories"))
                                     .child(widgets::spacer())
-                                    .child(widgets::go_btn("home-new-repo", "New", super::repos::new_repo_form(None)).h(px(24.0))),
+                                    .child(widgets::go_btn("home-new-repo", "New", Act::Go(Route::NewRepo { owner: None })).h(px(24.0))),
                             )
                             .child(top_list),
                     )

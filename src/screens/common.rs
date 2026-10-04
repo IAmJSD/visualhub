@@ -392,7 +392,8 @@ impl Hub {
             .into_any_element()
     }
 
-    /// The comment box under a conversation, with its buttons.
+    /// The comment box under a conversation: Write and Preview tabs, and
+    /// its buttons beneath, as on github.com.
     pub fn composer(
         &mut self,
         field: &str,
@@ -400,23 +401,72 @@ impl Hub {
         extra: Vec<AnyElement>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let p = palette();
         let avatar_url = self.me.s("avatar_url");
-        let avatar = self.avatar(&avatar_url, 32.0, cx);
+        let avatar = self.avatar(&avatar_url, 40.0, cx);
         self.submits.insert(field.to_string(), submit.clone());
-        let input = self
-            .textarea(field, "Leave a comment (Markdown). Ctrl+Enter to send.", cx)
-            .min_h(px(110.0));
+        let tab_key = format!("{field}:tab");
+        let preview = self.choice(&tab_key, "write") == "preview";
+        let body: AnyElement = if preview {
+            let text = self.field_text(field);
+            let md = if text.trim().is_empty() {
+                widgets::dim("Nothing to preview").into_any_element()
+            } else {
+                self.markdown(&format!("{field}-preview"), &text, cx)
+            };
+            div().min_h(px(130.0)).p_2().child(md).into_any_element()
+        } else {
+            self.textarea(field, "Add your comment here…", cx).min_h(px(130.0)).into_any_element()
+        };
+        let tab = |id: &str, label: &str, on_now: bool, value: &'static str| {
+            div()
+                .id(ElementId::Name(format!("{field}-{id}").into()))
+                .px_4()
+                .py_2()
+                .cursor_pointer()
+                .when(on_now, |d| {
+                    d.bg(rgb(p.panel_bg))
+                        .border_r_1()
+                        .border_l_1()
+                        .border_color(rgb(p.edge))
+                        .font_weight(FontWeight::SEMIBOLD)
+                })
+                .when(!on_now, |d| d.text_color(rgb(p.text_dim)).hover(|s| s.text_color(rgb(p.text))))
+                .on_click(on(Act::choose(tab_key.clone(), value)))
+                .child(label.to_string())
+        };
+        let tabs = div()
+            .flex()
+            .flex_row()
+            .bg(rgb(p.deep_bg))
+            .border_b_1()
+            .border_color(rgb(p.edge))
+            .child(tab("write", "Write", !preview, "write"))
+            .child(tab("preview", "Preview", preview, "preview"));
         div()
             .flex()
             .flex_row()
             .gap_3()
-            .child(div().pt_1().child(avatar))
+            .child(div().pt(px(30.0)).child(avatar))
             .child(
-                widgets::card()
+                widgets::col()
                     .flex_1()
-                    .p_3()
+                    .min_w_0()
                     .gap_2()
-                    .child(input)
+                    .child(widgets::h3("Add a comment"))
+                    .child(
+                        widgets::card()
+                            .child(tabs)
+                            .child(div().p_2().child(body))
+                            .child(
+                                widgets::row()
+                                    .px_3()
+                                    .pb_2()
+                                    .gap_1()
+                                    .child(icon("code", 13.0, p.text_dim))
+                                    .child(widgets::faint("Markdown is supported  ·  Ctrl+Enter to send")),
+                            ),
+                    )
                     .child(
                         div()
                             .flex()
@@ -424,13 +474,13 @@ impl Hub {
                             .items_center()
                             .justify_end()
                             .gap_2()
-                            .child(widgets::faint("Markdown is supported").mr_auto())
                             .children(extra)
-                            .child(widgets::primary(
-                                ElementId::Name(format!("{field}-send").into()),
-                                "Comment",
-                                submit,
-                            )),
+                            .child(
+                                widgets::go_btn(ElementId::Name(format!("{field}-send").into()), "Comment", submit)
+                                    .h(px(32.0))
+                                    .px_4()
+                                    .text_size(px(13.0)),
+                            ),
                     ),
             )
             .into_any_element()

@@ -386,8 +386,8 @@ impl Hub {
     /// The "+" menu: what can be made from here.
     fn new_menu(&self) -> Act {
         let mut entries = vec![
-            MenuEntry::item("New repository", crate::screens::repos::new_repo_form(None)),
-            MenuEntry::item("New gist", crate::screens::gists::new_gist_form()),
+            MenuEntry::item("New repository", Act::Go(Route::NewRepo { owner: None })),
+            MenuEntry::item("New gist", Act::Go(Route::NewGist)),
             MenuEntry::item(
                 "Import repository",
                 Act::Url(format!("{}/new/import", crate::api::WEB)),
@@ -498,6 +498,8 @@ impl Hub {
             Route::Org { login } => self.org(login, cx),
             Route::Team { org, slug } => self.team(org, slug, cx),
             Route::Gists => self.gists(cx),
+            Route::NewRepo { owner } => self.new_repo(owner.as_deref(), cx),
+            Route::NewGist => self.new_gist(cx),
             Route::Gist { id } => self.gist(id, cx),
             Route::Search => self.search(cx),
             Route::Projects => self.projects(cx),

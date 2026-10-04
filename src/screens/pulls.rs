@@ -261,11 +261,11 @@ impl Hub {
                 .act()
         };
         let extra = vec![
-            widgets::btn("review", "Review changes", review_form(repo, number)).into_any_element(),
+            widgets::icon_action("review", "eye", palette().text_dim, "Review changes", review_form(repo, number)).into_any_element(),
             if open {
-                widgets::btn("close-pr", "Close pull request", state_req("closed", "Pull request closed")).into_any_element()
+                widgets::icon_action("close-pr", "pr-closed", widgets::red(), "Close pull request", state_req("closed", "Pull request closed")).into_any_element()
             } else if !pr.b("merged") {
-                widgets::btn("reopen-pr", "Reopen pull request", state_req("open", "Pull request reopened")).into_any_element()
+                widgets::icon_action("reopen-pr", "pr", widgets::green(), "Reopen pull request", state_req("open", "Pull request reopened")).into_any_element()
             } else {
                 div().into_any_element()
             },
@@ -344,25 +344,27 @@ impl Hub {
                 (ok, bad, runs.len() - ok - bad)
             })
             .unwrap_or((0, 0, 0));
-        let (check_icon, check_color, check_text) = if ok + bad + pending == 0 {
-            ("circle", widgets::gray(), "No checks reported".to_string())
+        let (check_icon, check_color, check_title, check_sub) = if ok + bad + pending == 0 {
+            ("dot", widgets::gray(), "No checks reported".to_string(), "This commit has no status checks.".to_string())
         } else if bad > 0 {
-            ("x-circle", widgets::red(), format!("{bad} failing, {pending} pending, {ok} successful checks"))
+            ("close", widgets::red(), "Some checks were not successful".to_string(), format!("{bad} failing, {pending} pending, {ok} successful checks"))
         } else if pending > 0 {
-            ("dot", widgets::yellow(), format!("{pending} pending, {ok} successful checks"))
+            ("clock", widgets::yellow(), "Some checks haven't completed yet".to_string(), format!("{pending} pending, {ok} successful checks"))
         } else {
-            ("check-circle", widgets::green(), format!("All {ok} checks have passed"))
+            ("check", widgets::green(), "All checks have passed".to_string(), format!("{ok} successful check{}", if ok == 1 { "" } else { "s" }))
         };
 
         let state = pr.s("mergeable_state");
-        let (merge_icon, merge_color, merge_text) = match state.as_str() {
-            "clean" | "has_hooks" | "unstable" => ("check-circle", widgets::green(), "This branch has no conflicts with the base branch"),
-            "dirty" => ("x-circle", widgets::red(), "This branch has conflicts that must be resolved"),
-            "blocked" => ("alert", widgets::yellow(), "Merging is blocked by branch protection (reviews or checks required)"),
-            "behind" => ("alert", widgets::yellow(), "This branch is out-of-date with the base branch"),
-            "draft" => ("pr-draft", widgets::gray(), "This pull request is still a work in progress"),
-            _ => ("clock", widgets::gray(), "Checking mergeability…"),
+        let (merge_icon, merge_color, merge_title, merge_sub) = match state.as_str() {
+            "clean" | "has_hooks" => ("check", widgets::green(), "No conflicts with base branch", "Merging can be performed automatically."),
+            "unstable" => ("check", widgets::green(), "No conflicts with base branch", "Merging can be performed automatically, though some checks failed."),
+            "dirty" => ("close", widgets::red(), "This branch has conflicts that must be resolved", "Resolve them on the command line or in GitHub's web editor."),
+            "blocked" => ("alert", widgets::yellow(), "Merging is blocked", "Branch protection requires approving reviews or passing checks."),
+            "behind" => ("alert", widgets::yellow(), "This branch is out-of-date with the base branch", "Update it to bring in the latest changes from the base."),
+            "draft" => ("pr-draft", widgets::gray(), "This pull request is still a work in progress", "Draft pull requests can't be merged."),
+            _ => ("clock", widgets::gray(), "Checking mergeability…", ""),
         };
+        let mergeable = matches!(state.as_str(), "clean" | "has_hooks" | "unstable");
 
         let method_key = format!("merge.method:{repo}");
         let method = self.choice(&method_key, "merge");
@@ -406,10 +408,19 @@ impl Hub {
                 }
             })
             .act();
+        // The method sticks per repository, across restarts too.
+        let pick = |m: &'static str| {
+            let key = method_key.clone();
+            Act::run(move |hub, _, cx| {
+                hub.choices.insert(key.clone(), m.to_string());
+                crate::api::save_merge_methods(&hub.choices);
+                cx.notify();
+            })
+        };
         let methods = Act::menu(vec![
-            MenuEntry::check("Create a merge commit", method == "merge", Act::choose(&method_key, "merge")),
-            MenuEntry::check("Squash and merge", method == "squash", Act::choose(&method_key, "squash")),
-            MenuEntry::check("Rebase and merge", method == "rebase", Act::choose(&method_key, "rebase")),
+            MenuEntry::check("Create a merge commit — all commits are added to the base branch", method == "merge", pick("merge")),
+            MenuEntry::check("Squash and merge — the commits are combined into one", method == "squash", pick("squash")),
+            MenuEntry::check("Rebase and merge — the commits are rebased onto the base branch", method == "rebase", pick("rebase")),
         ]);
         let node = pr.s("node_id");
         let auto_merge_on = pr.has("auto_merge");
@@ -431,9 +442,8 @@ impl Hub {
             .act()
         };
         let draft = pr.b("draft");
-        let mut buttons = widgets::row().flex_wrap();
-        if draft {
-            buttons = buttons.child(widgets::go_btn(
+        let main: AnyElement = if draft {
+            widgets::go_btn(
                 "ready",
                 "Ready for review",
                 Req::gql(
@@ -444,13 +454,28 @@ impl Hub {
                 .inval(pr_path.clone())
                 .inval(inval_issue.clone())
                 .act(),
-            ));
+            )
+            .h(px(32.0))
+            .px_4()
+            .text_size(px(13.0))
+            .into_any_element()
         } else {
-            buttons = buttons
-                .child(widgets::go_btn("merge", method_label, merge_form))
-                .child(widgets::btn("merge-method", "▾", methods));
-        }
-        buttons = buttons
+            widgets::split_btn("merge", method_label, merge_form, methods)
+        };
+        let flag = match method.as_str() {
+            "squash" => "--squash",
+            "rebase" => "--rebase",
+            _ => "--merge",
+        };
+        let footer = widgets::row()
+            .flex_wrap()
+            .gap_3()
+            .p_4()
+            .bg(rgb(p.deep_bg))
+            .child(main)
+            .child(widgets::dim("You can also merge this with the command line."))
+            .child(crate::ui::Link::new("merge-cli", "Copy the command").on_click(crate::hub::on(Act::Copy(format!("gh pr merge {number} {flag} --repo {repo}")))))
+            .child(widgets::spacer())
             .child(widgets::btn(
                 "update-branch",
                 "Update branch",
@@ -466,26 +491,104 @@ impl Hub {
                 auto,
             ));
 
-        let line = |icon_name: &str, color: u32, text: String| {
-            widgets::row()
+        // A status: a filled circle with its mark, a title and a line.
+        let status = |id: &str, mark: &str, color: u32, title: String, sub: String, open: Option<Act>| {
+            let clickable = open.is_some();
+            div()
+                .id(gpui::ElementId::Name(id.to_string().into()))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
                 .px_4()
                 .py_3()
                 .border_b_1()
                 .border_color(rgb(p.divider))
-                .child(icon(icon_name, 18.0, color))
-                .child(div().child(text))
+                .child(
+                    div()
+                        .size(px(28.0))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .bg(rgb(color))
+                        .child(icon(mark, 14.0, 0xFFFFFF)),
+                )
+                .child(
+                    widgets::col()
+                        .flex_1()
+                        .gap_0p5()
+                        .child(div().text_size(px(15.0)).font_weight(gpui::FontWeight::SEMIBOLD).child(title))
+                        .when(!sub.is_empty(), |d| d.child(widgets::dim(sub))),
+                )
+                .when(clickable, |d| d.child(icon("chevron-right", 14.0, p.text_dim)))
+                .when_some(open, |d, act| d.cursor_pointer().hover(|s| s.bg(rgb(p.hover))).on_click(crate::hub::on(act)))
         };
+        let checks_tab = Act::Go(Route::Pull { repo: repo.to_string(), number, tab: PullTab::Checks });
         card = card
-            .child(line(check_icon, check_color, check_text))
-            .child(line(merge_icon, merge_color, merge_text.to_string()));
+            .border_color(rgb(if mergeable && bad == 0 { widgets::green() } else { p.edge }))
+            .child(status("merge-checks", check_icon, check_color, check_title, check_sub, Some(checks_tab)))
+            .child(status("merge-state", merge_icon, merge_color, merge_title.to_string(), merge_sub.to_string(), None));
         if auto_merge_on {
-            card = card.child(line(
+            card = card.child(status(
+                "merge-auto",
                 "zap",
                 widgets::green(),
-                format!("Auto-merge is enabled by {}", pr.s("auto_merge.enabled_by.login")),
+                "Auto-merge is enabled".into(),
+                format!("{} will merge this once its requirements are met.", pr.s("auto_merge.enabled_by.login")),
+                None,
             ));
         }
-        card.child(div().p_4().child(buttons)).into_any_element()
+        let card = card.child(footer);
+
+        let badge_color = if draft {
+            widgets::gray()
+        } else if state == "dirty" {
+            widgets::red()
+        } else if mergeable {
+            widgets::green_fill()
+        } else {
+            widgets::gray()
+        };
+        let to_draft = Req::gql(
+            "mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { clientMutationId } }",
+            json!({ "id": node }),
+        )
+        .ok("Converted to draft")
+        .inval(pr_path.clone())
+        .act();
+        widgets::col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_3()
+                    .child(
+                        div()
+                            .size(px(40.0))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_md()
+                            .bg(rgb(badge_color))
+                            .child(icon("pr-merged", 20.0, 0xFFFFFF)),
+                    )
+                    .child(card.flex_1().min_w_0()),
+            )
+            .when(!draft, |d| {
+                d.child(
+                    widgets::row()
+                        .gap_1()
+                        .child(widgets::spacer())
+                        .child(widgets::dim("Still in progress?"))
+                        .child(crate::ui::Link::new("to-draft", "Convert to draft").on_click(crate::hub::on(to_draft))),
+                )
+            })
+            .into_any_element()
     }
 
     fn pull_sidebar(&mut self, repo: &str, number: u64, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
@@ -549,28 +652,6 @@ impl Hub {
                     .child(icon(icon_name, 14.0, color)),
             );
         }
-        let node = pr.s("node_id");
-        let draft_toggle = if pr.b("draft") {
-            None
-        } else if pr.s("state") == "open" {
-            Some(
-                widgets::ibtn(
-                    "to-draft",
-                    "pr-draft",
-                    "Convert to draft",
-                    Req::gql(
-                        "mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { clientMutationId } }",
-                        json!({ "id": node }),
-                    )
-                    .ok("Converted to draft")
-                    .inval(pr_path.clone())
-                    .act(),
-                )
-                .w_full(),
-            )
-        } else {
-            None
-        };
         let base_form = FormSpec::new("Change base branch")
             .field(Field::text("base", "Base branch").value(pr.s("base.ref")).required())
             .rest("PATCH", pr_path.clone())
@@ -582,7 +663,6 @@ impl Hub {
             .gap_3()
             .child(side_section("reviewers", "Reviewers", Some(reviewer_picker.act()), reviewers.into_any_element()))
             .child(issue_side)
-            .children(draft_toggle)
             .child(widgets::ibtn("change-base", "branch", "Change base branch", base_form).w_full())
             .child(
                 widgets::ibtn(
