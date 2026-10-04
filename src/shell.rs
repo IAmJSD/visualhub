@@ -7,13 +7,14 @@ use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     anchored, deferred, div, px, AnyElement, Context, ElementId, FontWeight,
-    InteractiveElement as _, IntoElement, KeyDownEvent, MouseDownEvent, ParentElement as _,
+    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
     Render, StatefulInteractiveElement as _, Styled as _, Window, WindowAppearance,
 };
 use crate::ui::{icon, palette, Button, IconButton, MenuItem, Spinner};
 
 impl Render for Hub {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.frame += 1;
         // Always the system's appearance.
         self.light = matches!(
             window.appearance(),
@@ -56,6 +57,7 @@ impl Render for Hub {
         };
         let modal = self.render_modal(cx);
         let menu = self.render_menu(cx);
+        let picker = self.render_picker(cx);
         let toasts = self.render_toasts();
 
         div()
@@ -71,18 +73,28 @@ impl Render for Hub {
             }))
             // Any press takes the keyboard from whichever box had it; the
             // box under the pointer (if any) takes it back on its own press.
-            .capture_any_mouse_down(cx.listener(|hub, _: &MouseDownEvent, window, cx| {
+            .capture_any_mouse_down(cx.listener(|hub, event: &MouseDownEvent, window, cx| {
+                // While autoscrolling, any other click only stops it.
+                if event.button != MouseButton::Middle && hub.autoscroll_cancel(cx) {
+                    cx.stop_propagation();
+                    return;
+                }
+                hub.autoscroll_down(event, window, cx);
                 if hub.active_field().is_some() {
                     hub.blur_fields();
                     cx.notify();
                 }
                 window.focus(&hub.focus);
             }))
+            .capture_any_mouse_up(cx.listener(|hub, event: &MouseUpEvent, _, cx| hub.autoscroll_up(event, cx)))
+            .on_mouse_move(cx.listener(|hub, event: &MouseMoveEvent, _, cx| hub.autoscroll_move(event, cx)))
             .child(body)
             .children(scope_fix)
             .children(modal)
             .children(menu)
+            .children(picker)
             .child(toasts)
+            .children(self.render_autoscroll())
     }
 }
 
@@ -172,6 +184,7 @@ impl Hub {
             .border_r_1()
             .border_color(rgb(p.panel_edge))
             .overflow_y_scroll()
+            .track_scroll(&self.scroller("sidebar"))
             .pt_2()
             .child(
                 div()
@@ -504,6 +517,7 @@ impl Hub {
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
+                .track_scroll(&self.scroller("page"))
                 .child(content)
                 .into_any_element()
         }

@@ -523,6 +523,7 @@ impl Hub {
         );
         let count = lines.len();
         let list_lines = lines.clone();
+        let scroll = self.list_scroller("log-lines");
         let list = gpui::uniform_list("log-lines", count, move |range, _, _| {
             range
                 .map(|i| {
@@ -542,6 +543,7 @@ impl Hub {
                 })
                 .collect()
         })
+        .track_scroll(scroll)
         .flex_1()
         .min_h_0()
         .py_2()

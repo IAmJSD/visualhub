@@ -216,7 +216,7 @@ impl Hub {
                 }
                 col = col
                     .child(widgets::h3(format!("{} contributions in the last year", calendar.i("totalContributions"))))
-                    .child(widgets::card().p_3().child(div().id("calendar").overflow_x_scroll().child(grid)));
+                    .child(widgets::card().p_3().child(div().id("calendar").overflow_x_scroll().track_scroll(&self.scroller("calendar")).child(grid)));
             }
         }
         let activity = self.activity_timeline(login, cx);

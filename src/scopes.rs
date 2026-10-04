@@ -254,6 +254,8 @@ impl Hub {
 
     pub fn render_scope_fix(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = palette();
+        self.scope_fix.as_ref()?;
+        let terminal_scroll = self.scroller("gh-terminal");
         let fix = self.scope_fix.as_ref()?;
         let from_cli = self.token_source == "GitHub CLI";
 
@@ -319,6 +321,7 @@ impl Hub {
                     .flex_col()
                     .h(px(180.0))
                     .overflow_y_scroll()
+                    .track_scroll(&terminal_scroll)
                     .p_3()
                     .rounded_md()
                     .bg(rgb(0x0D1117))

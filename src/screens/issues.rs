@@ -5,6 +5,7 @@ use super::common::{
     self, api_path, delete_comment, edit_comment, issue_row, post_comment, side_section,
     CommentActs,
 };
+use crate::picker::{PickItem, Picker};
 use crate::form::{Field, FormSpec};
 use crate::hub::{on, Act, Hub, MenuEntry, Req, Route, RepoTab};
 use crate::json::{enc, Json as _};
@@ -707,18 +708,17 @@ impl Hub {
 
         // Assignees.
         let current: Vec<String> = issue.list("assignees").iter().map(|a| a.s("login")).collect();
-        let mut assignee_menu = Vec::new();
-        if let Some(users) = self.fetch(&format!("/repos/{repo}/assignees?per_page=100"), cx).ready().cloned() {
-            for user in users.list("") {
-                let login = user.s("login");
-                let on_now = current.contains(&login);
-                let req = Req::rest(
-                    if on_now { "DELETE" } else { "POST" },
-                    format!("{path}/assignees"),
-                )
-                .body(json!({ "assignees": [login] }));
-                assignee_menu.push(MenuEntry::check(login.clone(), on_now, with_inval(req).act()));
+        let mut assignee_picker = Picker::new("Assign up to 10 people", "Filter people…", true);
+        match self.fetch(&format!("/repos/{repo}/assignees?per_page=100"), cx).ready().cloned() {
+            Some(users) => {
+                for user in users.list("") {
+                    let login = user.s("login");
+                    let on_now = current.contains(&login);
+                    let req = |method: &'static str| with_inval(Req::rest(method, format!("{path}/assignees")).body(json!({ "assignees": [login] }))).act();
+                    assignee_picker = assignee_picker.item(PickItem::toggle(login.clone(), on_now, req("POST"), req("DELETE")).avatar(user.s("avatar_url")));
+                }
             }
+            None => assignee_picker.loading = true,
         }
         let mut assignees = widgets::col().gap_1();
         if current.is_empty() {
@@ -740,18 +740,18 @@ impl Hub {
 
         // Labels.
         let current_labels: Vec<String> = issue.list("labels").iter().map(|l| l.s("name")).collect();
-        let mut label_menu = Vec::new();
-        if let Some(labels) = self.fetch(&format!("/repos/{repo}/labels?per_page=100"), cx).ready().cloned() {
-            for l in labels.list("") {
-                let name = l.s("name");
-                let on_now = current_labels.contains(&name);
-                let req = if on_now {
-                    Req::rest("DELETE", format!("{path}/labels/{}", enc(&name)))
-                } else {
-                    Req::rest("POST", format!("{path}/labels")).body(json!({ "labels": [name] }))
-                };
-                label_menu.push(MenuEntry::check(name.clone(), on_now, with_inval(req).act()));
+        let mut label_picker = Picker::new("Apply labels", "Filter labels…", true);
+        match self.fetch(&format!("/repos/{repo}/labels?per_page=100"), cx).ready().cloned() {
+            Some(labels) => {
+                for l in labels.list("") {
+                    let name = l.s("name");
+                    let on_now = current_labels.contains(&name);
+                    let add = with_inval(Req::rest("POST", format!("{path}/labels")).body(json!({ "labels": [name] }))).act();
+                    let remove = with_inval(Req::rest("DELETE", format!("{path}/labels/{}", enc(&name)))).act();
+                    label_picker = label_picker.item(PickItem::toggle(name, on_now, add, remove).color(l.s("color")).detail(l.s("description")));
+                }
             }
+            None => label_picker.loading = true,
         }
         let mut labels = div().flex().flex_row().flex_wrap().gap_1();
         if current_labels.is_empty() {
@@ -762,20 +762,23 @@ impl Hub {
         }
 
         // Milestone.
-        let mut milestone_menu = vec![MenuEntry::check(
+        let mut milestone_picker = Picker::new("Set milestone", "Filter milestones…", false).item(PickItem::new(
             "No milestone",
             !issue.has("milestone"),
             with_inval(Req::rest("PATCH", path.clone()).body(json!({ "milestone": null }))).act(),
-        )];
-        if let Some(ms) = self.fetch(&format!("/repos/{repo}/milestones?state=open&per_page=100"), cx).ready().cloned() {
-            for m in ms.list("") {
-                let n = m.i("number");
-                milestone_menu.push(MenuEntry::check(
-                    m.s("title"),
-                    issue.i("milestone.number") == n,
-                    with_inval(Req::rest("PATCH", path.clone()).body(json!({ "milestone": n }))).act(),
-                ));
+        ));
+        match self.fetch(&format!("/repos/{repo}/milestones?state=open&per_page=100"), cx).ready().cloned() {
+            Some(ms) => {
+                for m in ms.list("") {
+                    let n = m.i("number");
+                    let due = if m.has("due_on") { format!("Due {}", crate::time::date(&m.s("due_on"))) } else { "No due date".to_string() };
+                    milestone_picker = milestone_picker.item(
+                        PickItem::new(m.s("title"), issue.i("milestone.number") == n, with_inval(Req::rest("PATCH", path.clone()).body(json!({ "milestone": n }))).act())
+                            .detail(due),
+                    );
+                }
             }
+            None => milestone_picker.loading = true,
         }
         let milestone: AnyElement = if issue.has("milestone") {
             let m = issue.at("milestone");
@@ -908,9 +911,9 @@ impl Hub {
 
         widgets::col()
             .gap_3()
-            .child(side_section("assignees", "Assignees", Some(Act::menu(assignee_menu)), assignees.into_any_element()))
-            .child(side_section("labels", "Labels", Some(Act::menu(label_menu)), labels.into_any_element()))
-            .child(side_section("milestone", "Milestone", Some(Act::menu(milestone_menu)), milestone))
+            .child(side_section("assignees", "Assignees", Some(assignee_picker.act()), assignees.into_any_element()))
+            .child(side_section("labels", "Labels", Some(label_picker.act()), labels.into_any_element()))
+            .child(side_section("milestone", "Milestone", Some(milestone_picker.act()), milestone))
             .child(actions)
             .into_any_element()
     }

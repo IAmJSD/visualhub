@@ -137,7 +137,10 @@ impl Route {
     /// The page manages its own scrolling (long logs and files are
     /// virtualised lists, which need a fixed-height parent).
     pub fn owns_scroll(&self) -> bool {
-        matches!(self, Route::Job { .. } | Route::Tree { file: true, .. })
+        matches!(
+            self,
+            Route::Job { .. } | Route::Tree { file: true, .. } | Route::Pull { tab: PullTab::Files, .. }
+        )
     }
 
     /// The same page on github.com.
@@ -464,6 +467,7 @@ pub enum Act {
     },
     Form(Rc<FormSpec>),
     Menu(Rc<Vec<MenuEntry>>),
+    Picker(Rc<crate::picker::Picker>),
     Run(RunFn),
 }
 
@@ -591,12 +595,20 @@ pub struct Hub {
     pub submits: HashMap<String, Act>,
     pub modal: Option<Modal>,
     pub menu: Option<MenuState>,
+    pub picker: Option<crate::picker::PickerState>,
     pub toasts: Vec<Toast>,
     next_toast: u64,
     pub busy: usize,
     images: HashMap<String, Avatar>,
     pub light: bool,
     pub recent: Vec<String>,
+    /// A middle-click scroll in progress.
+    pub autoscroll: Option<crate::autoscroll::AutoScroll>,
+    /// Every scrolling pane's handle, with the frame it was last drawn in.
+    pub scrollers: HashMap<String, (gpui::ScrollHandle, u64)>,
+    pub list_scrollers: HashMap<String, gpui::UniformListScrollHandle>,
+    /// Counts renders, to tell which panes are on screen.
+    pub frame: u64,
     /// Expanded rows and sections, by id.
     pub open: HashSet<String>,
 }
@@ -629,12 +641,17 @@ impl Hub {
             submits: HashMap::new(),
             modal: None,
             menu: None,
+            picker: None,
             toasts: Vec::new(),
             next_toast: 0,
             busy: 0,
             images: HashMap::new(),
             light: false,
             recent: Vec::new(),
+            autoscroll: None,
+            scrollers: HashMap::new(),
+            list_scrollers: HashMap::new(),
+            frame: 0,
             open: HashSet::new(),
         };
         hub.discover(cx);
@@ -809,6 +826,10 @@ impl Hub {
 
     fn arrived(&mut self) {
         self.menu = None;
+        self.picker = None;
+        // A new page starts at the top; the sidebar stays where it was.
+        self.scrollers.retain(|key, _| key == "sidebar");
+        self.list_scrollers.clear();
         self.blur_fields();
         if let Some(repo) = self.route.repo().map(str::to_string) {
             if self.recent.first() != Some(&repo) {
@@ -971,6 +992,7 @@ impl Hub {
                     entries,
                 });
             }
+            Act::Picker(picker) => self.open_picker(picker, window.mouse_position()),
             Act::Run(f) => f(self, window, cx),
         }
         cx.notify();
@@ -1191,6 +1213,7 @@ impl Hub {
 
         if let Some(id) = self.active_field() {
             if key == "escape" {
+                self.picker = None;
                 self.blur_fields();
                 cx.notify();
                 cx.stop_propagation();
@@ -1223,7 +1246,8 @@ impl Hub {
 
         match key {
             "escape" => {
-                if self.menu.take().is_some() {
+                if self.autoscroll.take().is_some() {
+                } else if self.menu.take().is_some() {
                 } else if self.modal.is_some() {
                     self.modal = None;
                 } else {

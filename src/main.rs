@@ -5,11 +5,13 @@
 
 mod api;
 mod assets;
+mod autoscroll;
 mod diff;
 mod form;
 mod hub;
 mod json;
 mod markdown;
+mod picker;
 mod resource;
 mod scopes;
 mod screens;

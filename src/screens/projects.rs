@@ -304,7 +304,7 @@ impl Hub {
                 None => columns.last_mut().unwrap().3.push(item),
             }
         }
-        let mut board = div().id("board").flex().flex_row().gap_3().items_start().overflow_x_scroll().pb_2();
+        let mut board = div().id("board").flex().flex_row().gap_3().items_start().overflow_x_scroll().track_scroll(&self.scroller("board")).pb_2();
         for (ci, (_, name, color, cards)) in columns.iter().enumerate() {
             let mut column = div()
                 .flex()

@@ -4,6 +4,7 @@
 
 use super::common::{post_comment, side_section, CommentActs};
 use crate::diff::ReviewTarget;
+use crate::picker::{PickItem, Picker};
 use crate::form::{Field, FormSpec};
 use crate::hub::{Act, Hub, MenuEntry, PullTab, Req, Route, RepoTab};
 use crate::json::{first_line, Json as _};
@@ -172,7 +173,10 @@ impl Hub {
             PullTab::Files => self.pull_files(repo, number, &pr, cx),
             PullTab::Checks => self.pull_checks(repo, &pr.s("head.sha"), cx),
         };
+        // Files fills the window, its file tree and diff scrolling apart.
+        let fill = tab == PullTab::Files;
         widgets::page()
+            .when(fill, |d| d.flex_1().min_h_0())
             .child(header)
             .child(
                 widgets::row()
@@ -187,7 +191,7 @@ impl Hub {
                             ),
                     ),
             )
-            .child(body)
+            .child(div().flex().flex_col().when(fill, |d| d.flex_1().min_h_0()).child(body))
             .into_any_element()
     }
 
@@ -487,24 +491,26 @@ impl Hub {
     fn pull_sidebar(&mut self, repo: &str, number: u64, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
         let pr_path = format!("/repos/{repo}/pulls/{number}");
         let requested: Vec<String> = pr.list("requested_reviewers").iter().map(|u| u.s("login")).collect();
-        let mut reviewer_menu = Vec::new();
-        if let Some(users) = self.fetch(&format!("/repos/{repo}/assignees?per_page=100"), cx).ready().cloned() {
-            let author = pr.s("user.login");
-            for user in users.list("") {
-                let login = user.s("login");
-                if login == author {
-                    continue;
+        let mut reviewer_picker = Picker::new("Request up to 15 reviewers", "Filter people…", true);
+        match self.fetch(&format!("/repos/{repo}/assignees?per_page=100"), cx).ready().cloned() {
+            Some(users) => {
+                let author = pr.s("user.login");
+                for user in users.list("") {
+                    let login = user.s("login");
+                    if login == author {
+                        continue;
+                    }
+                    let on_now = requested.contains(&login);
+                    let req = |method: &'static str| {
+                        Req::rest(method, format!("{pr_path}/requested_reviewers"))
+                            .body(json!({ "reviewers": [login] }))
+                            .inval(pr_path.clone())
+                            .act()
+                    };
+                    reviewer_picker = reviewer_picker.item(PickItem::toggle(login.clone(), on_now, req("POST"), req("DELETE")).avatar(user.s("avatar_url")));
                 }
-                let on_now = requested.contains(&login);
-                reviewer_menu.push(MenuEntry::check(
-                    login.clone(),
-                    on_now,
-                    Req::rest(if on_now { "DELETE" } else { "POST" }, format!("{pr_path}/requested_reviewers"))
-                        .body(json!({ "reviewers": [login] }))
-                        .inval(pr_path.clone())
-                        .act(),
-                ));
             }
+            None => reviewer_picker.loading = true,
         }
         // Latest review state per reviewer.
         let mut states: Vec<(String, String, String)> = Vec::new();
@@ -574,7 +580,7 @@ impl Hub {
         let issue_side = self.issue_sidebar(repo, pr, true, cx);
         widgets::col()
             .gap_3()
-            .child(side_section("reviewers", "Reviewers", Some(Act::menu(reviewer_menu)), reviewers.into_any_element()))
+            .child(side_section("reviewers", "Reviewers", Some(reviewer_picker.act()), reviewers.into_any_element()))
             .child(issue_side)
             .children(draft_toggle)
             .child(widgets::ibtn("change-base", "branch", "Change base branch", base_form).w_full())
@@ -652,8 +658,10 @@ impl Hub {
             .id("pr-file-list")
             .flex()
             .flex_col()
-            .max_h(px(720.0))
+            .flex_1()
+            .min_h_0()
             .overflow_y_scroll()
+            .track_scroll(&self.scroller("pr-file-list"))
             .py_1();
         if entries.is_empty() && !loading {
             picker = picker.child(div().p_3().child(widgets::faint("No files match.")));
@@ -716,6 +724,7 @@ impl Hub {
         let picker = widgets::card()
             .w(px(300.0))
             .flex_none()
+            .h_full()
             .child(
                 widgets::row()
                     .px_3()
@@ -741,17 +750,30 @@ impl Hub {
             .child(step("file-next", "chevron-right", "Next file", order.get(position + 1).map(|&i| &files[i])));
         let diff = self.diff_file(&format!("prf{number}-{selected}"), file, Some(&target), &comments_on(&name), cx);
 
+        // A fresh handle per file, so each starts at its top.
+        let diff_scroll = self.scroller(&format!("pr-diff:{name}"));
         widgets::col()
             .gap_3()
+            .flex_1()
+            .min_h_0()
             .child(header)
             .child(
                 div()
                     .flex()
                     .flex_row()
-                    .items_start()
+                    .flex_1()
+                    .min_h(px(240.0))
                     .gap_3()
                     .child(picker)
-                    .child(widgets::col().flex_1().min_w_0().gap_2().child(diff).child(nav)),
+                    .child(
+                        div()
+                            .id("pr-diff")
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_y_scroll()
+                            .track_scroll(&diff_scroll)
+                            .child(widgets::col().gap_2().pb_4().child(diff).child(nav)),
+                    ),
             )
             .into_any_element()
     }

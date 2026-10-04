@@ -1081,9 +1081,9 @@ impl Hub {
             toolbar = toolbar.child(widgets::spacer()).child(widgets::btn("copy-file", "Copy", Act::Copy(copy_text)));
             if is_markdown && view == "preview" {
                 let md = self.markdown(&format!("file-{path}"), &text, cx);
-                div().id("file-md").flex_1().min_h_0().overflow_y_scroll().p_6().child(md).into_any_element()
+                div().id("file-md").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroller("file-md")).p_6().child(md).into_any_element()
             } else {
-                numbered_lines(&text)
+                numbered_lines(&text, self.list_scroller("file-lines"))
             }
         };
         if is_image {
@@ -1114,7 +1114,7 @@ impl Hub {
 }
 
 /// Monospace lines with numbers, virtualised so large files stay quick.
-pub fn numbered_lines(text: &str) -> AnyElement {
+pub fn numbered_lines(text: &str, scroll: gpui::UniformListScrollHandle) -> AnyElement {
     let p = palette();
     let lines: std::rc::Rc<Vec<String>> = std::rc::Rc::new(text.lines().map(|l| l.replace('\t', "    ")).collect());
     let count = lines.len();
@@ -1139,6 +1139,7 @@ pub fn numbered_lines(text: &str) -> AnyElement {
             })
             .collect()
     })
+    .track_scroll(scroll)
     .flex_1()
     .min_h_0()
     .py_2()

@@ -9,7 +9,7 @@ use crate::time;
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, AnyElement, Context, ElementId, FontWeight, IntoElement as _, ParentElement as _,
+    div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _,
     Styled as _,
 };
 use crate::ui::{icon, palette, Button, IconButton};
@@ -487,9 +487,30 @@ pub fn api_path(url: &str) -> String {
     url.trim_start_matches(crate::api::API).to_string()
 }
 
-/// A gear-headed sidebar section that opens a picker.
+/// A sidebar section whose heading (title and gear) opens a picker.
 pub fn side_section(id: &str, title: &str, picker: Option<Act>, content: AnyElement) -> AnyElement {
     let p = palette();
+    let clickable = picker.is_some();
+    let heading = div()
+        .id(ElementId::Name(format!("{id}-heading").into()))
+        .flex()
+        .flex_row()
+        .items_center()
+        .h(px(24.0))
+        .text_color(rgb(p.text_dim))
+        .child(
+            div()
+                .flex_1()
+                .text_size(px(12.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title.to_string()),
+        )
+        .when(clickable, |d| d.child(icon("settings", 14.0, p.text_dim)))
+        .when_some(picker, |d, act| {
+            d.cursor_pointer()
+                .hover(|s| s.text_color(rgb(p.accent)))
+                .on_click(on(act))
+        });
     div()
         .flex()
         .flex_col()
@@ -497,29 +518,7 @@ pub fn side_section(id: &str, title: &str, picker: Option<Act>, content: AnyElem
         .pb_3()
         .border_b_1()
         .border_color(rgb(p.divider))
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .child(
-                    div()
-                        .flex_1()
-                        .text_size(px(12.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(p.text_dim))
-                        .child(title.to_string()),
-                )
-                .when_some(picker, |d, act| {
-                    d.child(
-                        IconButton::new(ElementId::Name(format!("{id}-gear").into()), "settings")
-                            .size(22.0)
-                            .icon_size(14.0)
-                            .color(p.text_dim)
-                            .on_click(on(act)),
-                    )
-                }),
-        )
+        .child(heading)
         .child(content)
         .into_any_element()
 }
