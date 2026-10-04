@@ -170,6 +170,7 @@ impl Hub {
             .border_r_1()
             .border_color(rgb(p.panel_edge))
             .overflow_y_scroll()
+            .pt_2()
             .child(
                 div()
                     .id("me")
