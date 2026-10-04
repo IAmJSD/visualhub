@@ -284,31 +284,3 @@ impl Hub {
     }
 
 }
-
-/// Terminal colour codes out of a log line.
-pub(super) fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' && chars.peek() == Some(&'[') {
-            chars.next();
-            for c in chars.by_ref() {
-                if c.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn ansi_is_stripped() {
-        assert_eq!(super::strip_ansi("\u{1b}[31mred\u{1b}[0m text"), "red text");
-    }
-}

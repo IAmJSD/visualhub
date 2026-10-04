@@ -1,9 +1,8 @@
-//! A workflow run and a job's log, laid out as GitHub Actions does: a
-//! sidebar of the run's jobs beside either the run's summary (trigger,
-//! status, the workflow graph, annotations, artifacts) or a job's steps,
-//! each opening onto its own stretch of the log.
+//! A workflow run, laid out as GitHub Actions does: a sidebar of the
+//! run's jobs beside its summary (trigger, status, the workflow graph,
+//! annotations, artifacts). A job opens on github.com, which alone can
+//! stream a running job's log.
 
-use super::actions::strip_ansi;
 use super::pulls::status_icon;
 use crate::form::{Field, FormSpec};
 use crate::hub::{on, Act, Hub, Load, MenuEntry, Req, Route, RepoTab};
@@ -20,7 +19,6 @@ use gpui::{
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::rc::Rc;
 
 /// A job in the workflow file: its key, `name:`, and `needs:`.
 #[derive(Debug, PartialEq)]
@@ -142,7 +140,7 @@ fn verdict(status: &str, conclusion: &str) -> String {
 
 impl Hub {
     /// The jobs column beside a run or a job.
-    fn run_sidebar(&mut self, repo: &str, run: &Value, jobs: &[Value], selected: Option<u64>) -> Div {
+    fn run_sidebar(&mut self, repo: &str, run: &Value, jobs: &[Value]) -> Div {
         let p = palette();
         let run_id = run.i("id") as u64;
         let item = |id: String, active: bool, act: Act| {
@@ -165,7 +163,7 @@ impl Hub {
             .w(px(260.0))
             .flex_none()
             .child(
-                item("run-summary".into(), selected.is_none(), Act::Go(Route::Run { repo: repo.to_string(), id: run_id }))
+                item("run-summary".into(), true, Act::Go(Route::Run { repo: repo.to_string(), id: run_id }))
                     .child(icon("home", 14.0, p.text_dim))
                     .child("Summary"),
             )
@@ -174,7 +172,7 @@ impl Hub {
             let (mark, color) = status_icon(&job.s("status"), &job.s("conclusion"));
             let id = job.i("id") as u64;
             col = col.child(
-                item(format!("run-job-{id}"), selected == Some(id), Act::Go(Route::Job { repo: repo.to_string(), id, name: job.s("name") }))
+                item(format!("run-job-{id}"), false, Act::Url(job.s("html_url")))
                     .child(icon(mark, 14.0, color))
                     .child(div().flex_1().min_w_0().text_ellipsis().overflow_hidden().whitespace_nowrap().child(job.s("name"))),
             );
@@ -273,7 +271,7 @@ impl Hub {
             _ => Vec::new(),
         };
         let header = self.run_header(repo, &run);
-        let sidebar = self.run_sidebar(repo, &run, &jobs, None);
+        let sidebar = self.run_sidebar(repo, &run, &jobs);
 
         // Summary: how it started, how it went, how long, what it made.
         let artifacts_count = self.fetch(&format!("{base}/artifacts"), cx).ready().map(|v| v.i("total_count"));
@@ -441,7 +439,7 @@ impl Hub {
                 .when(!inner, |d| d.rounded_md().border_1().border_color(rgb(p.edge)).bg(rgb(p.panel_bg)))
                 .when(inner, |d| d.rounded_sm())
                 .hover(|s| s.bg(rgb(p.hover)))
-                .on_click(on(Act::Go(Route::Job { repo: repo.to_string(), id, name: job.s("name") })))
+                .on_click(on(Act::Url(job.s("html_url"))))
                 .child(icon(mark, 14.0, color))
                 .child(div().flex_1().min_w_0().text_ellipsis().overflow_hidden().whitespace_nowrap().child(job.s("name")))
                 .child(widgets::faint(took))
@@ -552,302 +550,6 @@ impl Hub {
         }
         Some(card.into_any_element())
     }
-
-    /// A job: the run's sidebar, and the job's steps, each opening onto
-    /// its part of the log.
-    pub fn job(&mut self, repo: &str, id: u64, name: &str, cx: &mut Context<Self>) -> AnyElement {
-        let job_path = format!("/repos/{repo}/actions/jobs/{id}");
-        let job = ready!(self.fetch(&job_path, cx));
-        let run_id = job.i("run_id") as u64;
-        let run_base = format!("/repos/{repo}/actions/runs/{run_id}");
-        let run = self.fetch(&run_base, cx).ready().cloned();
-        let jobs: Vec<Value> = match self.fetch(&format!("{run_base}/jobs?filter=latest&per_page=100"), cx) {
-            Load::Ready(list) => list.list("jobs").to_vec(),
-            _ => Vec::new(),
-        };
-        let header = match &run {
-            Some(run) => self.run_header(repo, run),
-            None => widgets::title(name.to_string()).into_any_element(),
-        };
-        let sidebar = match &run {
-            Some(run) => self.run_sidebar(repo, run, &jobs, Some(id)).into_any_element(),
-            None => div().into_any_element(),
-        };
-        let log = self.job_log(repo, id, &job, cx);
-        div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .px_6()
-            .py_4()
-            .gap_4()
-            .child(header)
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_1()
-                    .min_h_0()
-                    .gap_6()
-                    .child(div().id("job-sidebar").overflow_y_scroll().track_scroll(&self.scroller("job-sidebar")).child(sidebar))
-                    .child(log),
-            )
-            .into_any_element()
-    }
-
-    /// The dark log pane: the job's name and outcome, a search box, and
-    /// every step with its lines.
-    fn job_log(&mut self, repo: &str, id: u64, job: &Value, cx: &mut Context<Self>) -> AnyElement {
-        let p = palette();
-        let path = format!("/repos/{repo}/actions/jobs/{id}/logs");
-        let finished = job.s("status") == "completed";
-        // A running job's log is there for its finished steps; keep it,
-        // and the steps, coming in until the job ends.
-        if !finished {
-            self.poll(&[format!("/repos/{repo}/actions/jobs/{id}"), format!("/repos/{repo}/actions/runs/{}", job.i("run_id"))], 5, cx);
-        }
-        let text = match self.fetch_text(&path, "application/vnd.github+json", cx) {
-            Load::Ready(v) => Some(v.s("")),
-            Load::Failed(_) => None,
-            Load::Loading => Some(String::new()),
-        };
-        let steps = job.list("steps").to_vec();
-        let logs = split_by_step(text.as_deref().unwrap_or(""), &steps);
-
-        let search_id = format!("joblog.search:{id}");
-        let query = self.field_text(&search_id).trim().to_lowercase();
-        let search = self.input(&search_id, "Search logs", cx).w(px(240.0)).h(px(28.0));
-
-        // One flat, virtualised list: each step's row, then its lines
-        // when it's open. Failed steps and steps with matches open.
-        let mut items: Vec<LogItem> = Vec::new();
-        let mut matches = 0;
-        for (n, step) in steps.iter().enumerate() {
-            let lines = &logs[n];
-            let hits = if query.is_empty() { 0 } else { lines.iter().filter(|l| l.text.to_lowercase().contains(&query)).count() };
-            matches += hits;
-            let key = format!("jobstep:{id}:{n}");
-            let failed = step.s("conclusion") == "failure";
-            // Failed steps start open; the set records what was toggled.
-            let toggled = self.is_open(&key);
-            let open = (failed != toggled) || hits > 0;
-            items.push(LogItem::Step { n, open, key, hits });
-            if open {
-                for (i, line) in lines.iter().enumerate() {
-                    let hit = !query.is_empty() && line.text.to_lowercase().contains(&query);
-                    items.push(LogItem::Line { step: n, number: i + 1, hit });
-                }
-                if lines.is_empty() {
-                    items.push(LogItem::Empty { done: step.s("status") == "completed" });
-                }
-            }
-        }
-
-        let (mark, color) = status_icon(&job.s("status"), &job.s("conclusion"));
-        let took = time::span(&job.s("started_at"), &job.s("completed_at"));
-        let outcome = if finished {
-            format!("{} {} in {took}", verdict(&job.s("status"), &job.s("conclusion")).to_lowercase(), time::ago(&job.s("completed_at")))
-        } else {
-            format!("{} — started {}, updating live", verdict(&job.s("status"), &job.s("conclusion")).to_lowercase(), time::ago(&job.s("started_at")))
-        };
-        let reload_path = path.clone();
-        let head = widgets::row()
-            .gap_3()
-            .px_4()
-            .py_3()
-            .border_b_1()
-            .border_color(rgb(p.divider))
-            .child(icon(mark, 18.0, color))
-            .child(
-                widgets::col()
-                    .flex_1()
-                    .min_w_0()
-                    .gap_0p5()
-                    .child(div().text_size(px(15.0)).font_weight(FontWeight::SEMIBOLD).child(job.s("name")))
-                    .child(widgets::dim(outcome)),
-            )
-            .when(!query.is_empty(), |d| d.child(widgets::faint(format!("{matches} result{}", if matches == 1 { "" } else { "s" }))))
-            .child(search)
-            .child(
-                IconButton::new("job-log-menu", "kebab").size(28.0).icon_size(16.0).on_click(on(Act::menu(vec![
-                    MenuEntry::item("Copy log", Act::Copy(text.clone().unwrap_or_default())),
-                    MenuEntry::item("Reload log", Act::run(move |hub, _, cx| {
-                        hub.invalidate(&reload_path);
-                        cx.notify();
-                    })),
-                    MenuEntry::item(
-                        "Re-run this job",
-                        Req::rest("POST", format!("/repos/{repo}/actions/jobs/{id}/rerun")).ok("Job re-run requested").inval(format!("/repos/{repo}/actions")).act(),
-                    ),
-                    MenuEntry::item("Open on GitHub", Act::Url(job.s("html_url"))),
-                ]))),
-            );
-
-        let steps = Rc::new(steps);
-        let logs = Rc::new(logs);
-        let items = Rc::new(items);
-        let count = items.len();
-        let scroll = self.list_scroller("job-log");
-        let body = gpui::uniform_list("job-log", count, move |range, _, _| {
-            range
-                .map(|i| match &items[i] {
-                    LogItem::Step { n, open, key, hits } => {
-                        let step = &steps[*n];
-                        let (mark, color) = status_icon(&step.s("status"), &step.s("conclusion"));
-                        let key = key.clone();
-                        div()
-                            .id(("job-step", i))
-                            .w_full()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .h(px(ROW))
-                            .px_3()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(rgb(p.hover)))
-                            .on_click(on(Act::run(move |hub, _, cx| {
-                                if !hub.open.remove(&key) {
-                                    hub.open.insert(key.clone());
-                                }
-                                cx.notify();
-                            })))
-                            .child(icon(if *open { "chevron-down" } else { "chevron-right" }, 12.0, p.text_dim))
-                            .child(icon(mark, 14.0, color))
-                            .child(div().flex_1().min_w_0().text_ellipsis().overflow_hidden().whitespace_nowrap().font_family(".SystemUIFont").text_size(px(13.0)).child(step.s("name")))
-                            .when(*hits > 0, |d| d.child(widgets::faint(format!("{hits} match{}", if *hits == 1 { "" } else { "es" }))))
-                            .child(widgets::faint(time::span(&step.s("started_at"), &step.s("completed_at"))))
-                            .into_any_element()
-                    }
-                    LogItem::Line { step, number, hit } => {
-                        let line = &logs[*step][*number - 1];
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_row()
-                            .h(px(ROW))
-                            .pl(px(28.0))
-                            .when(*hit, |d| d.bg(rgb(if crate::ui::is_light() { 0xFFF8C5 } else { 0x3B2E0A })))
-                            .when(line.kind == Kind::Error, |d| d.bg(rgb(if crate::ui::is_light() { 0xFFEBE9 } else { 0x2D1517 })))
-                            .child(div().w(px(48.0)).flex_none().pr_3().text_right().text_color(rgb(p.text_faint)).child(number.to_string()))
-                            .child(
-                                div()
-                                    .whitespace_nowrap()
-                                    .text_color(rgb(match line.kind {
-                                        Kind::Group => p.text,
-                                        Kind::Error => widgets::red(),
-                                        Kind::Warning => widgets::yellow(),
-                                        Kind::Command => p.accent_hover,
-                                        Kind::Debug => p.text_faint,
-                                        Kind::Plain => p.text,
-                                    }))
-                                    .when(line.kind == Kind::Group || line.kind == Kind::Error, |d| d.font_weight(FontWeight::SEMIBOLD))
-                                    .child(line.text.clone()),
-                            )
-                            .into_any_element()
-                    }
-                    LogItem::Empty { done } => div()
-                        .h(px(ROW))
-                        .pl(px(84.0))
-                        .text_color(rgb(p.text_faint))
-                        .child(if *done { "No output" } else { "Waiting for output…" })
-                        .into_any_element(),
-                })
-                .collect()
-        })
-        .track_scroll(scroll)
-        .flex_1()
-        .min_h_0()
-        .py_2()
-        .font_family(widgets::MONO)
-        .text_size(px(12.0));
-
-        let body: AnyElement = match text {
-            None if finished => widgets::col().p_4().child(widgets::dim("The log couldn't be loaded; it may have expired.")).into_any_element(),
-            _ => body.into_any_element(),
-        };
-        div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_w_0()
-            .min_h_0()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(p.edge))
-            .bg(rgb(p.deep_bg))
-            .overflow_hidden()
-            .child(head)
-            .child(body)
-            .into_any_element()
-    }
-}
-
-const ROW: f32 = 22.0;
-
-enum LogItem {
-    Step { n: usize, open: bool, key: String, hits: usize },
-    Line { step: usize, number: usize, hit: bool },
-    /// An open step with nothing to show: done and silent, or not yet
-    /// written.
-    Empty { done: bool },
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Kind {
-    Group,
-    Error,
-    Warning,
-    Command,
-    Debug,
-    Plain,
-}
-
-struct LogLine {
-    text: String,
-    kind: Kind,
-}
-
-/// The job's log cut into its steps by time: each line carries a
-/// timestamp, and belongs to the last step that had started by then.
-fn split_by_step(text: &str, steps: &[Value]) -> Vec<Vec<LogLine>> {
-    let starts: Vec<i64> = steps.iter().map(|s| time::parse(&s.s("started_at")).unwrap_or(i64::MAX)).collect();
-    let mut out: Vec<Vec<LogLine>> = steps.iter().map(|_| Vec::new()).collect();
-    if steps.is_empty() {
-        return out;
-    }
-    let mut current = 0;
-    for raw in text.lines() {
-        let (stamp, rest) = match raw.split_once(' ') {
-            Some((stamp, rest)) if stamp.len() >= 20 && stamp.as_bytes().get(4) == Some(&b'-') => (time::parse(stamp), rest),
-            _ => (None, raw),
-        };
-        if let Some(t) = stamp {
-            // Steps are in order; move on while the next has begun.
-            while current + 1 < starts.len() && starts[current + 1] <= t {
-                current += 1;
-            }
-        }
-        let line = rest.trim_start_matches('\u{feff}');
-        let (text, kind) = if let Some(r) = line.strip_prefix("##[group]") {
-            (format!("▸ {r}"), Kind::Group)
-        } else if line.starts_with("##[endgroup]") {
-            continue;
-        } else if let Some(r) = line.strip_prefix("##[error]") {
-            (format!("Error: {r}"), Kind::Error)
-        } else if let Some(r) = line.strip_prefix("##[warning]") {
-            (format!("Warning: {r}"), Kind::Warning)
-        } else if let Some(r) = line.strip_prefix("##[command]") {
-            (r.to_string(), Kind::Command)
-        } else if let Some(r) = line.strip_prefix("##[debug]") {
-            (r.to_string(), Kind::Debug)
-        } else {
-            (strip_ansi(line), Kind::Plain)
-        };
-        out[current].push(LogLine { text: text.replace('\t', "    "), kind });
-    }
-    out
 }
 
 #[cfg(test)]
@@ -867,17 +569,5 @@ mod tests {
         assert_eq!((depth["build"], depth["test"], depth["deploy"]), (0, 1, 2));
         assert_eq!(file_job_for("Test suite (a)", &jobs).map(|j| j.key.as_str()), Some("test"));
         assert_eq!(file_job_for("build", &jobs).map(|j| j.key.as_str()), Some("build"));
-    }
-
-    #[test]
-    fn splits_logs_by_step_time() {
-        let steps = vec![
-            json!({ "started_at": "2024-01-01T00:00:00Z" }),
-            json!({ "started_at": "2024-01-01T00:00:05Z" }),
-        ];
-        let log = "2024-01-01T00:00:01.0000000Z one\n2024-01-01T00:00:06.0000000Z ##[group]Run two\n2024-01-01T00:00:06.1000000Z ##[endgroup]\n2024-01-01T00:00:07.0000000Z three";
-        let split = split_by_step(log, &steps);
-        assert_eq!(split[0].len(), 1);
-        assert_eq!(split[1].iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["▸ Run two", "three"]);
     }
 }

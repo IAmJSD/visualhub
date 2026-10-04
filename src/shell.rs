@@ -491,7 +491,6 @@ impl Hub {
             Route::Commit { repo, sha } => self.commit(repo, sha, cx),
             Route::Compare { repo, base, head } => self.compare(repo, base, head, cx),
             Route::Run { repo, id } => self.run(repo, *id, cx),
-            Route::Job { repo, id, name } => self.job(repo, *id, name, cx),
             Route::Release { repo, id } => self.release(repo, *id, cx),
             Route::Discussion { repo, number } => self.discussion(repo, *number, cx),
             Route::User { login } => self.user(login, cx),

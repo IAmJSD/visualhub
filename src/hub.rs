@@ -70,7 +70,6 @@ pub enum Route {
     Commit { repo: String, sha: String },
     Compare { repo: String, base: String, head: String },
     Run { repo: String, id: u64 },
-    Job { repo: String, id: u64, name: String },
     Release { repo: String, id: u64 },
     Discussion { repo: String, number: u64 },
     User { login: String },
@@ -101,7 +100,6 @@ impl Route {
             | Route::Commit { repo, .. }
             | Route::Compare { repo, .. }
             | Route::Run { repo, .. }
-            | Route::Job { repo, .. }
             | Route::Release { repo, .. }
             | Route::Discussion { repo, .. } => Some(repo),
             _ => None,
@@ -125,7 +123,6 @@ impl Route {
             Route::Commit { repo, sha } => format!("{repo}@{}", &sha[..sha.len().min(7)]),
             Route::Compare { repo, base, head } => format!("{repo} {base}...{head}"),
             Route::Run { repo, id } => format!("{repo} run {id}"),
-            Route::Job { name, .. } => name.clone(),
             Route::Release { repo, .. } => format!("{repo} release"),
             Route::Discussion { repo, number } => format!("{repo} discussion #{number}"),
             Route::User { login } | Route::Org { login } => login.clone(),
@@ -148,7 +145,7 @@ impl Route {
     pub fn owns_scroll(&self) -> bool {
         matches!(
             self,
-            Route::Job { .. } | Route::Tree { file: true, .. } | Route::Pull { tab: PullTab::Files, .. }
+            Route::Tree { file: true, .. } | Route::Pull { tab: PullTab::Files, .. }
         )
     }
 
@@ -189,7 +186,6 @@ impl Route {
             Route::Commit { repo, sha } => format!("{w}/{repo}/commit/{sha}"),
             Route::Compare { repo, base, head } => format!("{w}/{repo}/compare/{base}...{head}"),
             Route::Run { repo, id } => format!("{w}/{repo}/actions/runs/{id}"),
-            Route::Job { repo, id, .. } => format!("{w}/{repo}/actions/runs/0/job/{id}"),
             Route::Release { repo, .. } => format!("{w}/{repo}/releases"),
             Route::Discussion { repo, number } => format!("{w}/{repo}/discussions/{number}"),
             Route::User { login } | Route::Org { login } => format!("{w}/{login}"),
@@ -255,6 +251,8 @@ pub fn route_for_url(url: &str) -> Option<Route> {
                     repo,
                     sha: sha.to_string(),
                 },
+                // A job opens on github.com, which can stream its log.
+                ["actions", "runs", _, "job", ..] => return None,
                 ["actions", "runs", id, ..] => Route::Run {
                     repo,
                     id: num(id)?,
