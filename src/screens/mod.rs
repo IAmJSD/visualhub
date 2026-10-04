@@ -15,5 +15,6 @@ pub mod releases;
 pub mod repo;
 pub mod repo_extra;
 pub mod repos;
+pub mod run;
 pub mod search;
 pub mod settings;
