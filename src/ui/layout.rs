@@ -210,6 +210,9 @@ pub struct Modal {
     dim_background: bool,
     canvas_controls: bool,
     backdrop: Option<gpui::Div>,
+    /// Take the window's height, the body sharing out what the title
+    /// and actions leave.
+    fill: bool,
     style: StyleRefinement,
     children: Vec<AnyElement>,
     actions: Vec<AnyElement>,
@@ -223,6 +226,7 @@ impl Modal {
             dim_background: true,
             canvas_controls: false,
             backdrop: None,
+            fill: false,
             style: StyleRefinement::default(),
             children: Vec::new(),
             actions: Vec::new(),
@@ -253,6 +257,13 @@ impl Modal {
     /// hitbox is occluded by this modal and would never receive pointer events.
     pub fn backdrop(mut self, backdrop: gpui::Div) -> Self {
         self.backdrop = Some(backdrop);
+        self
+    }
+
+    /// As tall as the window allows, for a dialog with a paragraph box
+    /// to grow into: the box scrolls inside, the actions stay in view.
+    pub fn fill(mut self) -> Self {
+        self.fill = true;
         self
     }
 
@@ -298,7 +309,8 @@ impl RenderOnce for Modal {
             .border_1()
             .border_color(gpui::rgb(p.edge))
             .shadow_lg()
-            .text_color(gpui::rgb(p.text));
+            .text_color(gpui::rgb(p.text))
+            .when(self.fill, |d| d.h_full());
         card.style().refine(&self.style);
         if self.canvas_controls {
             card = card
@@ -318,7 +330,8 @@ impl RenderOnce for Modal {
             .items_center()
             .justify_center()
             .when(self.canvas_controls, |el| el.justify_end())
-            .p_2()
+            .when(self.fill, |el| el.p_6())
+            .when(!self.fill, |el| el.p_2())
             .bg(gpui::rgba(if self.dim_background {
                 0x00000080
             } else {
@@ -344,6 +357,7 @@ impl RenderOnce for Modal {
                         .flex_col()
                         .gap_1()
                         .min_h(px(0.0))
+                        .when(self.fill, |d| d.flex_1())
                         .overflow_y_scroll()
                         .children(self.children),
                 )

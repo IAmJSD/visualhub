@@ -10,7 +10,7 @@ use crate::hub::{Act, Hub, Modal, Req, Then};
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, AnyElement, Context, ElementId, IntoElement as _, ParentElement as _, SharedString,
+    div, px, AnyElement, Context, ElementId, InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _, SharedString,
     Styled as _,
 };
 use crate::ui::{palette, Button, Checkbox, DropdownButton, LineEdit, TextInput, TextPress};
@@ -520,6 +520,7 @@ impl Hub {
             Modal::Form { spec, error, busy } => {
                 let (spec, error, busy) = (spec.clone(), error.clone(), *busy);
                 let mut modal = crate::ui::Modal::new(spec.title.clone())
+                    .when(spec.fields.iter().any(|f| f.is_paragraph()), |m| m.fill())
                     .width(spec.width)
                     .text_size(px(13.0))
                     .p_4()
@@ -705,11 +706,21 @@ impl Hub {
                 } else {
                     ""
                 };
-                let mut el = self.textarea(&id, placeholder, cx);
+                let mut el = self.textarea(&id, placeholder, cx).min_h_full();
                 if matches!(field.kind, Kind::Json) {
                     el = el.font_family(widgets::MONO);
                 }
-                el.into_any_element()
+                // The box grows with its text; this keeps it to the
+                // dialog's spare height and scrolls it there.
+                let scroll = self.scroller(&format!("{id}-scroll"));
+                div()
+                    .id(ElementId::Name(format!("{id}-scroll").into()))
+                    .flex_1()
+                    .min_h(px(100.0))
+                    .overflow_y_scroll()
+                    .track_scroll(&scroll)
+                    .child(el)
+                    .into_any_element()
             }
             Kind::Secret => self.secret_input(&id, "", cx).w_full().into_any_element(),
             Kind::List => self
@@ -722,6 +733,7 @@ impl Hub {
             .flex()
             .flex_col()
             .gap_1()
+            .when(field.is_paragraph(), |d| d.flex_1().min_h(px(130.0)))
             .child(label)
             .child(control)
             .when_some(field.hint.clone(), |d, hint| d.child(widgets::faint(hint)))
