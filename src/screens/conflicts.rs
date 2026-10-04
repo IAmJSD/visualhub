@@ -16,7 +16,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _,
 };
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Long enough that no file's own text looks like one of our markers.
 const MARK: usize = 13;
@@ -177,86 +177,89 @@ fn file_at(client: &Client, repo: &str, path: &str, sha: &str) -> Result<Option<
     String::from_utf8(bytes).map(Some).map_err(|_| ())
 }
 
-/// Every path a commit's tree holds, with its mode.
-fn modes(client: &Client, repo: &str, sha: &str) -> HashMap<String, String> {
-    client
-        .get(&format!("/repos/{repo}/git/trees/{sha}?recursive=1"))
-        .map(|t| t.list("tree").iter().map(|e| (e.s("path"), e.s("mode"))).collect())
-        .unwrap_or_default()
+/// Every file a commit's tree holds: path to (blob, mode). Errs when
+/// GitHub truncates the listing, as a merge from part of a tree would
+/// drop files.
+fn tree(client: &Client, repo: &str, commit: &str) -> Result<HashMap<String, (String, String)>> {
+    let t = client.get(&format!("/repos/{repo}/git/trees/{commit}?recursive=1"))?;
+    if t.b("truncated") {
+        bail!("This repository is too large to merge here; resolve the conflicts on the command line.");
+    }
+    Ok(t.list("tree")
+        .iter()
+        .filter(|e| e.s("type") == "blob" || e.s("type") == "commit")
+        .map(|e| (e.s("path"), (e.s("sha"), e.s("mode"))))
+        .collect())
 }
 
 pub fn load(client: &Client, repo: &str, number: u64) -> Result<Session> {
     let pr = client.get(&format!("/repos/{repo}/pulls/{number}"))?;
-    let (base_sha, head_sha) = (pr.s("base.sha"), pr.s("head.sha"));
+    let head_sha = pr.s("head.sha");
+    // The PR's base.sha lags the branch; merge with where it is now.
+    let base_ref = pr.s("base.ref");
+    let base_sha = client.get(&format!("/repos/{repo}/branches/{}", enc_path(&base_ref)))?.s("commit.sha");
     let head_repo = if pr.s("head.repo.full_name").is_empty() { repo.to_string() } else { pr.s("head.repo.full_name") };
-    // What each side changed since they parted.
-    let head_side = client.get(&format!("/repos/{repo}/compare/{base_sha}...{head_sha}"))?;
-    let base_side = client.get(&format!("/repos/{repo}/compare/{head_sha}...{base_sha}"))?;
-    let ancestor = head_side.s("merge_base_commit.sha");
+    let ancestor = client.get(&format!("/repos/{repo}/compare/{base_sha}...{head_sha}?per_page=1"))?.s("merge_base_commit.sha");
     if ancestor.is_empty() {
         bail!("GitHub couldn't find where the branches parted.");
     }
-    let touched = |cmp: &Value| -> HashSet<String> {
-        cmp.list("files")
-            .iter()
-            .flat_map(|f| [f.s("filename"), f.s("previous_filename")])
-            .filter(|p| !p.is_empty())
-            .collect()
-    };
-    let head_paths = touched(&head_side);
-    let base_modes = modes(client, repo, &base_sha);
-    let head_modes = modes(client, repo, &head_sha);
+    // Whole trees rather than compare's file lists, which stop at 300.
+    let (anc, head, base) = (tree(client, repo, &ancestor)?, tree(client, repo, &head_sha)?, tree(client, repo, &base_sha)?);
+    let mut paths: Vec<&String> = anc.keys().chain(head.keys()).chain(base.keys()).collect();
+    paths.sort();
+    paths.dedup();
 
     let mut files = Vec::new();
     let mut merged = Vec::new();
     let mut base_only = Vec::new();
-    let mut done = HashSet::new();
-    for f in base_side.list("files") {
-        let path = f.s("filename");
-        let moved_from = f.s("previous_filename");
-        for (p, gone) in [(path.clone(), f.s("status") == "removed"), (moved_from.clone(), true)] {
-            if p.is_empty() || !done.insert(p.clone()) {
-                continue;
-            }
-            if !head_paths.contains(&p) {
-                base_only.push(BaseChange {
-                    sha: (!gone).then(|| f.s("sha")),
-                    mode: base_modes.get(&p).cloned().unwrap_or_else(|| "100644".into()),
-                    path: p,
-                });
-                continue;
-            }
-            // Both changed it: merge the three versions.
-            let mode = head_modes.get(&p).or(base_modes.get(&p)).cloned().unwrap_or_else(|| "100644".into());
-            let sides = (file_at(client, repo, &p, &ancestor), file_at(client, repo, &p, &head_sha), file_at(client, repo, &p, &base_sha));
-            match sides {
-                (Ok(a), Ok(cur), Ok(inc)) => {
-                    let deletable = cur.is_none() || inc.is_none();
-                    let (a, cur, inc) = (a.unwrap_or_default(), cur.unwrap_or_default(), inc.unwrap_or_default());
-                    let mut opts = diffy::MergeOptions::new();
-                    opts.set_conflict_style(diffy::ConflictStyle::Merge).set_conflict_marker_length(MARK);
-                    match opts.merge(&a, &cur, &inc) {
-                        Ok(text) => merged.push((p, text, mode)),
-                        Err(text) => files.push(ConflictFile { path: p, chunks: chunks(&text), edited: None, deletable, binary: None, binary_pick: None }),
-                    }
+    for path in paths {
+        let (a, h, b) = (anc.get(path), head.get(path), base.get(path));
+        let blob = |x: Option<&(String, String)>| x.map(|(sha, _)| sha.clone());
+        let (a_sha, h_sha, b_sha) = (blob(a), blob(h), blob(b));
+        if b_sha == a_sha || b_sha == h_sha {
+            // The base didn't touch it, or both ended up the same.
+            continue;
+        }
+        let mode = b.or(h).map(|(_, m)| m.clone()).unwrap_or_else(|| "100644".into());
+        if h_sha == a_sha {
+            // Only the base changed it: take the base's version.
+            base_only.push(BaseChange { path: path.clone(), sha: b_sha, mode });
+            continue;
+        }
+        // Both changed it, differently: merge the three versions.
+        let sides = (
+            a_sha.as_ref().map_or(Ok(None), |_| file_at(client, repo, path, &ancestor)),
+            h_sha.as_ref().map_or(Ok(None), |_| file_at(client, repo, path, &head_sha)),
+            b_sha.as_ref().map_or(Ok(None), |_| file_at(client, repo, path, &base_sha)),
+        );
+        let mode = h.or(b).map(|(_, m)| m.clone()).unwrap_or_else(|| "100644".into());
+        match sides {
+            (Ok(a), Ok(cur), Ok(inc)) => {
+                let deletable = cur.is_none() || inc.is_none();
+                let (a, cur, inc) = (a.unwrap_or_default(), cur.unwrap_or_default(), inc.unwrap_or_default());
+                let mut opts = diffy::MergeOptions::new();
+                opts.set_conflict_style(diffy::ConflictStyle::Merge).set_conflict_marker_length(MARK);
+                match opts.merge(&a, &cur, &inc) {
+                    Ok(text) => merged.push((path.clone(), text, mode)),
+                    Err(text) => files.push(ConflictFile { path: path.clone(), chunks: chunks(&text), edited: None, deletable, binary: None, binary_pick: None }),
                 }
-                _ => files.push(ConflictFile {
-                    path: p.clone(),
-                    chunks: Vec::new(),
-                    edited: None,
-                    deletable: false,
-                    binary: Some((head_modes.get(&p).cloned(), base_modes.get(&p).cloned())),
-                    binary_pick: None,
-                }),
             }
+            _ => files.push(ConflictFile {
+                path: path.clone(),
+                chunks: Vec::new(),
+                edited: None,
+                deletable: false,
+                binary: Some((h_sha, b_sha)),
+                binary_pick: None,
+            }),
         }
     }
-    let mut modes = head_modes;
-    modes.extend(base_modes);
+    let mut modes: HashMap<String, String> = head.iter().map(|(p, (_, m))| (p.clone(), m.clone())).collect();
+    modes.extend(base.iter().map(|(p, (_, m))| (p.clone(), m.clone())));
     Ok(Session {
         head_repo,
         head_ref: pr.s("head.ref"),
-        base_ref: pr.s("base.ref"),
+        base_ref,
         head_sha,
         base_sha,
         files,
@@ -307,7 +310,9 @@ fn commit(client: &Client, plan: &Plan) -> Result<String> {
             Some(sha) => Value::String(sha.clone()),
             None => Value::Null,
         };
-        tree.push(json!({ "path": path, "mode": mode, "type": "blob", "sha": sha }));
+        // A submodule's entry points at a commit, not a blob.
+        let kind = if mode == "160000" { "commit" } else { "blob" };
+        tree.push(json!({ "path": path, "mode": mode, "type": kind, "sha": sha }));
     }
     let new_tree = client.json("POST", &format!("/repos/{}/git/trees", plan.head_repo), Some(&json!({ "base_tree": head_tree, "tree": tree })))?.s("sha");
     let message = format!("Merge branch '{}' into {}", plan.base_ref, plan.head_ref);
@@ -755,6 +760,28 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Against a real pull request: `VH_CONFLICTS=owner/repo#123`.
+    #[test]
+    #[ignore]
+    fn live_session() {
+        let Ok(target) = std::env::var("VH_CONFLICTS") else { return };
+        let (repo, number) = target.split_once('#').unwrap();
+        let token = crate::api::gh_cli_token().unwrap();
+        let s = load(&Client::new(&token), repo, number.parse().unwrap()).unwrap();
+        eprintln!("base {} head {}", s.base_sha, s.head_sha);
+        eprintln!("{} base-only, {} merged cleanly, {} conflicted", s.base_only.len(), s.merged.len(), s.files.len());
+        for f in &s.files {
+            eprintln!("  {} — {} conflicts{}", f.path, f.conflicts(), if f.binary.is_some() { " (binary)" } else { "" });
+        }
+        if let Ok(dir) = std::env::var("VH_DUMP") {
+            for (path, text, _) in &s.merged {
+                let out = std::path::Path::new(&dir).join(path);
+                std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+                std::fs::write(out, text).unwrap();
+            }
+        }
+    }
 
     #[test]
     fn three_way_merge_finds_conflicts() {
