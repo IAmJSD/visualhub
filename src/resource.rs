@@ -16,6 +16,7 @@ use gpui::{
     SharedString, Styled as _,
 };
 use crate::time;
+use std::collections::HashMap;
 use crate::ui::{icon, palette, Button, IconButton};
 use serde_json::Value;
 use std::rc::Rc;
@@ -329,24 +330,39 @@ impl Hub {
             }
         }
         for (repo, indices) in by_repo {
-            let Some((owner, name)) = repo.split_once('/') else { continue };
-            for chunk in indices.chunks(PER_PAGE) {
-                let fields: String = chunk
-                    .iter()
-                    .enumerate()
-                    .map(|(n, &i)| {
-                        let sha = Value::String(rows[i].commit.as_ref().map(|c| c.sha.clone()).unwrap_or_default());
-                        format!("c{n}: object(oid: {sha}) {{ ... on Commit {{ authors(first: 10) {{ nodes {{ name avatarUrl user {{ login avatarUrl }} }} }} }} }} ")
-                    })
-                    .collect();
-                let query = format!("query($o: String!, $n: String!) {{ repository(owner: $o, name: $n) {{ {fields}}} }}");
-                let vars = serde_json::json!({ "o": owner, "n": name });
-                let Some(data) = self.fetch_gql(&format!("/repos/{repo}/commits"), &query, vars, cx).ready().cloned() else { continue };
-                for (n, &i) in chunk.iter().enumerate() {
-                    rows[i].authors = crate::screens::repo::distinct_authors(data.list(&format!("repository.c{n}.authors.nodes")));
+            let shas: Vec<String> = indices.iter().filter_map(|&i| rows[i].commit.as_ref().map(|c| c.sha.clone())).collect();
+            let found = self.commit_authors_batch(&repo, &shas, cx);
+            for &i in &indices {
+                if let Some(authors) = rows[i].commit.as_ref().and_then(|c| found.get(&c.sha)) {
+                    rows[i].authors = authors.clone();
                 }
             }
         }
+    }
+
+    /// The accounts behind each of `shas` in `repo` (co-authors too), as
+    /// far as GraphQL has answered, asked in batches that follow the
+    /// list's order so a longer list reuses the batches already in.
+    pub fn commit_authors_batch(&mut self, repo: &str, shas: &[String], cx: &mut Context<Self>) -> HashMap<String, Vec<Value>> {
+        let mut found = HashMap::new();
+        let Some((owner, name)) = repo.split_once('/') else { return found };
+        for chunk in shas.chunks(PER_PAGE) {
+            let fields: String = chunk
+                .iter()
+                .enumerate()
+                .map(|(n, sha)| {
+                    let sha = Value::String(sha.clone());
+                    format!("c{n}: object(oid: {sha}) {{ ... on Commit {{ authors(first: 10) {{ nodes {{ name avatarUrl user {{ login avatarUrl }} }} }} }} }} ")
+                })
+                .collect();
+            let query = format!("query($o: String!, $n: String!) {{ repository(owner: $o, name: $n) {{ {fields}}} }}");
+            let vars = serde_json::json!({ "o": owner, "n": name });
+            let Some(data) = self.fetch_gql(&format!("/repos/{repo}/commits"), &query, vars, cx).ready().cloned() else { continue };
+            for (n, sha) in chunk.iter().enumerate() {
+                found.insert(sha.clone(), crate::screens::repo::distinct_authors(data.list(&format!("repository.c{n}.authors.nodes"))));
+            }
+        }
+        found
     }
 
     pub fn render_row(&mut self, id: &str, row: Row, cx: &mut Context<Self>) -> AnyElement {

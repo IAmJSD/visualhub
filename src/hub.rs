@@ -616,6 +616,8 @@ pub struct Hub {
     pub list_scrollers: HashMap<String, gpui::UniformListScrollHandle>,
     /// Counts renders, to tell which panes are on screen.
     pub frame: u64,
+    /// Commit authors as GraphQL resolved them, by SHA.
+    pub commit_people: HashMap<String, Vec<Value>>,
     /// Expanded rows and sections, by id.
     pub open: HashSet<String>,
 }
@@ -659,6 +661,7 @@ impl Hub {
             scrollers: HashMap::new(),
             list_scrollers: HashMap::new(),
             frame: 0,
+            commit_people: HashMap::new(),
             open: HashSet::new(),
         };
         hub.discover(cx);

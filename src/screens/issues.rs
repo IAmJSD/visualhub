@@ -14,7 +14,7 @@ use crate::resource::{ListSpec, Row};
 use crate::time;
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
-use gpui::{div, px, AnyElement, Context, ElementId, IntoElement as _, ParentElement as _, Styled as _};
+use gpui::{div, px, AnyElement, Context, ElementId, FontWeight, IntoElement as _, ParentElement as _, Styled as _};
 use crate::ui::palette;
 use serde_json::{json, Value};
 
@@ -552,25 +552,41 @@ impl Hub {
                 let sha = event.s("sha");
                 let message = crate::json::first_line(&event.s("message"));
                 let author = json!({ "login": event.s("author.name") });
+                let people = self.commit_people.get(&sha).cloned().filter(|a| !a.is_empty());
+                let sha_btn = widgets::btn(
+                    ElementId::Name(format!("{id}-sha").into()),
+                    sha.chars().take(7).collect::<String>(),
+                    Act::Go(Route::Commit {
+                        repo: repo.to_string(),
+                        sha: sha.clone(),
+                    }),
+                )
+                .h(px(20.0))
+                .font_family(widgets::MONO)
+                .into_any_element();
+                if let Some(people) = people {
+                    // Every author's face and name, as on the commit.
+                    let who = widgets::row()
+                        .gap_2()
+                        .child(self.author_avatars(&people, cx))
+                        .child(crate::screens::repo::author_names(id, &people).font_weight(FontWeight::SEMIBOLD))
+                        .into_any_element();
+                    return Some(self.timeline_event_by(
+                        "commit",
+                        widgets::gray(),
+                        who,
+                        format!("committed  {message}"),
+                        &event.s("author.date"),
+                        Some(sha_btn),
+                    ));
+                }
                 self.timeline_event(
                     "commit",
                     widgets::gray(),
                     &author,
                     format!("committed  {message}"),
                     &event.s("author.date"),
-                    Some(
-                        widgets::btn(
-                            ElementId::Name(format!("{id}-sha").into()),
-                            sha.chars().take(7).collect::<String>(),
-                            Act::Go(Route::Commit {
-                                repo: repo.to_string(),
-                                sha: sha.clone(),
-                            }),
-                        )
-                        .h(px(20.0))
-                        .font_family(widgets::MONO)
-                        .into_any_element(),
-                    ),
+                    Some(sha_btn),
                     cx,
                 )
             }

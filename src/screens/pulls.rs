@@ -226,6 +226,11 @@ impl Hub {
         let spec = ListSpec::new(format!("/repos/{repo}/issues/{number}/timeline"), |_| Row::new(""));
         match self.fetch_list(&spec, cx) {
             Fetched::Items { items, loading, more } => {
+                // Commit events carry only the git author's name; ask who
+                // the accounts are, co-authors included, in one go.
+                let shas: Vec<String> = items.iter().filter(|e| e.s("event") == "committed").map(|e| e.s("sha")).collect();
+                let found = self.commit_authors_batch(repo, &shas, cx);
+                self.commit_people.extend(found);
                 for (i, event) in items.iter().enumerate() {
                     if let Some(el) = self.timeline_item(repo, &format!("tl{i}"), event, &field, &inval, &me, cx) {
                         col = col.child(el);

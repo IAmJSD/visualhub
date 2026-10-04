@@ -359,8 +359,27 @@ impl Hub {
         extra: Option<AnyElement>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let p = palette();
         let avatar = self.avatar(&actor.s("avatar_url"), 18.0, cx);
+        let who = widgets::row()
+            .gap_2()
+            .child(avatar)
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(actor.s("login")))
+            .into_any_element();
+        self.timeline_event_by(icon_name, color, who, text, when, extra)
+    }
+
+    /// [`Hub::timeline_event`] with whoever did it already drawn: several
+    /// commit authors, say.
+    pub fn timeline_event_by(
+        &mut self,
+        icon_name: &str,
+        color: u32,
+        who: AnyElement,
+        text: impl Into<String>,
+        when: &str,
+        extra: Option<AnyElement>,
+    ) -> AnyElement {
+        let p = palette();
         div()
             .flex()
             .flex_row()
@@ -380,12 +399,7 @@ impl Hub {
                     .bg(rgb(p.control_bg))
                     .child(icon(icon_name, 14.0, color)),
             )
-            .child(avatar)
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(actor.s("login")),
-            )
+            .child(who)
             .child(div().text_color(rgb(p.text_dim)).child(text.into()))
             .children(extra)
             .child(widgets::faint(time::ago(when)))
