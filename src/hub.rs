@@ -573,6 +573,10 @@ pub struct Hub {
     pub auth: Auth,
     pub me: Rc<Value>,
     pub scopes: String,
+    /// Where the token came from, as [`api::discover_tokens`] names it.
+    pub token_source: &'static str,
+    /// The walk-through for widening a token that's short of scopes.
+    pub scope_fix: Option<crate::scopes::ScopeFix>,
     pub route: Route,
     back: Vec<Route>,
     forward: Vec<Route>,
@@ -618,6 +622,8 @@ impl Hub {
             auth: Auth::Checking,
             me: Rc::new(Value::Null),
             scopes: String::new(),
+            token_source: "",
+            scope_fix: None,
             route: Route::Home,
             back: Vec::new(),
             forward: Vec::new(),
@@ -660,7 +666,7 @@ impl Hub {
                             Ok(reply) if reply.status == 200 => {
                                 let me: Value =
                                     serde_json::from_str(&reply.body).unwrap_or(Value::Null);
-                                return Ok((client, me, reply.scopes.unwrap_or_default()));
+                                return Ok((client, me, reply.scopes.unwrap_or_default(), source));
                             }
                             Ok(reply) => errors.push(format!(
                                 "The {source} token was refused ({}).",
@@ -674,7 +680,7 @@ impl Hub {
                 .await;
             this.update(cx, |hub, cx| {
                 match result {
-                    Ok((client, me, scopes)) => hub.signed_in(client, me, scopes),
+                    Ok((client, me, scopes, source)) => hub.signed_in(client, me, scopes, source),
                     Err(error) => {
                         hub.auth = Auth::SignedOut {
                             error: (!error.is_empty()).then_some(error),
@@ -716,7 +722,7 @@ impl Hub {
                 .await;
             this.update(cx, |hub, cx| {
                 match result {
-                    Ok((client, me, scopes)) => hub.signed_in(client, me, scopes),
+                    Ok((client, me, scopes)) => hub.signed_in(client, me, scopes, "saved sign-in"),
                     Err(e) => {
                         hub.auth = Auth::SignedOut {
                             error: Some(format!("{e:#}")),
@@ -735,14 +741,22 @@ impl Hub {
         cx.notify();
     }
 
-    fn signed_in(&mut self, client: Client, me: Value, scopes: String) {
-        self.client = Some(client);
-        self.me = Rc::new(me);
-        self.scopes = scopes;
+    fn signed_in(&mut self, client: Client, me: Value, scopes: String, source: &'static str) {
+        self.refresh_token(client, me, scopes);
+        self.token_source = source;
+        self.check_scopes();
         self.auth = Auth::SignedIn;
         self.route = Route::Home;
         self.back.clear();
         self.forward.clear();
+    }
+
+    /// Swap in a token for the same account, dropping what the old one
+    /// fetched (some of it was errors the new one can get past).
+    pub fn refresh_token(&mut self, client: Client, me: Value, scopes: String) {
+        self.client = Some(client);
+        self.me = Rc::new(me);
+        self.scopes = scopes;
         self.cache.clear();
     }
 
@@ -1217,6 +1231,8 @@ impl Hub {
                 if self.menu.take().is_some() {
                 } else if self.modal.is_some() {
                     self.modal = None;
+                } else {
+                    self.scope_fix = None;
                 }
                 cx.notify();
             }

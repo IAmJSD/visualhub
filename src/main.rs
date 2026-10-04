@@ -11,6 +11,7 @@ mod hub;
 mod json;
 mod markdown;
 mod resource;
+mod scopes;
 mod screens;
 mod shell;
 mod time;

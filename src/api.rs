@@ -20,6 +20,8 @@ pub struct Reply {
     pub body: String,
     /// The OAuth scopes the token carries, from `X-OAuth-Scopes`.
     pub scopes: Option<String>,
+    /// The scopes the endpoint would take, from `X-Accepted-OAuth-Scopes`.
+    pub accepted: Option<String>,
 }
 
 #[derive(Clone)]
@@ -97,6 +99,11 @@ impl Client {
             .get("x-oauth-scopes")
             .and_then(|v| v.to_str().ok())
             .map(str::to_string);
+        let accepted = response
+            .headers()
+            .get("x-accepted-oauth-scopes")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
         let body = response
             .body_mut()
             .with_config()
@@ -107,6 +114,7 @@ impl Client {
             status,
             body,
             scopes,
+            accepted,
         })
     }
 
@@ -115,7 +123,7 @@ impl Client {
     pub fn json(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value> {
         let reply = self.send(method, path, body, None)?;
         if reply.status >= 400 {
-            bail!(explain(reply.status, &reply.body));
+            bail!(explain_reply(&reply));
         }
         if reply.body.trim().is_empty() {
             return Ok(Value::Null);
@@ -131,7 +139,7 @@ impl Client {
     pub fn text(&self, path: &str, accept: &str) -> Result<String> {
         let reply = self.send("GET", path, None, Some(accept))?;
         if reply.status >= 400 {
-            bail!(explain(reply.status, &reply.body));
+            bail!(explain_reply(&reply));
         }
         Ok(reply.body)
     }
@@ -143,7 +151,7 @@ impl Client {
         match reply.status {
             200..=299 => Ok(true),
             404 => Ok(false),
-            status => bail!(explain(status, &reply.body)),
+            _ => bail!(explain_reply(&reply)),
         }
     }
 
@@ -176,6 +184,40 @@ impl Client {
             .limit(16 * 1024 * 1024)
             .read_to_vec()?)
     }
+}
+
+/// An error reply as one readable line. GitHub answers 404 or 403 when a
+/// classic token lacks the endpoint's scope, which says nothing useful, so
+/// that case names the scope to add instead.
+fn explain_reply(reply: &Reply) -> String {
+    if let Some(scope) = missing_scope(reply) {
+        return format!(
+            "Your token is missing the \"{scope}\" scope this page needs. \
+             If you signed in with the GitHub CLI, run `gh auth refresh -s {scope}` and reload; \
+             otherwise sign in again with a token that has it."
+        );
+    }
+    explain(reply.status, &reply.body)
+}
+
+/// The scope to ask for when a 403/404 is down to the token's scopes:
+/// the endpoint names the ones it takes and the token has none of them.
+/// Fine-grained tokens report no scopes, so they never match.
+fn missing_scope(reply: &Reply) -> Option<String> {
+    if !matches!(reply.status, 403 | 404) {
+        return None;
+    }
+    let list = |s: &str| -> Vec<String> {
+        s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
+    };
+    let have = list(reply.scopes.as_deref()?);
+    let accepted = list(reply.accepted.as_deref()?);
+    if have.is_empty() || accepted.iter().any(|s| have.contains(s)) {
+        return None;
+    }
+    // GitHub lists the broadest scope first; it also covers the writes
+    // the settings pages make.
+    accepted.into_iter().next()
 }
 
 /// GitHub's error body as one readable line.
@@ -272,7 +314,7 @@ pub fn discover_tokens() -> Vec<(String, &'static str)> {
     found
 }
 
-fn gh_cli_token() -> Option<String> {
+pub fn gh_cli_token() -> Option<String> {
     let mut command = std::process::Command::new("gh");
     command.args(["auth", "token"]);
     #[cfg(windows)]

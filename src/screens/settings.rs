@@ -155,20 +155,20 @@ impl Hub {
                     .into_any_element()
             }
             "apps" => {
-                let spec = ListSpec::new("/user/installations", |i| {
-                    Row::new(i.s("app_slug"))
-                        .avatar(i.s("account.avatar_url"))
-                        .meta(format!("Installed on {}  ·  {} repositories", i.s("account.login"), i.s("repository_selection")))
-                        .open(Act::Url(i.s("html_url")))
-                        .action("Configure on GitHub", Act::Url(i.s("html_url")))
-                })
-                .items("installations")
-                .empty("No GitHub Apps are installed for you.");
-                let list = self.list(&spec, cx);
-                widgets::col()
+                // `/user/installations` only answers GitHub App user tokens,
+                // never the classic or CLI tokens VisualHub signs in with.
+                widgets::card()
+                    .p_4()
                     .gap_3()
-                    .child(list)
-                    .child(widgets::btn("oauth-apps", "Authorized OAuth apps", Act::Url(format!("{}/settings/applications", crate::api::WEB))))
+                    .child(widgets::h3("Applications"))
+                    .child(widgets::dim("GitHub only lists the apps you've installed or authorized to the apps themselves, so these open on github.com."))
+                    .child(
+                        widgets::row()
+                            .gap_2()
+                            .child(widgets::btn("installed-apps", "Installed GitHub Apps", Act::Url(format!("{}/settings/installations", crate::api::WEB))))
+                            .child(widgets::btn("authorized-apps", "Authorized GitHub Apps", Act::Url(format!("{}/settings/apps/authorizations", crate::api::WEB))))
+                            .child(widgets::btn("oauth-apps", "Authorized OAuth apps", Act::Url(format!("{}/settings/applications", crate::api::WEB)))),
+                    )
                     .into_any_element()
             }
             "appearance" => {
@@ -194,7 +194,8 @@ impl Hub {
                 let mut card = widgets::card().p_4().gap_2().child(widgets::h3("Signed in"));
                 card = card
                     .child(widgets::dim(format!("As {}", self.login())))
-                    .child(widgets::dim(format!("Token scopes: {}", if self.scopes.is_empty() { "(fine-grained token or none reported)".to_string() } else { self.scopes.clone() })));
+                    .child(widgets::dim(format!("Token scopes: {}", if self.scopes.is_empty() { "(fine-grained token or none reported)".to_string() } else { self.scopes.clone() })))
+                    .children(crate::scopes::settings_note(self));
                 if let Load::Ready(r) = rate {
                     for (name, key) in [("REST API", "resources.core"), ("Search", "resources.search"), ("GraphQL", "resources.graphql")] {
                         let used = r.i(&format!("{key}.used"));

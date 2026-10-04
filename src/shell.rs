@@ -53,6 +53,10 @@ impl Render for Hub {
             }
         };
 
+        let scope_fix = match self.auth {
+            Auth::SignedIn => self.render_scope_fix(cx),
+            _ => None,
+        };
         let modal = self.render_modal(cx);
         let menu = self.render_menu(cx);
         let toasts = self.render_toasts();
@@ -78,6 +82,7 @@ impl Render for Hub {
                 window.focus(&hub.focus);
             }))
             .child(body)
+            .children(scope_fix)
             .children(modal)
             .children(menu)
             .child(toasts)
@@ -621,13 +626,7 @@ impl Hub {
                 hub.sign_in_with(token, cx);
             }),
         );
-        let scopes = "repo,workflow,read:org,admin:org,gist,notifications,user,delete_repo,\
-                      admin:public_key,admin:gpg_key,admin:repo_hook,project,codespace,\
-                      read:packages,delete:packages,write:discussion,security_events";
-        let token_url = format!(
-            "{}/settings/tokens/new?description=VisualHub&scopes={scopes}",
-            crate::api::WEB
-        );
+        let token_url = crate::scopes::new_token_url();
         let mut card = widgets::card()
             .w(px(480.0))
             .p_6()
