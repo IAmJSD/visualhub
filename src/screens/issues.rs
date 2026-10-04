@@ -51,6 +51,9 @@ pub fn new_issue_form(repo: &str) -> Act {
         .act()
 }
 
+/// How many issues and pull requests a repository has open and closed.
+const ISSUE_COUNTS: &str = "query($o: String!, $n: String!) { repository(owner: $o, name: $n) { openIssues: issues(states: OPEN) { totalCount } closedIssues: issues(states: CLOSED) { totalCount } openPulls: pullRequests(states: OPEN) { totalCount } closedPulls: pullRequests(states: [CLOSED, MERGED]) { totalCount } } }";
+
 /// A search query over issues and pull requests as a paged list.
 pub fn search_spec(query: &str, show_repo: bool) -> ListSpec {
     ListSpec::new(
@@ -62,6 +65,17 @@ pub fn search_spec(query: &str, show_repo: bool) -> ListSpec {
 }
 
 impl Hub {
+    /// A repository's open and closed counts (`openIssues`, `closedPulls`,
+    /// ...), once known. Kept with its issues, so creating or closing one
+    /// counts again.
+    pub fn issue_counts(&mut self, repo: &str, cx: &mut Context<Self>) -> Option<Value> {
+        let (owner, name) = repo.split_once('/')?;
+        let vars = json!({ "o": owner, "n": name });
+        self.fetch_gql(&format!("/repos/{repo}/issues"), ISSUE_COUNTS, vars, cx)
+            .ready()
+            .map(|v| v.at("repository").clone())
+    }
+
     /// Issues you created, are assigned, or are mentioned in.
     pub fn my_issues(&mut self, cx: &mut Context<Self>) -> AnyElement {
         self.my_items("issue", cx)
@@ -256,14 +270,21 @@ impl Hub {
                 .collect(),
         );
         let list = self.list(&spec, cx);
+        // "12 Open", "34 Closed", as github.com heads the list.
+        let counts = self.issue_counts(repo, cx);
+        let counted = |label: &str, key: &str| match counts.as_ref().map(|c| c.i(&format!("{key}.totalCount"))) {
+            Some(n) => format!("{n} {label}"),
+            None => label.to_string(),
+        };
+        let (open_key, closed_key) = if kind == "pr" { ("openPulls", "closedPulls") } else { ("openIssues", "closedIssues") };
         widgets::col()
             .gap_3()
             .child(
                 widgets::row()
                     .flex_wrap()
                     .child(widgets::chips(vec![
-                        ("Open".into(), state == "open", Act::choose(&state_key, "open")),
-                        ("Closed".into(), state == "closed", Act::choose(&state_key, "closed")),
+                        (counted("Open", open_key), state == "open", Act::choose(&state_key, "open")),
+                        (counted("Closed", closed_key), state == "closed", Act::choose(&state_key, "closed")),
                         ("All".into(), state == "all", Act::choose(&state_key, "all")),
                     ]))
                     .child(search)

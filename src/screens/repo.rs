@@ -269,13 +269,15 @@ impl Hub {
                 tab,
             })
         };
+        let counts = self.issue_counts(repo, cx);
+        let open = |key: &str| counts.as_ref().map(|c| c.i(&format!("{key}.totalCount")));
         let mut items = vec![
             TabItem::new("Code", "code", tab == RepoTab::Code, go(RepoTab::Code)),
         ];
         if info.b("has_issues") {
-            items.push(TabItem::new("Issues", "issue", tab == RepoTab::Issues, go(RepoTab::Issues)));
+            items.push(TabItem::new("Issues", "issue", tab == RepoTab::Issues, go(RepoTab::Issues)).count(open("openIssues")));
         }
-        items.push(TabItem::new("Pull requests", "pr", tab == RepoTab::Pulls, go(RepoTab::Pulls)));
+        items.push(TabItem::new("Pull requests", "pr", tab == RepoTab::Pulls, go(RepoTab::Pulls)).count(open("openPulls")));
         if info.b("has_discussions") {
             items.push(TabItem::new("Discussions", "discussion", tab == RepoTab::Discussions, go(RepoTab::Discussions)));
         }
