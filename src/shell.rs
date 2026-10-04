@@ -642,29 +642,9 @@ impl Hub {
             .child(
                 div()
                     .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .size(px(44.0))
-                            .rounded_lg()
-                            .bg(rgb(0x7C3AED))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_color(rgb(0xFFFFFF))
-                            .text_size(px(24.0))
-                            .font_weight(FontWeight::BOLD)
-                            .child("V"),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(widgets::title("VisualHub"))
-                            .child(widgets::dim("A native GitHub client")),
-                    ),
+                    .flex_col()
+                    .child(widgets::title("VisualHub"))
+                    .child(widgets::dim("A native GitHub client")),
             );
         if checking {
             card = card.child(
