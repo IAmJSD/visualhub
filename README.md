@@ -9,6 +9,18 @@ what you do on github.com, except editing code.
 Files, diffs, logs and gists are read-only. Everything else can be done from
 the app.
 
+![A repository's Code tab](docs/screenshots/repo.png)
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Home](docs/screenshots/home.png) Home: feed, review requests, assigned work | ![A pull request](docs/screenshots/pr-conversation.png) A pull request's conversation |
+| ![Files changed](docs/screenshots/pr-files.png) Files changed, with a searchable file tree | ![Conflict editor](docs/screenshots/conflicts.png) Resolving merge conflicts in the app |
+| ![Actions run](docs/screenshots/actions-run.png) A workflow run with its graph and annotations | ![README](docs/screenshots/readme.png) A rendered README |
+| ![Profile](docs/screenshots/profile.png) A profile, with the contribution calendar and activity | ![New repository](docs/screenshots/new-repo.png) Creating a repository |
+| ![Pull requests](docs/screenshots/pulls.png) A repository's pull requests | ![Releases](docs/screenshots/releases.png) Releases |
+
 ## What it does
 
 | Area | What you can do |
@@ -21,7 +33,7 @@ the app.
 | **Issues** | Filter by state or label, search with qualifiers, sort. Open, edit, comment, quote-reply, edit or delete comments, react, and close as completed or not planned, then reopen. Assignees, labels, milestone, lock, pin, transfer, branch from an issue, delete. Full timeline. Manage labels and milestones |
 | **Pull requests** | Conversation, commits, checks, and files changed with review comments shown on their lines (click any line to comment). Reply to or edit review comments. Review (comment, approve, request changes). Merge, squash or rebase with a message, optionally deleting the branch. Auto-merge, update branch, ready for review or back to draft, change base, request reviewers. Compare branches and open a PR |
 | **Commits** | Filter history by branch, path or author. A commit page shows message, signature, parents, diff and comments |
-| **Actions** | Filter runs by workflow or status. Re-run, re-run failed jobs, cancel, force-cancel, delete or approve runs. Jobs and steps, job logs (virtualised, ANSI stripped, groups and errors highlighted), and approving or rejecting pending deployments. Workflows: run with inputs, enable, disable. Delete artifacts and caches. Self-hosted runners and registration tokens |
+| **Actions** | Filter runs by workflow or status. Re-run, re-run failed jobs, cancel, force-cancel, delete or approve runs. A run page with its jobs, a workflow graph built from the file's `needs:`, annotations and artifacts, updating live while it runs; jobs open on github.com, the only place their logs stream. Approve or reject pending deployments. Workflows: run with inputs, enable, disable. Delete artifacts and caches. Self-hosted runners and registration tokens |
 | **Releases** | List releases, draft, publish, edit or delete them, generate notes, react, download or delete assets, and get source archives |
 | **Branches & tags** | Create, rename, delete, set default, compare, protect (with a rules form) or unprotect branches. Create or delete tags |
 | **Discussions** | Filter by category. Start, edit, close (resolved, outdated or duplicate), lock or delete a discussion. Comment, reply, upvote, mark an answer |
@@ -71,6 +83,24 @@ cargo run --release
 
 The build is self-contained: GPUI comes from the pinned fork revision, and
 nothing else needs to be checked out next to it.
+
+`VISUALHUB_OPEN=<a github.com URL>` starts the app on that page, which is how
+the screenshots above were taken.
+
+### Packaging (macOS)
+
+```sh
+make release
+```
+
+builds a universal `VisualHub.app` (Apple Silicon and Intel, joined with
+`lipo`) and leaves `dist/VisualHub.dmg` and `dist/VisualHub.zip`. Set
+`MACOS_CERT_NAME` (and optionally `MACOS_KEYCHAIN`) to sign it, and
+`MACOS_NOTARY_PROFILE` or `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and
+`APPLE_TEAM_ID` to notarize it too; see `packaging/macos/bundle.sh`. Pushing a
+`v*` tag runs the same build in CI (`.github/workflows/release.yml`) and
+attaches the image and zip to a release. `make icon` rebuilds the `.icns`
+from `assets/icon.svg`.
 
 ## How it's built
 
