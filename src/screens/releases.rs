@@ -66,7 +66,7 @@ impl Hub {
                     time::ago(&if r.b("draft") { r.s("created_at") } else { r.s("published_at") }),
                     r.list("assets").len()
                 ))
-                .body(json::first_line(&r.s("body")))
+                .body(summary_line(&r.s("body")))
                 .avatar(r.s("author.avatar_url"))
                 .open(Act::Go(Route::Release { repo: repo_s.clone(), id: id as u64 }))
                 .action("Edit", release_form(&repo_s, Some(r), ""))
@@ -192,4 +192,12 @@ impl Hub {
             .child(div().h(px(8.0)))
             .into_any_element()
     }
+}
+
+/// The first line of release notes worth showing in a list, with its
+/// Markdown dressing (headings, bullets, emphasis, code) taken off.
+fn summary_line(body: &str) -> String {
+    let line = body.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with("<!--")).unwrap_or("");
+    let line = line.trim_start_matches(['#', '>', '-', '*', '+', ' ']);
+    line.replace("**", "").replace("__", "").replace('`', "")
 }

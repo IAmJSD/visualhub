@@ -6,7 +6,7 @@
 //! inline styles are not ranges pushed and popped around the text but a
 //! set of flags each appended piece of text is tagged with.
 
-use crate::hub::{perform, Act, Hub};
+use crate::hub::{perform, Act, Hub, Route};
 use gpui::prelude::FluentBuilder as _;
 use crate::widgets::{self, rgb};
 use gpui::{
@@ -116,6 +116,10 @@ struct Builder {
     images: Vec<(usize, String)>,
     /// The repository the page is about, which `#123` refers into.
     repo: Option<String>,
+    /// Where relative image paths point: the repository's raw root at the
+    /// shown ref, and the folder of the file being shown.
+    raw_root: Option<String>,
+    raw_dir: String,
     me: String,
 }
 
@@ -166,6 +170,32 @@ impl Builder {
         }
     }
 
+    /// An image path as a URL: absolute ones as they are, relative ones
+    /// against the shown file's folder, `/`-led ones against the repo.
+    fn resolve(&self, src: &str) -> String {
+        if src.contains("://") || src.starts_with("data:") {
+            return src.to_string();
+        }
+        let Some(root) = &self.raw_root else { return src.to_string() };
+        let path = match src.strip_prefix('/') {
+            Some(from_root) => from_root.to_string(),
+            None if self.raw_dir.is_empty() => src.trim_start_matches("./").to_string(),
+            None => format!("{}/{}", self.raw_dir, src.trim_start_matches("./")),
+        };
+        // Fold "a/../b" so the URL is the file's own.
+        let mut parts: Vec<&str> = Vec::new();
+        for part in path.split('/') {
+            match part {
+                ".." => {
+                    parts.pop();
+                }
+                "." | "" => {}
+                p => parts.push(p),
+            }
+        }
+        format!("{root}/{}", parts.join("/"))
+    }
+
     fn flush_paragraph(&mut self) {
         if let Some(el) = self.take_text() {
             self.push_el(el);
@@ -197,6 +227,16 @@ impl Hub {
             code: None,
             images: Vec::new(),
             repo: self.route.repo().map(str::to_string),
+            raw_root: match &self.route {
+                Route::Repo { repo, .. } => Some(format!("https://raw.githubusercontent.com/{repo}/HEAD")),
+                Route::Tree { repo, git_ref, .. } => Some(format!("https://raw.githubusercontent.com/{repo}/{git_ref}")),
+                _ => None,
+            },
+            raw_dir: match &self.route {
+                Route::Tree { path, file: true, .. } => path.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default(),
+                Route::Tree { path, .. } => path.clone(),
+                _ => String::new(),
+            },
             me: self.login(),
         };
 
@@ -416,6 +456,7 @@ impl Hub {
                     }
                     TagEnd::Image => {
                         if let Some((_, url)) = b.images.pop() {
+                            let url = b.resolve(&url);
                             // The image goes in a block of its own, after
                             // whatever text led up to it.
                             b.flush_paragraph();
@@ -463,10 +504,10 @@ impl Hub {
                     if let Some(tag) = img_tag(&html) {
                         b.flush_paragraph();
                         // A <picture> may offer a dark-mode version.
-                        let src = match tag.dark_src {
+                        let src = b.resolve(&match tag.dark_src {
                             Some(dark) if !crate::ui::is_light() => dark,
                             _ => tag.src,
-                        };
+                        });
                         let image = self.image_sized(&src, tag.width, tag.height, cx);
                         let image = match tag.href {
                             Some(href) => div()

@@ -525,7 +525,13 @@ impl Hub {
                             .flex_1()
                             .min_w_0()
                             .child(div().text_ellipsis().overflow_hidden().whitespace_nowrap().font_family(widgets::MONO).text_size(px(12.0)).child(path.rsplit('/').next().unwrap_or(path).to_string()))
-                            .child(widgets::faint(if *open == 0 { "Resolved".to_string() } else { format!("{open} of {total} conflict{} left", if *total == 1 { "" } else { "s" }) })),
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    // On the selection fill the usual faint grey disappears.
+                                    .text_color(rgb(if i == selected { p.text } else { p.text_faint }))
+                                    .child(if *open == 0 { "Resolved".to_string() } else { format!("{open} of {total} conflict{} left", if *total == 1 { "" } else { "s" }) }),
+                            ),
                     ),
             );
         }

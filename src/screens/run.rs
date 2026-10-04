@@ -512,14 +512,16 @@ impl Hub {
         }
         let errors = found.iter().filter(|(_, a)| a.s("annotation_level") == "failure").count();
         let warnings = found.iter().filter(|(_, a)| a.s("annotation_level") == "warning").count();
+        let notices = found.len() - errors - warnings;
+        let plural = |n: usize, what: &str| format!("{n} {what}{}", if n == 1 { "" } else { "s" });
         let mut card = widgets::card().child(
             widgets::card_header()
                 .child(div().font_weight(FontWeight::SEMIBOLD).child("Annotations"))
-                .child(widgets::dim(format!(
-                    "{errors} error{} and {warnings} warning{}",
-                    if errors == 1 { "" } else { "s" },
-                    if warnings == 1 { "" } else { "s" }
-                ))),
+                .child(widgets::dim(if notices > 0 {
+                    format!("{}, {} and {}", plural(errors, "error"), plural(warnings, "warning"), plural(notices, "notice"))
+                } else {
+                    format!("{} and {}", plural(errors, "error"), plural(warnings, "warning"))
+                })),
         );
         for (job, a) in &found {
             let (mark, color) = match a.s("annotation_level").as_str() {
