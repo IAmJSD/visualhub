@@ -1,0 +1,839 @@
+//! Pull requests: the conversation with its merge box, reviews, commits,
+//! the changed files with inline review comments, checks, and creating
+//! one from a comparison.
+
+use super::common::{post_comment, side_section, CommentActs};
+use crate::diff::ReviewTarget;
+use crate::form::{Field, FormSpec};
+use crate::hub::{Act, Hub, MenuEntry, PullTab, Req, Route, RepoTab};
+use crate::json::{first_line, Json as _};
+use crate::ready;
+use crate::resource::{Fetched, ListSpec, Row};
+use crate::time;
+use crate::widgets::{self, rgb, TabItem};
+use gpui::prelude::FluentBuilder as _;
+use gpui::{div, px, AnyElement, Context, FontWeight, IntoElement as _, ParentElement as _, Styled as _};
+use schist_ui::{icon, palette};
+use serde_json::{json, Value};
+
+pub fn new_pull_form(repo: &str, base: &str, head: &str) -> Act {
+    let target = repo.to_string();
+    FormSpec::new(format!("Open a pull request in {repo}"))
+        .submit("Create pull request")
+        .width(640.0)
+        .field(Field::text("base", "Base branch").value(base).required().hint("The branch to merge into."))
+        .field(Field::text("head", "Compare branch").value(head).required().hint("branch, or owner:branch for a fork."))
+        .field(Field::text("title", "Title").required())
+        .field(Field::multiline("body", "Description"))
+        .field(Field::bool("draft", "Create as draft", false))
+        .field(Field::bool("maintainer_can_modify", "Allow edits by maintainers", true))
+        .rest("POST", format!("/repos/{repo}/pulls"))
+        .ok("Pull request opened")
+        .inval(format!("/repos/{repo}/pulls"))
+        .then(move |hub, value, cx| {
+            hub.go(
+                Route::Pull {
+                    repo: target.clone(),
+                    number: value.i("number") as u64,
+                    tab: PullTab::Conversation,
+                },
+                cx,
+            )
+        })
+        .act()
+}
+
+fn compare_form(repo: &str, default_branch: &str) -> Act {
+    let repo = repo.to_string();
+    FormSpec::new("Compare changes")
+        .submit("Compare")
+        .field(Field::text("base", "Base").value(default_branch).required())
+        .field(Field::text("head", "Compare").required())
+        .build_with(move |values| {
+            Ok(Act::Go(Route::Compare {
+                repo: repo.clone(),
+                base: values.s("base"),
+                head: values.s("head"),
+            }))
+        })
+        .act()
+}
+
+/// A review: comment, approve, or request changes.
+pub fn review_form(repo: &str, number: u64) -> Act {
+    FormSpec::new("Finish your review")
+        .submit("Submit review")
+        .width(600.0)
+        .field(Field::multiline("body", "Summary"))
+        .field(Field::choice(
+            "event",
+            "Verdict",
+            &[("COMMENT", "Comment"), ("APPROVE", "Approve"), ("REQUEST_CHANGES", "Request changes")],
+        ))
+        .rest("POST", format!("/repos/{repo}/pulls/{number}/reviews"))
+        .ok("Review submitted")
+        .inval(format!("/repos/{repo}/issues/{number}"))
+        .inval(format!("/repos/{repo}/pulls/{number}"))
+        .act()
+}
+
+/// A check run or commit status as a row.
+fn check_row(repo: &str, check: &Value) -> Row {
+    let status = check.s("status");
+    let conclusion = check.s("conclusion");
+    let (icon_name, color) = status_icon(&status, &conclusion);
+    let duration = time::span(&check.s("started_at"), &check.s("completed_at"));
+    let details = check.s("details_url");
+    let mut row = Row::new(check.s("name"))
+        .icon(icon_name, color)
+        .meta(format!(
+            "{}  ·  {}{}",
+            check.s("app.name"),
+            if conclusion.is_empty() { status.clone() } else { conclusion.clone() },
+            if duration.is_empty() { String::new() } else { format!(" in {duration}") }
+        ))
+        .body(check.s("output.title"))
+        .open(match crate::hub::route_for_url(&details) {
+            Some(route) => Act::Go(route),
+            None if !details.is_empty() => Act::Url(details.clone()),
+            None => Act::Url(check.s("html_url")),
+        });
+    if check.s("app.slug") == "github-actions" {
+        row = row.action(
+            "Re-run",
+            Req::rest("POST", format!("/repos/{repo}/actions/jobs/{}/rerun", check.i("id")))
+                .ok("Job re-run requested")
+                .inval(format!("/repos/{repo}/commits"))
+                .act(),
+        );
+    }
+    row
+}
+
+/// The icon and colour for a run's or check's status and conclusion.
+pub fn status_icon(status: &str, conclusion: &str) -> (&'static str, u32) {
+    match (status, conclusion) {
+        (_, "success") => ("check-circle", widgets::green()),
+        (_, "failure") | (_, "timed_out") | (_, "startup_failure") => ("x-circle", widgets::red()),
+        (_, "cancelled") => ("stop", widgets::gray()),
+        (_, "skipped") | (_, "neutral") => ("skip", widgets::gray()),
+        (_, "action_required") => ("alert", widgets::yellow()),
+        ("in_progress", _) => ("dot", widgets::yellow()),
+        ("queued", _) | ("waiting", _) | ("pending", _) | ("requested", _) => ("clock", widgets::yellow()),
+        ("completed", _) => ("check-circle", widgets::gray()),
+        _ => ("circle", widgets::gray()),
+    }
+}
+
+impl Hub {
+    pub fn my_pulls(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        self.my_items("pr", cx)
+    }
+
+    /// A repository's Pull requests tab.
+    pub fn repo_pulls(&mut self, repo: &str, default_branch: &str, cx: &mut Context<Self>) -> AnyElement {
+        let list = self.issue_list(repo, "pr", cx);
+        widgets::col()
+            .gap_3()
+            .child(
+                widgets::row()
+                    .child(widgets::spacer())
+                    .child(widgets::btn("compare", "Compare branches", compare_form(repo, default_branch)))
+                    .child(widgets::go_btn("new-pr", "New pull request", new_pull_form(repo, default_branch, ""))),
+            )
+            .child(list)
+            .into_any_element()
+    }
+
+    pub fn pull(&mut self, repo: &str, number: u64, tab: PullTab, cx: &mut Context<Self>) -> AnyElement {
+        let path = format!("/repos/{repo}/pulls/{number}");
+        let pr = ready!(self.fetch(&path, cx));
+        let header = self.issue_header(repo, &pr, true, cx);
+        let go = |tab: PullTab| {
+            Act::Go(Route::Pull {
+                repo: repo.to_string(),
+                number,
+                tab,
+            })
+        };
+        let tabs = widgets::tabs(
+            "pr",
+            vec![
+                TabItem::new("Conversation", "comment", tab == PullTab::Conversation, go(PullTab::Conversation))
+                    .count(Some(pr.i("comments") + pr.i("review_comments"))),
+                TabItem::new("Commits", "commit", tab == PullTab::Commits, go(PullTab::Commits)).count(Some(pr.i("commits"))),
+                TabItem::new("Checks", "check-circle", tab == PullTab::Checks, go(PullTab::Checks)),
+                TabItem::new("Files changed", "file", tab == PullTab::Files, go(PullTab::Files)).count(Some(pr.i("changed_files"))),
+            ],
+        );
+        let body = match tab {
+            PullTab::Conversation => self.pull_conversation(repo, number, &pr, cx),
+            PullTab::Commits => self.pull_commits(repo, number, cx),
+            PullTab::Files => self.pull_files(repo, number, &pr, cx),
+            PullTab::Checks => self.pull_checks(repo, &pr.s("head.sha"), cx),
+        };
+        widgets::page()
+            .child(header)
+            .child(
+                widgets::row()
+                    .child(div().flex_1().child(tabs))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .child(
+                                widgets::row()
+                                    .child(div().text_color(rgb(widgets::green())).child(format!("+{}", pr.i("additions"))))
+                                    .child(div().text_color(rgb(widgets::red())).child(format!("−{}", pr.i("deletions")))),
+                            ),
+                    ),
+            )
+            .child(body)
+            .into_any_element()
+    }
+
+    fn pull_conversation(&mut self, repo: &str, number: u64, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
+        let inval = format!("/repos/{repo}/issues/{number}");
+        let field = format!("comment:{repo}#{number}");
+        let mut col = widgets::col().gap_3();
+        let body_acts = CommentActs {
+            edit: Some(
+                FormSpec::new("Edit description")
+                    .width(680.0)
+                    .field(Field::multiline("body", "Description").value(pr.s("body")).keep_empty())
+                    .rest("PATCH", format!("/repos/{repo}/pulls/{number}"))
+                    .ok("Saved")
+                    .inval(format!("/repos/{repo}/pulls/{number}"))
+                    .act(),
+            ),
+            delete: None,
+            extra: Vec::new(),
+            reactions: Some(format!("/repos/{repo}/issues/{number}/reactions")),
+            invalidate: inval.clone(),
+            quote_into: Some(field.clone()),
+        };
+        // The PR object has no reaction counts; the issue view of it does.
+        let mut body_value = pr.clone();
+        if let Some(issue) = self.fetch(&format!("/repos/{repo}/issues/{number}"), cx).ready() {
+            body_value["reactions"] = issue.at("reactions").clone();
+        }
+        col = col.child(self.comment_card("pr-body", &body_value, "opened", body_acts, cx));
+
+        let me = self.login();
+        let spec = ListSpec::new(format!("/repos/{repo}/issues/{number}/timeline"), |_| Row::new(""));
+        match self.fetch_list(&spec, cx) {
+            Fetched::Items { items, loading, more } => {
+                for (i, event) in items.iter().enumerate() {
+                    if let Some(el) = self.timeline_item(repo, &format!("tl{i}"), event, &field, &inval, &me, cx) {
+                        col = col.child(el);
+                    }
+                }
+                if loading {
+                    col = col.child(widgets::loading());
+                } else if more {
+                    let id = spec.id.clone();
+                    col = col.child(widgets::btn(
+                        "timeline-more",
+                        "Load more",
+                        Act::run(move |hub, _, cx| {
+                            let next = hub.page(&id) + 1;
+                            hub.pages.insert(id.clone(), next);
+                            cx.notify();
+                        }),
+                    ));
+                }
+            }
+            Fetched::Failed(error) => col = col.child(widgets::error_box(&error)),
+        }
+
+        col = col.child(self.merge_box(repo, number, pr, cx));
+
+        let open = pr.s("state") == "open";
+        let state_req = |state: &str, ok: &str| {
+            Req::rest("PATCH", format!("/repos/{repo}/pulls/{number}"))
+                .body(json!({ "state": state }))
+                .ok(ok.to_string())
+                .inval(format!("/repos/{repo}/pulls/{number}"))
+                .inval(inval.clone())
+                .act()
+        };
+        let extra = vec![
+            widgets::btn("review", "Review changes", review_form(repo, number)).into_any_element(),
+            if open {
+                widgets::btn("close-pr", "Close pull request", state_req("closed", "Pull request closed")).into_any_element()
+            } else if !pr.b("merged") {
+                widgets::btn("reopen-pr", "Reopen pull request", state_req("open", "Pull request reopened")).into_any_element()
+            } else {
+                div().into_any_element()
+            },
+        ];
+        let submit = post_comment(&field, &format!("/repos/{repo}/issues/{number}/comments"), &inval);
+        let composer = self.composer(&field, submit, extra, cx);
+        let sidebar = self.pull_sidebar(repo, number, pr, cx);
+        div()
+            .flex()
+            .flex_row()
+            .gap_6()
+            .items_start()
+            .child(div().flex_1().min_w_0().child(col.child(composer)))
+            .child(div().w(px(280.0)).flex_none().child(sidebar))
+            .into_any_element()
+    }
+
+    /// Whether it can merge, and the buttons that do.
+    fn merge_box(&mut self, repo: &str, number: u64, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette();
+        let pr_path = format!("/repos/{repo}/pulls/{number}");
+        let inval_issue = format!("/repos/{repo}/issues/{number}");
+        let head_ref = pr.s("head.ref");
+        let head_repo = pr.s("head.repo.full_name");
+        let mut card = widgets::card();
+        if pr.b("merged") {
+            let mut row = widgets::row()
+                .p_4()
+                .child(icon("pr-merged", 20.0, widgets::purple()))
+                .child(
+                    widgets::col()
+                        .gap_0()
+                        .flex_1()
+                        .child(widgets::h3("Pull request successfully merged and closed"))
+                        .child(widgets::dim(format!(
+                            "Merged by {} {}",
+                            pr.s("merged_by.login"),
+                            time::ago(&pr.s("merged_at"))
+                        ))),
+                );
+            if !head_repo.is_empty() {
+                let exists = self.fetch_check(&format!("/repos/{head_repo}/branches/{head_ref}"), cx);
+                if exists.ready().map(|v| v.b("")).unwrap_or(false) {
+                    row = row.child(widgets::btn(
+                        "delete-head",
+                        "Delete branch",
+                        Req::rest("DELETE", format!("/repos/{head_repo}/git/refs/heads/{head_ref}"))
+                            .ok(format!("Deleted {head_ref}"))
+                            .inval(format!("/repos/{head_repo}/branches"))
+                            .act(),
+                    ));
+                }
+            }
+            return card.child(row).into_any_element();
+        }
+        if pr.s("state") == "closed" {
+            return card
+                .child(
+                    widgets::row()
+                        .p_4()
+                        .child(icon("pr-closed", 20.0, widgets::red()))
+                        .child(widgets::h3("Closed with unmerged commits")),
+                )
+                .into_any_element();
+        }
+
+        // Checks on the head commit.
+        let sha = pr.s("head.sha");
+        let checks = self.fetch(&format!("/repos/{repo}/commits/{sha}/check-runs?per_page=100"), cx);
+        let (ok, bad, pending) = checks
+            .ready()
+            .map(|v| {
+                let runs = v.list("check_runs");
+                let ok = runs.iter().filter(|r| matches!(r.s("conclusion").as_str(), "success" | "skipped" | "neutral")).count();
+                let bad = runs.iter().filter(|r| matches!(r.s("conclusion").as_str(), "failure" | "timed_out" | "cancelled" | "action_required")).count();
+                (ok, bad, runs.len() - ok - bad)
+            })
+            .unwrap_or((0, 0, 0));
+        let (check_icon, check_color, check_text) = if ok + bad + pending == 0 {
+            ("circle", widgets::gray(), "No checks reported".to_string())
+        } else if bad > 0 {
+            ("x-circle", widgets::red(), format!("{bad} failing, {pending} pending, {ok} successful checks"))
+        } else if pending > 0 {
+            ("dot", widgets::yellow(), format!("{pending} pending, {ok} successful checks"))
+        } else {
+            ("check-circle", widgets::green(), format!("All {ok} checks have passed"))
+        };
+
+        let state = pr.s("mergeable_state");
+        let (merge_icon, merge_color, merge_text) = match state.as_str() {
+            "clean" | "has_hooks" | "unstable" => ("check-circle", widgets::green(), "This branch has no conflicts with the base branch"),
+            "dirty" => ("x-circle", widgets::red(), "This branch has conflicts that must be resolved"),
+            "blocked" => ("alert", widgets::yellow(), "Merging is blocked by branch protection (reviews or checks required)"),
+            "behind" => ("alert", widgets::yellow(), "This branch is out-of-date with the base branch"),
+            "draft" => ("pr-draft", widgets::gray(), "This pull request is still a work in progress"),
+            _ => ("clock", widgets::gray(), "Checking mergeability…"),
+        };
+
+        let method_key = format!("merge.method:{repo}");
+        let method = self.choice(&method_key, "merge");
+        let method_label = match method.as_str() {
+            "squash" => "Squash and merge",
+            "rebase" => "Rebase and merge",
+            _ => "Create a merge commit",
+        };
+        let title_default = match method.as_str() {
+            "squash" => format!("{} (#{number})", pr.s("title")),
+            _ => format!("Merge pull request #{number} from {}", pr.s("head.label")),
+        };
+        let merge_form = FormSpec::new(method_label)
+            .submit("Confirm merge")
+            .width(600.0)
+            .field(Field::text("commit_title", "Commit title").value(title_default))
+            .field(Field::multiline("commit_message", "Commit message").value(if method == "squash" { pr.s("body") } else { pr.s("title") }))
+            .field(Field::bool("delete_branch", "Delete the head branch afterwards", false))
+            .build_with({
+                let (pr_path, inval_issue, method) = (pr_path.clone(), inval_issue.clone(), method.clone());
+                let (head_repo, head_ref, sha) = (head_repo.clone(), head_ref.clone(), sha.clone());
+                move |values| {
+                    let mut body = json!({ "merge_method": method, "sha": sha });
+                    if method != "rebase" {
+                        body["commit_title"] = json!(values.s("commit_title"));
+                        body["commit_message"] = json!(values.s("commit_message"));
+                    }
+                    let delete = values.b("delete_branch");
+                    let (path, head_repo, head_ref) = (format!("{pr_path}/merge"), head_repo.clone(), head_ref.clone());
+                    Ok(Req::custom(move |client| {
+                        let merged = client.json("PUT", &path, Some(&body))?;
+                        if delete && !head_repo.is_empty() {
+                            client.json("DELETE", &format!("/repos/{head_repo}/git/refs/heads/{head_ref}"), None)?;
+                        }
+                        Ok(merged)
+                    })
+                    .ok("Pull request merged")
+                    .inval(pr_path.clone())
+                    .inval(inval_issue.clone())
+                    .act())
+                }
+            })
+            .act();
+        let methods = Act::menu(vec![
+            MenuEntry::check("Create a merge commit", method == "merge", Act::choose(&method_key, "merge")),
+            MenuEntry::check("Squash and merge", method == "squash", Act::choose(&method_key, "squash")),
+            MenuEntry::check("Rebase and merge", method == "rebase", Act::choose(&method_key, "rebase")),
+        ]);
+        let node = pr.s("node_id");
+        let auto_merge_on = pr.has("auto_merge");
+        let auto = if auto_merge_on {
+            Req::gql(
+                "mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { clientMutationId } }",
+                json!({ "id": node }),
+            )
+            .ok("Auto-merge disabled")
+            .inval(pr_path.clone())
+            .act()
+        } else {
+            Req::gql(
+                "mutation($id: ID!, $m: PullRequestMergeMethod!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: $m}) { clientMutationId } }",
+                json!({ "id": node, "m": method.to_uppercase() }),
+            )
+            .ok("Auto-merge enabled")
+            .inval(pr_path.clone())
+            .act()
+        };
+        let draft = pr.b("draft");
+        let mut buttons = widgets::row().flex_wrap();
+        if draft {
+            buttons = buttons.child(widgets::go_btn(
+                "ready",
+                "Ready for review",
+                Req::gql(
+                    "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { clientMutationId } }",
+                    json!({ "id": node }),
+                )
+                .ok("Marked ready for review")
+                .inval(pr_path.clone())
+                .inval(inval_issue.clone())
+                .act(),
+            ));
+        } else {
+            buttons = buttons
+                .child(widgets::go_btn("merge", method_label, merge_form))
+                .child(widgets::btn("merge-method", "▾", methods));
+        }
+        buttons = buttons
+            .child(widgets::btn(
+                "update-branch",
+                "Update branch",
+                Req::rest("PUT", format!("{pr_path}/update-branch"))
+                    .body(json!({ "expected_head_sha": sha }))
+                    .ok("Branch update queued")
+                    .inval(pr_path.clone())
+                    .act(),
+            ))
+            .child(widgets::btn(
+                "auto-merge",
+                if auto_merge_on { "Disable auto-merge" } else { "Enable auto-merge" },
+                auto,
+            ));
+
+        let line = |icon_name: &str, color: u32, text: String| {
+            widgets::row()
+                .px_4()
+                .py_3()
+                .border_b_1()
+                .border_color(rgb(p.divider))
+                .child(icon(icon_name, 18.0, color))
+                .child(div().child(text))
+        };
+        card = card
+            .child(line(check_icon, check_color, check_text))
+            .child(line(merge_icon, merge_color, merge_text.to_string()));
+        if auto_merge_on {
+            card = card.child(line(
+                "zap",
+                widgets::green(),
+                format!("Auto-merge is enabled by {}", pr.s("auto_merge.enabled_by.login")),
+            ));
+        }
+        card.child(div().p_4().child(buttons)).into_any_element()
+    }
+
+    fn pull_sidebar(&mut self, repo: &str, number: u64, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
+        let pr_path = format!("/repos/{repo}/pulls/{number}");
+        let requested: Vec<String> = pr.list("requested_reviewers").iter().map(|u| u.s("login")).collect();
+        let mut reviewer_menu = Vec::new();
+        if let Some(users) = self.fetch(&format!("/repos/{repo}/assignees?per_page=100"), cx).ready().cloned() {
+            let author = pr.s("user.login");
+            for user in users.list("") {
+                let login = user.s("login");
+                if login == author {
+                    continue;
+                }
+                let on_now = requested.contains(&login);
+                reviewer_menu.push(MenuEntry::check(
+                    login.clone(),
+                    on_now,
+                    Req::rest(if on_now { "DELETE" } else { "POST" }, format!("{pr_path}/requested_reviewers"))
+                        .body(json!({ "reviewers": [login] }))
+                        .inval(pr_path.clone())
+                        .act(),
+                ));
+            }
+        }
+        // Latest review state per reviewer.
+        let mut states: Vec<(String, String, String)> = Vec::new();
+        if let Some(reviews) = self.fetch(&format!("{pr_path}/reviews?per_page=100"), cx).ready().cloned() {
+            for r in reviews.list("") {
+                let login = r.s("user.login");
+                let state = r.s("state");
+                if state == "COMMENTED" && states.iter().any(|s| s.0 == login) {
+                    continue;
+                }
+                states.retain(|s| s.0 != login);
+                states.push((login, state, r.s("user.avatar_url")));
+            }
+        }
+        let mut reviewers = widgets::col().gap_1();
+        for login in &requested {
+            if !states.iter().any(|s| &s.0 == login) {
+                states.push((login.clone(), "PENDING".into(), String::new()));
+            }
+        }
+        if states.is_empty() {
+            reviewers = reviewers.child(widgets::dim("No reviews"));
+        }
+        for (login, state, avatar_url) in states {
+            let avatar = self.avatar(&avatar_url, 20.0, cx);
+            let (icon_name, color) = match state.as_str() {
+                "APPROVED" => ("check", widgets::green()),
+                "CHANGES_REQUESTED" => ("x-circle", widgets::red()),
+                "PENDING" => ("dot", widgets::yellow()),
+                _ => ("comment", widgets::gray()),
+            };
+            reviewers = reviewers.child(
+                widgets::row()
+                    .child(avatar)
+                    .child(div().flex_1().child(login))
+                    .child(icon(icon_name, 14.0, color)),
+            );
+        }
+        let node = pr.s("node_id");
+        let draft_toggle = if pr.b("draft") {
+            None
+        } else if pr.s("state") == "open" {
+            Some(
+                widgets::ibtn(
+                    "to-draft",
+                    "pr-draft",
+                    "Convert to draft",
+                    Req::gql(
+                        "mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { clientMutationId } }",
+                        json!({ "id": node }),
+                    )
+                    .ok("Converted to draft")
+                    .inval(pr_path.clone())
+                    .act(),
+                )
+                .w_full(),
+            )
+        } else {
+            None
+        };
+        let base_form = FormSpec::new("Change base branch")
+            .field(Field::text("base", "Base branch").value(pr.s("base.ref")).required())
+            .rest("PATCH", pr_path.clone())
+            .ok("Base branch changed")
+            .inval(pr_path.clone())
+            .act();
+        let issue_side = self.issue_sidebar(repo, pr, true, cx);
+        widgets::col()
+            .gap_3()
+            .child(side_section("reviewers", "Reviewers", Some(Act::menu(reviewer_menu)), reviewers.into_any_element()))
+            .child(issue_side)
+            .children(draft_toggle)
+            .child(widgets::ibtn("change-base", "branch", "Change base branch", base_form).w_full())
+            .child(
+                widgets::ibtn(
+                    "checkout",
+                    "copy",
+                    "Copy checkout command",
+                    Act::Copy(format!("gh pr checkout {number} --repo {repo}")),
+                )
+                .w_full(),
+            )
+            .into_any_element()
+    }
+
+    fn pull_commits(&mut self, repo: &str, number: u64, cx: &mut Context<Self>) -> AnyElement {
+        let repo_s = repo.to_string();
+        let spec = ListSpec::new(format!("/repos/{repo}/pulls/{number}/commits"), move |c| commit_row(&repo_s, c));
+        self.list(&spec, cx)
+    }
+
+    fn pull_files(&mut self, repo: &str, number: u64, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
+        let spec = ListSpec::new(format!("/repos/{repo}/pulls/{number}/files"), |_| Row::new(""));
+        let comments = self
+            .fetch(&format!("/repos/{repo}/pulls/{number}/comments?per_page=100"), cx)
+            .ready()
+            .map(|v| v.list("").to_vec())
+            .unwrap_or_default();
+        let target = ReviewTarget {
+            repo: repo.to_string(),
+            number,
+            commit: pr.s("head.sha"),
+        };
+        let mut col = widgets::col().gap_3().child(
+            widgets::row()
+                .child(widgets::dim("Click any line to leave a review comment on it."))
+                .child(widgets::spacer())
+                .child(widgets::primary("review-top", "Review changes", review_form(repo, number))),
+        );
+        match self.fetch_list(&spec, cx) {
+            Fetched::Items { items, loading, more } => {
+                for (i, file) in items.iter().enumerate() {
+                    let name = file.s("filename");
+                    let mine: Vec<Value> = comments
+                        .iter()
+                        .filter(|c| c.s("path") == name && c.has("line"))
+                        .cloned()
+                        .collect();
+                    col = col.child(self.diff_file(&format!("prf{number}-{i}"), file, Some(&target), &mine, cx));
+                }
+                if loading {
+                    col = col.child(widgets::loading());
+                } else if more {
+                    let id = spec.id.clone();
+                    col = col.child(widgets::btn(
+                        "files-more",
+                        "Load more files",
+                        Act::run(move |hub, _, cx| {
+                            let next = hub.page(&id) + 1;
+                            hub.pages.insert(id.clone(), next);
+                            cx.notify();
+                        }),
+                    ));
+                }
+            }
+            Fetched::Failed(error) => col = col.child(widgets::error_box(&error)),
+        }
+        col.into_any_element()
+    }
+
+    pub fn pull_checks(&mut self, repo: &str, sha: &str, cx: &mut Context<Self>) -> AnyElement {
+        let repo_s = repo.to_string();
+        let runs = ListSpec::new(format!("/repos/{repo}/commits/{sha}/check-runs"), move |c| check_row(&repo_s, c))
+            .items("check_runs")
+            .empty("No check runs for this commit.");
+        let statuses = ListSpec::new(format!("/repos/{repo}/commits/{sha}/status"), |s| {
+            let (icon_name, color) = match s.s("state").as_str() {
+                "success" => ("check-circle", widgets::green()),
+                "failure" | "error" => ("x-circle", widgets::red()),
+                _ => ("dot", widgets::yellow()),
+            };
+            Row::new(s.s("context"))
+                .icon(icon_name, color)
+                .meta(s.s("description"))
+                .open(Act::Url(s.s("target_url")))
+        })
+        .items("statuses")
+        .unpaged()
+        .empty("No commit statuses.");
+        let runs = self.list(&runs, cx);
+        let statuses = self.list(&statuses, cx);
+        widgets::col()
+            .gap_3()
+            .child(widgets::h2("Check runs"))
+            .child(runs)
+            .child(widgets::h2("Commit statuses"))
+            .child(statuses)
+            .into_any_element()
+    }
+
+    pub fn compare(&mut self, repo: &str, base: &str, head: &str, cx: &mut Context<Self>) -> AnyElement {
+        let path = format!("/repos/{repo}/compare/{base}...{head}");
+        let cmp = ready!(self.fetch(&path, cx));
+        let status = cmp.s("status");
+        let summary = format!(
+            "{} is {} commits ahead and {} behind {}",
+            head,
+            cmp.i("ahead_by"),
+            cmp.i("behind_by"),
+            base
+        );
+        let mut col = widgets::col().gap_3();
+        for (i, c) in cmp.list("commits").iter().enumerate() {
+            let row = commit_row(repo, c);
+            col = col.child(self.render_row(&format!("cmp-c{i}"), row, cx));
+        }
+        let commits = widgets::card().child(col);
+        let mut files = widgets::col().gap_3();
+        for (i, f) in cmp.list("files").to_vec().iter().enumerate() {
+            files = files.child(self.diff_file(&format!("cmp-f{i}"), f, None, &[], cx));
+        }
+        widgets::page()
+            .child(
+                widgets::row()
+                    .child(widgets::title(format!("Comparing {base}...{head}")))
+                    .child(widgets::spacer())
+                    .child(widgets::go_btn("create-pr", "Create pull request", new_pull_form(repo, base, head))),
+            )
+            .child(widgets::row().child(widgets::tag(status, widgets::gray())).child(widgets::dim(summary)))
+            .child(widgets::h2(format!("{} commits", cmp.list("commits").len())))
+            .child(commits)
+            .child(widgets::h2(format!("{} files changed", cmp.list("files").len())))
+            .child(files)
+            .into_any_element()
+    }
+}
+
+/// A commit as a list row.
+pub fn commit_row(repo: &str, c: &Value) -> Row {
+    let sha = c.s("sha");
+    let who = if c.has("author.login") { c.s("author.login") } else { c.s("commit.author.name") };
+    let verified = c.b("commit.verification.verified");
+    let mut row = Row::new(first_line(&c.s("commit.message")))
+        .avatar(c.s("author.avatar_url"))
+        .meta(format!("{who} committed {}", time::ago(&c.s("commit.author.date"))))
+        .right(sha.chars().take(7).collect::<String>())
+        .open(Act::Go(Route::Commit {
+            repo: repo.to_string(),
+            sha: sha.clone(),
+        }))
+        .action("Copy SHA", Act::Copy(sha.clone()))
+        .action(
+            "Browse files",
+            Act::Go(Route::Tree {
+                repo: repo.to_string(),
+                git_ref: sha,
+                path: String::new(),
+                file: false,
+            }),
+        );
+    if verified {
+        row = row.tag("Verified", widgets::green());
+    }
+    row
+}
+
+impl Hub {
+    /// One commit: message, author, stats, comments, and its diff.
+    pub fn commit(&mut self, repo: &str, sha: &str, cx: &mut Context<Self>) -> AnyElement {
+        let path = format!("/repos/{repo}/commits/{sha}");
+        let c = ready!(self.fetch(&path, cx));
+        let p = palette();
+        let message = c.s("commit.message");
+        let (headline, rest) = message.split_once('\n').unwrap_or((&message, ""));
+        let avatar = self.avatar(&c.s("author.avatar_url"), 24.0, cx);
+        let mut files = widgets::col().gap_3();
+        for (i, f) in c.list("files").to_vec().iter().enumerate() {
+            files = files.child(self.diff_file(&format!("cf-{i}"), f, None, &[], cx));
+        }
+        let comments_path = format!("/repos/{repo}/commits/{sha}/comments");
+        let field = format!("commit-comment:{repo}@{sha}");
+        let mut comments = widgets::col().gap_3();
+        if let Some(list) = self.fetch(&comments_path, cx).ready().cloned() {
+            for (i, cm) in list.list("").iter().enumerate() {
+                let url = cm.s("url");
+                let acts = CommentActs {
+                    edit: Some(super::common::edit_comment(&url, &cm.s("body"), &comments_path)),
+                    delete: Some(super::common::delete_comment(&url, &comments_path)),
+                    extra: Vec::new(),
+                    reactions: Some(format!("{}/reactions", super::common::api_path(&url))),
+                    invalidate: comments_path.clone(),
+                    quote_into: Some(field.clone()),
+                };
+                comments = comments.child(self.comment_card(&format!("cc{i}"), cm, "commented", acts, cx));
+            }
+        }
+        let submit = post_comment(&field, &comments_path, &comments_path);
+        let composer = self.composer(&field, submit, Vec::new(), cx);
+        let parents = c.list("parents").iter().map(|p| p.s("sha").chars().take(7).collect::<String>()).collect::<Vec<_>>().join(", ");
+        widgets::page()
+            .child(
+                widgets::card()
+                    .child(
+                        div()
+                            .p_4()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(div().text_size(px(18.0)).font_weight(FontWeight::SEMIBOLD).child(headline.to_string()))
+                            .when(!rest.trim().is_empty(), |d| {
+                                d.child(widgets::mono(rest.trim().to_string()).text_color(rgb(p.text_dim)))
+                            }),
+                    )
+                    .child(
+                        widgets::row()
+                            .px_4()
+                            .py_2()
+                            .bg(rgb(p.deep_bg))
+                            .border_t_1()
+                            .border_color(rgb(p.divider))
+                            .child(avatar)
+                            .child(widgets::h3(if c.has("author.login") { c.s("author.login") } else { c.s("commit.author.name") }))
+                            .child(widgets::dim(format!("committed {}", time::ago(&c.s("commit.author.date")))))
+                            .when(c.b("commit.verification.verified"), |d| d.child(widgets::tag("Verified", widgets::green())))
+                            .child(widgets::spacer())
+                            .child(widgets::dim(format!("parents {parents}")))
+                            .child(widgets::mono(sha.to_string()))
+                            .child(widgets::btn("copy-sha", "Copy", Act::Copy(sha.to_string())))
+                            .child(widgets::btn(
+                                "browse",
+                                "Browse files",
+                                Act::Go(Route::Tree {
+                                    repo: repo.to_string(),
+                                    git_ref: sha.to_string(),
+                                    path: String::new(),
+                                    file: false,
+                                }),
+                            )),
+                    ),
+            )
+            .child(widgets::dim(format!(
+                "Showing {} changed files with {} additions and {} deletions",
+                c.list("files").len(),
+                c.i("stats.additions"),
+                c.i("stats.deletions")
+            )))
+            .child(files)
+            .child(widgets::h2("Comments"))
+            .child(comments)
+            .child(composer)
+            .child(div().h(px(8.0)))
+            .child(widgets::btn(
+                "back-to-repo",
+                "Back to repository",
+                Act::Go(Route::Repo {
+                    repo: repo.to_string(),
+                    tab: RepoTab::Commits,
+                }),
+            ))
+            .into_any_element()
+    }
+}
