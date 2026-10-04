@@ -26,10 +26,25 @@ const SECTIONS: [(&str, &str); 10] = [
     ("session", "Session"),
 ];
 
+/// GitLab's account sections: no social accounts, blocks, interaction
+/// limits or apps to list, and its own access tokens.
+const GITLAB_SECTIONS: [(&str, &str); 7] = [
+    ("profile", "Profile"),
+    ("emails", "Emails"),
+    ("ssh", "SSH keys"),
+    ("signing", "SSH signing keys"),
+    ("gpg", "GPG keys"),
+    ("tokens", "Access tokens"),
+    ("session", "Session"),
+];
+
 impl Hub {
     pub fn settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let section = self.choice("settings.section", "profile");
+        let gitlab = crate::forge::is_gitlab();
+        let web = crate::forge::web();
         let body = match section.as_str() {
+            "tokens" if gitlab => self.gl_tokens(cx),
             "emails" => {
                 let add = FormSpec::new("Add email address")
                     .field(Field::text("email", "Email").required())
@@ -172,10 +187,10 @@ impl Hub {
                     .into_any_element()
             }
             "session" => {
-                let rate = self.fetch("/rate_limit", cx);
+                let rate = if gitlab { crate::hub::Load::Loading } else { self.fetch("/rate_limit", cx) };
                 let mut card = widgets::card().p_4().gap_2().child(widgets::h3("Signed in"));
                 card = card
-                    .child(widgets::dim(format!("As {}", self.login())))
+                    .child(widgets::dim(format!("As {} on {}", self.login(), crate::forge::host())))
                     .child(widgets::dim(format!("Token scopes: {}", if self.scopes.is_empty() { "(fine-grained token or none reported)".to_string() } else { self.scopes.clone() })))
                     .children(crate::scopes::settings_note(self));
                 if let Load::Ready(r) = rate {
@@ -192,7 +207,11 @@ impl Hub {
                 }
                 card.child(
                     widgets::row()
-                        .child(widgets::btn("tokens", "Manage tokens on GitHub", Act::Url(format!("{}/settings/tokens", crate::api::WEB))))
+                        .child(widgets::btn(
+                            "tokens",
+                            format!("Manage tokens on {}", crate::forge::name()),
+                            Act::Url(if gitlab { format!("{web}/-/user_settings/personal_access_tokens") } else { format!("{web}/settings/tokens") }),
+                        ))
                         .child(widgets::danger("sign-out", "Sign out", Act::run(|hub, _, cx| hub.sign_out(cx)))),
                 )
                 .into_any_element()
@@ -228,14 +247,24 @@ impl Hub {
                             .items_start()
                             .gap_4()
                             .child(info)
-                            .child(widgets::col().items_center().child(avatar).child(widgets::btn("change-avatar", "Change picture", Act::Url(format!("{}/settings/profile", crate::api::WEB))))),
+                            .child(widgets::col().items_center().child(avatar).child(widgets::btn(
+                                "change-avatar",
+                                "Change picture",
+                                Act::Url(if gitlab { format!("{web}/-/user_settings/profile") } else { format!("{web}/settings/profile") }),
+                            ))),
                     )
-                    .child(div().pt_3().child(widgets::primary("edit-profile", "Edit profile", edit)))
+                    // GitLab's API doesn't let you edit your own profile.
+                    .child(div().pt_3().child(if gitlab {
+                        widgets::primary("edit-profile", "Edit profile on GitLab", Act::Url(format!("{web}/-/user_settings/profile")))
+                    } else {
+                        widgets::primary("edit-profile", "Edit profile", edit)
+                    }))
                     .into_any_element()
             }
         };
         let mut nav = widgets::col().gap_1().w(gpui::px(200.0)).flex_none();
-        for (i, (key, label)) in SECTIONS.iter().enumerate() {
+        let sections: &[(&str, &str)] = if gitlab { &GITLAB_SECTIONS } else { &SECTIONS };
+        for (i, (key, label)) in sections.iter().enumerate() {
             let selected = section == *key;
             nav = nav.child(
                 widgets::list_row(("settings-nav", i), Act::choose("settings.section", *key))

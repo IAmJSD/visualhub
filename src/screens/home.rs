@@ -79,16 +79,17 @@ pub fn describe_event(e: &Value) -> EventText {
         "PullRequestEvent" => (
             "pr",
             format!(
-                "{} pull request #{}",
+                "{} {} {}",
                 if p.s("action") == "closed" && p.b("pull_request.merged") { "merged".to_string() } else { p.s("action") },
-                p.i("number")
+                crate::forge::pr(),
+                crate::forge::pr_ref(p.i("number"))
             ),
             p.s("pull_request.title"),
             Act::Go(Route::Pull { repo: repo.clone(), number: p.i("number") as u64, tab: PullTab::Conversation }),
         ),
         "PullRequestReviewEvent" => (
             "eye",
-            format!("reviewed pull request #{}", p.i("pull_request.number")),
+            format!("reviewed {} {}", crate::forge::pr(), crate::forge::pr_ref(p.i("pull_request.number"))),
             p.s("pull_request.title"),
             Act::Go(Route::Pull { repo: repo.clone(), number: p.i("pull_request.number") as u64, tab: PullTab::Conversation }),
         ),
@@ -106,7 +107,12 @@ pub fn describe_event(e: &Value) -> EventText {
         ),
         "PublicEvent" => ("globe", format!("made {repo} public"), String::new(), repo_act),
         "MemberEvent" => ("person", format!("{} {} to {repo}", p.s("action"), p.s("member.login")), String::new(), repo_act),
-        "GollumEvent" => ("book", format!("edited the wiki"), String::new(), Act::Url(format!("{}/{repo}/wiki", crate::api::WEB))),
+        "GollumEvent" => (
+            "book",
+            "edited the wiki".to_string(),
+            String::new(),
+            Act::Url(format!("{}/{repo}/{}", crate::forge::web(), if crate::forge::is_gitlab() { "-/wikis" } else { "wiki" })),
+        ),
         "CommitCommentEvent" => ("comment", format!("commented on a commit"), json::clip(&p.s("comment.body"), 200), repo_act),
         "DiscussionEvent" => (
             "discussion",
@@ -204,7 +210,7 @@ impl Hub {
                             .flex_none()
                             .child(
                                 widgets::row()
-                                    .child(widgets::h3("Top repositories"))
+                                    .child(widgets::h3(format!("Top {}", crate::forge::repos_title().to_lowercase())))
                                     .child(widgets::spacer())
                                     .child(widgets::go_btn("home-new-repo", "New", Act::Go(Route::NewRepo { owner: None })).h(px(24.0))),
                             )
@@ -220,7 +226,7 @@ impl Hub {
                             .child(review)
                             .child(widgets::h3("Assigned to you"))
                             .child(assigned)
-                            .child(widgets::h3("Your open pull requests"))
+                            .child(widgets::h3(format!("Your open {}", crate::forge::prs())))
                             .child(mine),
                     ),
             )
@@ -248,6 +254,9 @@ impl Hub {
     }
 
     pub fn notifications(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        if crate::forge::is_gitlab() {
+            return self.gl_todos(cx);
+        }
         let filter = self.choice("notif.filter", "unread");
         let repo = self.choice("notif.repo", "");
         let base = if repo.is_empty() { "/notifications".to_string() } else { format!("/repos/{repo}/notifications") };

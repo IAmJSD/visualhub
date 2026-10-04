@@ -19,17 +19,17 @@ use serde_json::{json, Value};
 
 pub fn new_pull_form(repo: &str, base: &str, head: &str) -> Act {
     let target = repo.to_string();
-    FormSpec::new(format!("Open a pull request in {repo}"))
-        .submit("Create pull request")
+    FormSpec::new(format!("Open a {} in {repo}", crate::forge::pr()))
+        .submit(format!("Create {}", crate::forge::pr()))
         .width(640.0)
         .field(Field::text("base", "Base branch").value(base).required().hint("The branch to merge into."))
-        .field(Field::text("head", "Compare branch").value(head).required().hint("branch, or owner:branch for a fork."))
+        .field(Field::text("head", if crate::forge::is_gitlab() { "Source branch" } else { "Compare branch" }).value(head).required().hint("branch, or owner:branch for a fork."))
         .field(Field::text("title", "Title").required())
         .field(Field::multiline("body", "Description"))
         .field(Field::bool("draft", "Create as draft", false))
         .field(Field::bool("maintainer_can_modify", "Allow edits by maintainers", true))
         .rest("POST", format!("/repos/{repo}/pulls"))
-        .ok("Pull request opened")
+        .ok(format!("{} opened", crate::forge::pr_title()))
         .inval(format!("/repos/{repo}/pulls"))
         .then(move |hub, value, cx| {
             hub.go(
@@ -99,7 +99,7 @@ fn check_row(repo: &str, check: &Value) -> Row {
             None if !details.is_empty() => Act::Url(details.clone()),
             None => Act::Url(check.s("html_url")),
         });
-    if check.s("app.slug") == "github-actions" {
+    if matches!(check.s("app.slug").as_str(), "github-actions" | "gitlab-ci") {
         row = row.action(
             "Re-run",
             Req::rest("POST", format!("/repos/{repo}/actions/jobs/{}/rerun", check.i("id")))
@@ -164,7 +164,7 @@ impl Hub {
                 widgets::row()
                     .child(widgets::spacer())
                     .child(widgets::btn("compare", "Compare branches", compare_form(repo, default_branch)))
-                    .child(widgets::go_btn("new-pr", "New pull request", new_pull_form(repo, default_branch, ""))),
+                    .child(widgets::go_btn("new-pr", format!("New {}", crate::forge::pr()), new_pull_form(repo, default_branch, ""))),
             )
             .child(list)
             .into_any_element()
@@ -220,7 +220,7 @@ impl Hub {
     }
 
     fn pull_conversation(&mut self, repo: &str, number: u64, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
-        let inval = format!("/repos/{repo}/issues/{number}");
+        let inval = crate::forge::issue_api(repo, number, true);
         let field = format!("comment:{repo}#{number}");
         let mut col = widgets::col().gap_3();
         let body_acts = CommentActs {
@@ -235,19 +235,19 @@ impl Hub {
             ),
             delete: None,
             extra: Vec::new(),
-            reactions: Some(format!("/repos/{repo}/issues/{number}/reactions")),
+            reactions: Some(format!("{inval}/reactions")),
             invalidate: inval.clone(),
             quote_into: Some(field.clone()),
         };
         // The PR object has no reaction counts; the issue view of it does.
         let mut body_value = pr.clone();
-        if let Some(issue) = self.fetch(&format!("/repos/{repo}/issues/{number}"), cx).ready() {
+        if let Some(issue) = self.fetch(&inval, cx).ready() {
             body_value["reactions"] = issue.at("reactions").clone();
         }
         col = col.child(self.comment_card("pr-body", &body_value, "opened", body_acts, cx));
 
         let me = self.login();
-        let spec = ListSpec::new(format!("/repos/{repo}/issues/{number}/timeline"), |_| Row::new(""));
+        let spec = ListSpec::new(format!("{inval}/timeline"), |_| Row::new(""));
         match self.fetch_list(&spec, cx) {
             Fetched::Items { items, loading, more } => {
                 // Commit events carry only the git author's name; ask who
@@ -289,17 +289,18 @@ impl Hub {
                 .inval(inval.clone())
                 .act()
         };
+        let (pr_word, pr_title) = (crate::forge::pr(), crate::forge::pr_title());
         let extra = vec![
             widgets::icon_action("review", "eye", palette().text_dim, "Review changes", review_form(repo, number)).into_any_element(),
             if open {
-                widgets::icon_action("close-pr", "pr-closed", widgets::red(), "Close pull request", state_req("closed", "Pull request closed")).into_any_element()
+                widgets::icon_action("close-pr", "pr-closed", widgets::red(), format!("Close {pr_word}"), state_req("closed", &format!("{pr_title} closed"))).into_any_element()
             } else if !pr.b("merged") {
-                widgets::icon_action("reopen-pr", "pr", widgets::green(), "Reopen pull request", state_req("open", "Pull request reopened")).into_any_element()
+                widgets::icon_action("reopen-pr", "pr", widgets::green(), format!("Reopen {pr_word}"), state_req("open", &format!("{pr_title} reopened"))).into_any_element()
             } else {
                 div().into_any_element()
             },
         ];
-        let submit = post_comment(&field, &format!("/repos/{repo}/issues/{number}/comments"), &inval);
+        let submit = post_comment(&field, &format!("{inval}/comments"), &inval);
         let composer = self.composer(&field, submit, extra, cx);
         let sidebar = self.pull_sidebar(repo, number, pr, cx);
         div()
@@ -316,7 +317,8 @@ impl Hub {
     fn merge_box(&mut self, repo: &str, number: u64, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
         let p = palette();
         let pr_path = format!("/repos/{repo}/pulls/{number}");
-        let inval_issue = format!("/repos/{repo}/issues/{number}");
+        let inval_issue = crate::forge::issue_api(repo, number, true);
+        let gitlab = crate::forge::is_gitlab();
         let head_ref = pr.s("head.ref");
         let head_repo = pr.s("head.repo.full_name");
         let mut card = widgets::card();
@@ -328,7 +330,7 @@ impl Hub {
                     widgets::col()
                         .gap_0()
                         .flex_1()
-                        .child(widgets::h3("Pull request successfully merged and closed"))
+                        .child(widgets::h3(format!("{} successfully merged and closed", crate::forge::pr_title())))
                         .child(widgets::dim(format!(
                             "Merged by {} {}",
                             pr.s("merged_by.login"),
@@ -384,7 +386,12 @@ impl Hub {
         };
 
         let state = pr.s("mergeable_state");
+        // GitLab says why it can't merge in its own words.
+        let blocker = pr.s("merge_blocker");
         let (merge_icon, merge_color, merge_title, merge_sub) = match state.as_str() {
+            "blocked" if !blocker.is_empty() => ("alert", widgets::yellow(), "Merging is blocked", blocker.as_str()),
+            "dirty" if gitlab => ("close", widgets::red(), "This branch has conflicts that must be resolved", "Resolve them on the command line or in GitLab's editor."),
+            "draft" if gitlab => ("pr-draft", widgets::gray(), "This merge request is still a draft", "Draft merge requests can't be merged."),
             "clean" | "has_hooks" => ("check", widgets::green(), "No conflicts with base branch", "Merging can be performed automatically."),
             "unstable" => ("check", widgets::green(), "No conflicts with base branch", "Merging can be performed automatically, though some checks failed."),
             "dirty" => ("close", widgets::red(), "This branch has conflicts that must be resolved", "Resolve them on the command line or in GitHub's web editor."),
@@ -401,14 +408,19 @@ impl Hub {
         }
 
         let method_key = format!("merge.method:{repo}");
-        let method = self.choice(&method_key, "merge");
+        // GitLab merges or squashes; how it merges is the project's setting.
+        let method = match self.choice(&method_key, "merge") {
+            m if gitlab && m == "rebase" => "merge".to_string(),
+            m => m,
+        };
         let method_label = match method.as_str() {
             "squash" => "Squash and merge",
             "rebase" => "Rebase and merge",
             _ => "Create a merge commit",
         };
         let title_default = match method.as_str() {
-            "squash" => format!("{} (#{number})", pr.s("title")),
+            "squash" => format!("{} ({})", pr.s("title"), crate::forge::pr_ref(number)),
+            _ if gitlab => format!("Merge branch '{}' into '{}'", pr.s("head.ref"), pr.s("base.ref")),
             _ => format!("Merge pull request #{number} from {}", pr.s("head.label")),
         };
         let repo_path = format!("/repos/{repo}");
@@ -417,7 +429,7 @@ impl Hub {
             .width(600.0)
             .field(Field::text("commit_title", "Commit title").value(title_default))
             .field(Field::multiline("commit_message", "Commit message").value(if method == "squash" { pr.s("body") } else { pr.s("title") }))
-            .field(Field::bool("delete_branch", "Delete the head branch afterwards", false))
+            .field(Field::bool("delete_branch", if gitlab { "Delete the source branch afterwards" } else { "Delete the head branch afterwards" }, gitlab && pr.b("force_remove_source_branch")))
             .build_with({
                 let (pr_path, repo_path, method) = (pr_path.clone(), repo_path.clone(), method.clone());
                 let (head_repo, head_ref, sha) = (head_repo.clone(), head_ref.clone(), sha.clone());
@@ -436,7 +448,7 @@ impl Hub {
                         }
                         Ok(merged)
                     })
-                    .ok("Pull request merged")
+                    .ok(format!("{} merged", crate::forge::pr_title()))
                     // A merge moves the base branch: its commits, files
                     // and the repository page are all stale now.
                     .inval(repo_path.clone())
@@ -453,11 +465,18 @@ impl Hub {
                 cx.notify();
             })
         };
-        let methods = Act::menu(vec![
-            MenuEntry::check("Create a merge commit — all commits are added to the base branch", method == "merge", pick("merge")),
+        let mut methods = vec![
+            MenuEntry::check(
+                if gitlab { "Merge — as the project merges (a merge commit, or fast-forward)" } else { "Create a merge commit — all commits are added to the base branch" },
+                method == "merge",
+                pick("merge"),
+            ),
             MenuEntry::check("Squash and merge — the commits are combined into one", method == "squash", pick("squash")),
-            MenuEntry::check("Rebase and merge — the commits are rebased onto the base branch", method == "rebase", pick("rebase")),
-        ]);
+        ];
+        if !gitlab {
+            methods.push(MenuEntry::check("Rebase and merge — the commits are rebased onto the base branch", method == "rebase", pick("rebase")));
+        }
+        let methods = Act::menu(methods);
         let node = pr.s("node_id");
         let auto_merge_on = pr.has("auto_merge");
         let auto = if auto_merge_on {
@@ -496,8 +515,14 @@ impl Hub {
             .text_size(px(13.0))
             .into_any_element()
         } else if state == "dirty" {
-            // Conflicts: no merging until they're settled, here.
-            widgets::btn("resolve-conflicts", "Resolve conflicts", Act::Go(Route::Conflicts { repo: repo.to_string(), number }))
+            // Conflicts: no merging until they're settled, here (GitLab's
+            // editor is on its site).
+            let resolve = if gitlab {
+                Act::Url(Route::Conflicts { repo: repo.to_string(), number }.web_url())
+            } else {
+                Act::Go(Route::Conflicts { repo: repo.to_string(), number })
+            };
+            widgets::btn("resolve-conflicts", "Resolve conflicts", resolve)
                 .h(px(32.0))
                 .px_4()
                 .text_size(px(13.0))
@@ -511,7 +536,13 @@ impl Hub {
         let flag = match method.as_str() {
             "squash" => "--squash",
             "rebase" => "--rebase",
+            _ if gitlab => "",
             _ => "--merge",
+        };
+        let cli = if gitlab {
+            format!("glab mr merge {number} {flag} --repo {repo}").replace("  ", " ")
+        } else {
+            format!("gh pr merge {number} {flag} --repo {repo}")
         };
         // Fixed places: the merge button left, the branch buttons right,
         // the command-line hint on its own line, so nothing reflows.
@@ -526,7 +557,7 @@ impl Hub {
                     .child(widgets::spacer())
                     .child(widgets::btn(
                         "update-branch",
-                        "Update branch",
+                        if gitlab { "Rebase source branch" } else { "Update branch" },
                         Req::rest("PUT", format!("{pr_path}/update-branch"))
                             .body(json!({ "expected_head_sha": sha }))
                             .ok("Branch update queued")
@@ -535,7 +566,12 @@ impl Hub {
                     ))
                     .child(widgets::btn(
                         "auto-merge",
-                        if auto_merge_on { "Disable auto-merge" } else { "Enable auto-merge" },
+                        match (gitlab, auto_merge_on) {
+                            (true, true) => "Cancel auto-merge",
+                            (true, false) => "Merge when pipeline succeeds",
+                            (false, true) => "Disable auto-merge",
+                            (false, false) => "Enable auto-merge",
+                        },
                         auto,
                     )),
             )
@@ -543,7 +579,7 @@ impl Hub {
                 widgets::row()
                     .gap_1()
                     .child(widgets::dim("You can also merge this with the command line."))
-                    .child(crate::ui::Link::new("merge-cli", "Copy the command").on_click(crate::hub::on(Act::Copy(format!("gh pr merge {number} {flag} --repo {repo}"))))),
+                    .child(crate::ui::Link::new("merge-cli", "Copy the command").on_click(crate::hub::on(Act::Copy(cli)))),
             );
 
         // A status: a filled circle with its mark, a title and a line.
@@ -803,7 +839,7 @@ impl Hub {
                     "checkout",
                     "copy",
                     "Copy checkout command",
-                    Act::Copy(format!("gh pr checkout {number} --repo {repo}")),
+                    Act::Copy(if crate::forge::is_gitlab() { format!("glab mr checkout {number} --repo {repo}") } else { format!("gh pr checkout {number} --repo {repo}") }),
                 )
                 .w_full(),
             )
@@ -1049,7 +1085,7 @@ impl Hub {
                 widgets::row()
                     .child(widgets::title(format!("Comparing {base}...{head}")))
                     .child(widgets::spacer())
-                    .child(widgets::go_btn("create-pr", "Create pull request", new_pull_form(repo, base, head))),
+                    .child(widgets::go_btn("create-pr", format!("Create {}", crate::forge::pr()), new_pull_form(repo, base, head))),
             )
             .child(widgets::row().child(widgets::tag(status, widgets::gray())).child(widgets::dim(summary)))
             .child(widgets::h2(format!("{} commits", cmp.list("commits").len())))
@@ -1125,7 +1161,7 @@ impl Hub {
                     edit: Some(super::common::edit_comment(&url, &cm.s("body"), &comments_path)),
                     delete: Some(super::common::delete_comment(&url, &comments_path)),
                     extra: Vec::new(),
-                    reactions: Some(format!("{}/reactions", super::common::api_path(&url))),
+                    reactions: (!crate::forge::is_gitlab()).then(|| format!("{}/reactions", super::common::api_path(&url))),
                     invalidate: comments_path.clone(),
                     quote_into: Some(field.clone()),
                 };

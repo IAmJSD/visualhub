@@ -41,7 +41,7 @@ impl Hub {
             }
         };
         let input = self
-            .input("search.q", "Search GitHub — qualifiers like language:rust stars:>100 user:octocat work", cx)
+            .input("search.q", &format!("Search {} — qualifiers like language:rust user:octocat work", crate::forge::name()), cx)
             .w_full()
             .h(px(34.0));
         let sorts: &[(&str, &str)] = match kind.as_str() {
@@ -105,7 +105,19 @@ impl Hub {
             .child(input)
             .child(
                 widgets::row()
-                    .child(widgets::chips(KINDS.iter().map(|(v, l)| (l.to_string(), kind == *v, Act::choose("search.kind", *v))).collect()))
+                    .child(widgets::chips(
+                        KINDS
+                            .iter()
+                            .map(|(v, l)| {
+                                let label = match *v {
+                                    "repositories" => crate::forge::repos_title(),
+                                    "pulls" => crate::forge::prs_title(),
+                                    _ => l,
+                                };
+                                (label.to_string(), kind == *v, Act::choose("search.kind", *v))
+                            })
+                            .collect(),
+                    ))
                     .child(widgets::spacer())
                     .child(widgets::btn("search-sort", format!("Sort: {sort_label} ▾"), sort_menu)),
             )

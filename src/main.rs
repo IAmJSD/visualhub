@@ -1,5 +1,6 @@
-//! VisualHub: a native GitHub client on GPUI, drawn with a widget kit
-//! copied from Schist. Everything GitHub's web UI does except editing code.
+//! VisualHub: a native GitHub and GitLab client on GPUI, drawn with a
+//! widget kit copied from Schist. Everything the forges' web UIs do except
+//! editing code.
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
@@ -8,7 +9,9 @@ mod cli;
 mod assets;
 mod autoscroll;
 mod diff;
+mod forge;
 mod form;
+mod gitlab;
 mod highlight;
 mod hub;
 mod json;

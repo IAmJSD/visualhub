@@ -119,6 +119,9 @@ struct Builder {
     /// Where relative image paths point: the repository's raw root at the
     /// shown ref, and the folder of the file being shown.
     raw_root: Option<String>,
+    /// On GitLab, the project and ref whose files those are, which its API
+    /// serves to the token (a private project's raw files want it).
+    gitlab_raw: Option<(String, String)>,
     raw_dir: String,
     me: String,
 }
@@ -176,7 +179,15 @@ impl Builder {
         if src.contains("://") || src.starts_with("data:") {
             return src.to_string();
         }
-        let Some(root) = &self.raw_root else { return src.to_string() };
+        // GitLab's attachments live under the project.
+        if src.starts_with("/uploads/") && crate::forge::is_gitlab() {
+            if let Some(repo) = &self.repo {
+                return format!("{}/{repo}{src}", crate::forge::web());
+            }
+        }
+        if self.raw_root.is_none() && self.gitlab_raw.is_none() {
+            return src.to_string();
+        }
         let path = match src.strip_prefix('/') {
             Some(from_root) => from_root.to_string(),
             None if self.raw_dir.is_empty() => src.trim_start_matches("./").to_string(),
@@ -193,7 +204,18 @@ impl Builder {
                 p => parts.push(p),
             }
         }
-        format!("{root}/{}", parts.join("/"))
+        let path = parts.join("/");
+        match (&self.gitlab_raw, &self.raw_root) {
+            (Some((repo, git_ref)), _) => format!(
+                "{}{}/repository/files/{}/raw?ref={}",
+                crate::forge::web(),
+                crate::screens::gitlab::project_api(repo),
+                crate::json::enc(&path),
+                crate::json::enc(git_ref)
+            ),
+            (None, Some(root)) => format!("{root}/{path}"),
+            (None, None) => path,
+        }
     }
 
     fn flush_paragraph(&mut self) {
@@ -228,8 +250,14 @@ impl Hub {
             images: Vec::new(),
             repo: self.route.repo().map(str::to_string),
             raw_root: match &self.route {
+                _ if crate::forge::is_gitlab() => None,
                 Route::Repo { repo, .. } => Some(format!("https://raw.githubusercontent.com/{repo}/HEAD")),
                 Route::Tree { repo, git_ref, .. } => Some(format!("https://raw.githubusercontent.com/{repo}/{git_ref}")),
+                _ => None,
+            },
+            gitlab_raw: match &self.route {
+                Route::Repo { repo, .. } if crate::forge::is_gitlab() => Some((repo.clone(), "HEAD".to_string())),
+                Route::Tree { repo, git_ref, .. } if crate::forge::is_gitlab() => Some((repo.clone(), git_ref.clone())),
                 _ => None,
             },
             raw_dir: match &self.route {
@@ -700,9 +728,9 @@ fn img_src(html: &str) -> Option<String> {
     }
 }
 
-/// Plain text with GitHub's references made links, as github.com shows
-/// them: bare URLs (shortened when they point into GitHub), `@login`, and
-/// `#123` in the page's repository.
+/// Plain text with the forge's references made links, as its site shows
+/// them: bare URLs (shortened when they point into it), `@login`, `#123`
+/// in the page's repository, and on GitLab `!123` for a merge request.
 fn autolink(b: &mut Builder, text: &str, flags: Flags) {
     let word = |c: char| c.is_alphanumeric() || c == '_';
     let mut plain = 0;
@@ -720,14 +748,21 @@ fn autolink(b: &mut Builder, text: &str, flags: Flags) {
             let login: String = rest[1..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').take(39).collect();
             (!login.is_empty() && !login.starts_with('-')).then(|| {
                 let mine = login.eq_ignore_ascii_case(&b.me);
-                (1 + login.len(), format!("@{login}"), format!("{}/{login}", crate::api::WEB), Flags { mine, ..flags })
+                (1 + login.len(), format!("@{login}"), format!("{}/{login}", crate::forge::web()), Flags { mine, ..flags })
             })
-        } else if !after_word && rest.starts_with('#') {
+        } else if !after_word && (rest.starts_with('#') || (rest.starts_with('!') && crate::forge::is_gitlab())) {
+            let mark = &rest[..1];
             let digits: String = rest[1..].chars().take_while(|c| c.is_ascii_digit()).collect();
             let ends_word = rest[1 + digits.len()..].chars().next().is_none_or(|c| !word(c));
+            let web = crate::forge::web();
             match &b.repo {
                 Some(repo) if !digits.is_empty() && ends_word => {
-                    Some((1 + digits.len(), format!("#{digits}"), format!("{}/{repo}/issues/{digits}", crate::api::WEB), flags))
+                    let url = match (crate::forge::is_gitlab(), mark) {
+                        (true, "!") => format!("{web}/{repo}/-/merge_requests/{digits}"),
+                        (true, _) => format!("{web}/{repo}/-/issues/{digits}"),
+                        _ => format!("{web}/{repo}/issues/{digits}"),
+                    };
+                    Some((1 + digits.len(), format!("{mark}{digits}"), url, flags))
                 }
                 _ => None,
             }
@@ -751,6 +786,9 @@ fn autolink(b: &mut Builder, text: &str, flags: Flags) {
 /// `owner/repo#138` elsewhere, a commit's short SHA, a compare's range.
 /// The flag says to set it as code.
 fn short_url(url: &str, here: Option<&str>) -> (String, bool) {
+    if crate::forge::is_gitlab() {
+        return short_gitlab_url(url, here);
+    }
     let Some(rest) = url.strip_prefix("https://github.com/") else {
         return (url.to_string(), false);
     };
@@ -768,6 +806,31 @@ fn short_url(url: &str, here: Option<&str>) -> (String, bool) {
             (if prefix.is_empty() { sha.to_string() } else { format!("{prefix}@{sha}") }, true)
         }
         "compare" => (parts[3..].join("/"), true),
+        _ => (url.to_string(), false),
+    }
+}
+
+/// [`short_url`] for a GitLab instance: `#12` and `!12` in this project,
+/// `group/project#12` elsewhere, a commit's short SHA.
+fn short_gitlab_url(url: &str, here: Option<&str>) -> (String, bool) {
+    let web = format!("{}/", crate::forge::web());
+    let Some(rest) = url.strip_prefix(&web) else {
+        return (url.to_string(), false);
+    };
+    let rest = rest.split(['?', '#']).next().unwrap_or("");
+    let Some((repo, page)) = rest.split_once("/-/") else {
+        return (url.to_string(), false);
+    };
+    let parts: Vec<&str> = page.split('/').filter(|p| !p.is_empty()).collect();
+    let prefix = if here == Some(repo) { String::new() } else { repo.to_string() };
+    match parts.as_slice() {
+        ["issues", n] if n.parse::<u64>().is_ok() => (format!("{prefix}#{n}"), false),
+        ["merge_requests", n] if n.parse::<u64>().is_ok() => (format!("{prefix}!{n}"), false),
+        ["commit", sha] if sha.len() >= 8 => {
+            let short = &sha[..8];
+            (if prefix.is_empty() { short.to_string() } else { format!("{prefix}@{short}") }, true)
+        }
+        ["compare", range] => (range.to_string(), true),
         _ => (url.to_string(), false),
     }
 }

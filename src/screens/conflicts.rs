@@ -774,7 +774,7 @@ mod tests {
         let Ok(target) = std::env::var("VH_CONFLICTS") else { return };
         let (repo, number) = target.split_once('#').unwrap();
         let token = crate::api::gh_cli_token().unwrap();
-        let s = load(&Client::new(&token), repo, number.parse().unwrap()).unwrap();
+        let s = load(&Client::new(&crate::forge::Account::new(crate::forge::Forge::GitHub, "github.com", &token)), repo, number.parse().unwrap()).unwrap();
         eprintln!("base {} head {}", s.base_sha, s.head_sha);
         eprintln!("{} base-only, {} merged cleanly, {} conflicted", s.base_only.len(), s.merged.len(), s.files.len());
         for f in &s.files {

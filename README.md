@@ -2,10 +2,11 @@
 
 # VisualHub
 
-A native GitHub client written in Rust on [GPUI](https://github.com/IAmJSD/gpui)
-(the IAmJSD fork). Its widgets are adapted from
-[Schist](https://github.com/Infrawrench/schist)'s widget kit. VisualHub covers
-what you do on github.com, except editing code.
+A native GitHub and GitLab client written in Rust on
+[GPUI](https://github.com/IAmJSD/gpui) (the IAmJSD fork). Its widgets are
+adapted from [Schist](https://github.com/Infrawrench/schist)'s widget kit.
+VisualHub covers what you do on github.com, except editing code, and the same
+on gitlab.com or your own GitLab.
 Files, diffs, logs and gists are read-only. Everything else can be done from
 the app.
 
@@ -49,15 +50,38 @@ the app.
 | **Packages** | List by type, show versions, delete a package or a version |
 | **Account** | Profile, emails, SSH, signing and GPG keys, social accounts, blocked users, interaction limits, installed apps, theme, rate limits, sign out |
 
+### GitLab
+
+Sign in to GitLab (gitlab.com or a self-managed instance) alongside GitHub and
+switch between accounts from the top of the sidebar; each keeps its own pages
+and history. A GitLab account gets the same screens, in GitLab's words: merge
+requests (`!12`) with their diffs, line comments, approvals, merging and
+squashing; issues, labels and milestones; projects and nested groups; files,
+commits, branches, tags and releases; snippets; and search. Some pages are
+GitLab's own:
+
+| Area | What you can do |
+|---|---|
+| **CI/CD** | Pipelines by status and branch: run (with variables), retry, cancel, delete. A pipeline's jobs by stage, its tests and artifacts. A job's full log, live while it runs; retry, cancel, play or erase it. Schedules, environments and runners |
+| **To-Do List** | What needs you, filtered by type; mark one or all as done |
+| **Groups** | Projects, subgroups and members (add by username or invite by email, change roles), invitations, CI/CD variables, packages, group settings |
+| **Project settings** | Name, visibility, features, merge method and rules; members, invitations, protected branches, webhooks, deploy keys, CI/CD variables; path, transfer, archive, delete |
+| **Packages** | The package and container registries of a project or group |
+| **Account** | Emails, SSH and GPG keys, personal access tokens |
+
+Pages GitHub has and GitLab doesn't (Codespaces, Discussions, Dependabot and
+the like) don't show on a GitLab account.
+
 Some things GitHub only offers in the browser (billing, OAuth app approval,
-uploading avatars). For those, VisualHub opens the right page on github.com,
-and every screen has an **Open on github.com** button.
+uploading avatars), as does GitLab (editing your profile). For those,
+VisualHub opens the right page on the site, and every screen has a button that
+opens it there.
 
 ### Keys
 
 | Key | Action |
 |---|---|
-| `/` or `Ctrl+K` | Jump box: `owner/repo`, `owner/repo#12`, `#12`, `@user`, a github.com URL, or a search |
+| `/` or `Ctrl+K` | Jump box: `owner/repo`, `owner/repo#12`, `#12`, `@user`, a link into the forge, or a search. On GitLab also `group/sub/project`, `project!12` and `!12` |
 | `Alt+←` / `Alt+→` | Back / forward |
 | `Ctrl+R` | Refresh everything |
 | `Ctrl+Enter` | Send the comment you're writing |
@@ -65,15 +89,19 @@ and every screen has an **Open on github.com** button.
 
 ## Signing in
 
-VisualHub looks for an existing token in this order:
+VisualHub signs in to every account it finds a working token for, and shows the
+one you used last:
 
-1. one saved by a previous sign-in (`%APPDATA%\visualhub\token`, or
-   `~/.config/visualhub/token`, or `~/Library/Application Support/visualhub/token`)
-2. `GH_TOKEN` or `GITHUB_TOKEN`
-3. the GitHub CLI (`gh auth token`)
+1. accounts signed in to before (kept in `accounts` in `%APPDATA%\visualhub`,
+   `~/.config/visualhub` or `~/Library/Application Support/visualhub`)
+2. `GH_TOKEN` or `GITHUB_TOKEN`, and the GitHub CLI (`gh auth token`)
+3. `GITLAB_TOKEN` (for `GITLAB_HOST`, or gitlab.com), and the GitLab CLI's
+   logins (`glab config get token`)
 
-If none of those work, paste a personal access token. The sign-in screen links
-to a classic-token page with every scope the app uses already selected.
+If none of those work, or to add another account, paste a personal access
+token. For GitHub the sign-in screen links to a classic-token page with every
+scope the app uses already selected; for GitLab, to a new token with the `api`
+scope, on whichever instance you name.
 
 ## Building
 
@@ -84,7 +112,7 @@ cargo run --release
 The build is self-contained: GPUI comes from the pinned fork revision, and
 nothing else needs to be checked out next to it.
 
-`VISUALHUB_OPEN=<a github.com URL>` starts the app on that page, which is how
+`VISUALHUB_OPEN=<a github.com or GitLab URL>` starts the app on that page, which is how
 the screenshots above were taken.
 
 ### Packaging
@@ -119,6 +147,12 @@ attaches everything to a GitHub release.
   copied.
 - `src/api.rs`: one blocking `ureq` agent for REST, GraphQL, raw content and
   images. It runs on GPUI's background executor.
+- `src/gitlab/`: GitLab, answering as GitHub would. The screens ask for
+  GitHub's API paths; on a GitLab account the client sends them here, where
+  each is matched to GitLab's API and the answer reshaped into GitHub's
+  fields. The few GraphQL queries the screens send are answered the same way.
+  `src/forge.rs` holds what the screens draw differently: GitLab's words,
+  links and nested project paths.
 - `src/hub.rs`: the single view. Pages call `fetch(path)`, which returns the
   cached value or starts a request and redraws when it arrives. Every click is
   an `Act`. A write is a `Req` that lists the cache prefixes it makes stale, so
@@ -128,6 +162,7 @@ attaches everything to a GitHub release.
   row mapping, not hand-built UI.
 - `src/markdown.rs`, `src/diff.rs`: GitHub-flavoured Markdown (links, tables,
   task lists, images) and unified diffs, built from GPUI elements.
-- `src/screens/*`: one module per area of GitHub.
+- `src/screens/*`: one module per area of GitHub; `src/screens/gitlab/` has
+  the pages only GitLab has.
 - `assets/icons`: the app's own 16px line icons, generated from
   `tools/icons.txt` by `tools/icons.py`.

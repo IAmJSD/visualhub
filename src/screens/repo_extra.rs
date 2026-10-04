@@ -317,8 +317,10 @@ impl Hub {
 
     pub fn repo_insights(&mut self, repo: &str, info: &Value, cx: &mut Context<Self>) -> AnyElement {
         let view_key = format!("insights.view:{repo}");
-        let view = self.choice(&view_key, "activity");
-        let names = [
+        let gitlab = crate::forge::is_gitlab();
+        let view = self.choice(&view_key, if gitlab { "contributors" } else { "activity" });
+        let gitlab_names = [("contributors", "Contributors"), ("forks", "Forks"), ("stargazers", "Stars")];
+        let github_names = [
             ("activity", "Commit activity"),
             ("contributors", "Contributors"),
             ("traffic", "Traffic"),
@@ -328,6 +330,7 @@ impl Hub {
             ("stargazers", "Stargazers"),
             ("watchers", "Watchers"),
         ];
+        let names: &[(&str, &str)] = if gitlab { &gitlab_names } else { &github_names };
         let chips = widgets::chips(names.iter().map(|(v, l)| (l.to_string(), view == *v, Act::choose(&view_key, *v))).collect());
         let body = match view.as_str() {
             "contributors" => {

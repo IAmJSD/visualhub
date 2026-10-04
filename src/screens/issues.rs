@@ -104,7 +104,14 @@ impl Hub {
         let query = format!("is:{kind} is:{state} {qualifier} archived:false");
         let spec = search_spec(&query, true);
         let list = self.list(&spec, cx);
-        let title = if kind == "pr" { "Pull requests" } else { "Issues" };
+        let title = if kind == "pr" { crate::forge::prs_title() } else { "Issues" };
+        let mut states = vec![
+            ("Open".to_string(), state == "open", Act::choose(&state_key, "open")),
+            ("Closed".to_string(), state == "closed", Act::choose(&state_key, "closed")),
+        ];
+        if kind == "pr" && crate::forge::is_gitlab() {
+            states.insert(1, ("Merged".to_string(), state == "merged", Act::choose(&state_key, "merged")));
+        }
         widgets::page()
             .child(widgets::title(title))
             .child(
@@ -116,10 +123,7 @@ impl Hub {
                             .map(|(v, l, _)| (l.to_string(), filter == *v, Act::choose(&key, *v)))
                             .collect(),
                     ))
-                    .child(widgets::chips(vec![
-                        ("Open".into(), state == "open", Act::choose(&state_key, "open")),
-                        ("Closed".into(), state == "closed", Act::choose(&state_key, "closed")),
-                    ])),
+                    .child(widgets::chips(states)),
             )
             .child(widgets::faint(query))
             .child(list)
@@ -183,6 +187,9 @@ impl Hub {
                 let mut path = format!(
                     "/repos/{repo}/issues?state={state}&sort={sort_field}&direction={direction}"
                 );
+                if state == "merged" {
+                    path = format!("/repos/{repo}/issues?state=closed&sort={sort_field}&direction={direction}");
+                }
                 if !label.is_empty() {
                     path.push_str(&format!("&labels={}", enc(&label)));
                 }
@@ -197,8 +204,8 @@ impl Hub {
                     item["pull_request"] = json!({});
                     row = issue_row(&item, false);
                     row = row.meta(format!(
-                        "#{} opened {} by {}  ·  {} → {}",
-                        item.i("number"),
+                        "{} opened {} by {}  ·  {} → {}",
+                        crate::forge::pr_ref(item.i("number")),
                         time::ago(&item.s("created_at")),
                         item.s("user.login"),
                         item.s("head.label"),
@@ -210,13 +217,15 @@ impl Hub {
             })
             .filter(move |item| is_pr || !item.has("pull_request"))
             .empty(if kind == "pr" {
-                "No pull requests match."
+                if crate::forge::is_gitlab() { "No merge requests match." } else { "No pull requests match." }
             } else {
                 "No issues match."
             })
         } else {
             let mut query = format!("repo:{repo} is:{kind} {applied}");
-            if state != "all" {
+            if state == "merged" {
+                query.push_str(" is:merged");
+            } else if state != "all" {
                 query.push_str(&format!(" is:{state}"));
             }
             if !label.is_empty() {
@@ -276,17 +285,26 @@ impl Hub {
             Some(n) => format!("{n} {label}"),
             None => label.to_string(),
         };
-        let (open_key, closed_key) = if kind == "pr" { ("openPulls", "closedPulls") } else { ("openIssues", "closedIssues") };
+        let gitlab_prs = kind == "pr" && crate::forge::is_gitlab();
+        let (open_key, closed_key) = match (kind, gitlab_prs) {
+            (_, true) => ("openPulls", "closedOnlyPulls"),
+            ("pr", _) => ("openPulls", "closedPulls"),
+            _ => ("openIssues", "closedIssues"),
+        };
+        let mut chips = vec![
+            (counted("Open", open_key), state == "open", Act::choose(&state_key, "open")),
+            (counted("Closed", closed_key), state == "closed", Act::choose(&state_key, "closed")),
+            ("All".to_string(), state == "all", Act::choose(&state_key, "all")),
+        ];
+        if gitlab_prs {
+            chips.insert(1, (counted("Merged", "mergedPulls"), state == "merged", Act::choose(&state_key, "merged")));
+        }
         widgets::col()
             .gap_3()
             .child(
                 widgets::row()
                     .flex_wrap()
-                    .child(widgets::chips(vec![
-                        (counted("Open", open_key), state == "open", Act::choose(&state_key, "open")),
-                        (counted("Closed", closed_key), state == "closed", Act::choose(&state_key, "closed")),
-                        ("All".into(), state == "all", Act::choose(&state_key, "all")),
-                    ]))
+                    .child(widgets::chips(chips))
                     .child(search)
                     .child(widgets::btn(
                         ElementId::Name(format!("{kind}-labels").into()),
@@ -369,13 +387,13 @@ impl Hub {
             ("Open", widgets::green_fill())
         };
         let kind = if is_pr { "pulls" } else { "issues" };
-        let edit = FormSpec::new(if is_pr { "Edit pull request" } else { "Edit issue" })
+        let edit = FormSpec::new(if is_pr { format!("Edit {}", crate::forge::pr()) } else { "Edit issue".to_string() })
             .width(680.0)
             .field(Field::text("title", "Title").value(issue.s("title")).required())
             .field(Field::multiline("body", "Description").value(issue.s("body")).keep_empty())
             .rest("PATCH", format!("/repos/{repo}/{kind}/{number}"))
             .ok("Saved")
-            .inval(format!("/repos/{repo}/issues/{number}"))
+            .inval(crate::forge::issue_api(repo, number, is_pr))
             .inval(format!("/repos/{repo}/pulls/{number}"))
             .act();
         let byline = if is_pr {
@@ -415,7 +433,7 @@ impl Hub {
                             .child(
                                 div()
                                     .text_color(rgb(palette().text_dim))
-                                    .child(format!("#{number}")),
+                                    .child(if is_pr { crate::forge::pr_ref(number) } else { format!("#{number}") }),
                             ),
                     )
                     .child(widgets::btn("edit-issue", "Edit", edit))
@@ -745,6 +763,31 @@ impl Hub {
                 self.timeline_event("project", widgets::gray(), &actor, "updated this in a project", &when, None, cx)
             }
             "deployed" => self.timeline_event("rocket", widgets::gray(), &actor, "deployed this", &when, None, cx),
+            // GitLab's system notes ("added ~bug label", "approved this
+            // merge request") say what happened in their own words.
+            "system_note" => {
+                let text = crate::json::first_line(&event.s("body"));
+                let icon_name = if text.starts_with("approved") {
+                    "check-circle"
+                } else if text.contains("commit") {
+                    "commit"
+                } else if text.contains("label") {
+                    "label"
+                } else if text.contains("assigned") || text.contains("review") {
+                    "person"
+                } else if text.starts_with("closed") {
+                    "issue-closed"
+                } else if text.starts_with("merged") {
+                    "pr-merged"
+                } else if text.contains("milestone") {
+                    "milestone"
+                } else if text.starts_with("mentioned") {
+                    "link"
+                } else {
+                    "dot"
+                };
+                self.timeline_event(icon_name, widgets::gray(), &actor, text, &when, None, cx)
+            }
             _ => return None,
         })
     }
@@ -752,7 +795,7 @@ impl Hub {
     /// Assignees, labels, milestone, and the issue's other actions.
     pub fn issue_sidebar(&mut self, repo: &str, issue: &Value, is_pr: bool, cx: &mut Context<Self>) -> AnyElement {
         let number = issue.i("number");
-        let path = format!("/repos/{repo}/issues/{number}");
+        let path = crate::forge::issue_api(repo, number, is_pr);
         let inval_issue = path.clone();
         let inval_pull = format!("/repos/{repo}/pulls/{number}");
         let with_inval = move |req: Req| req.inval(inval_issue.clone()).inval(inval_pull.clone());
@@ -890,7 +933,7 @@ impl Hub {
         let transfer = FormSpec::new("Transfer issue")
             .submit("Transfer")
             .note("Move this issue to another repository you can write to. Labels and milestones that do not exist there are dropped.")
-            .field(Field::text("target", "Destination repository (owner/name)").required())
+            .field(Field::text("target", if crate::forge::is_gitlab() { "Destination project (group/name)" } else { "Destination repository (owner/name)" }).required())
             .build_with(move |values| {
                 let target = values.s("target");
                 let Some((owner, name)) = target.split_once('/') else {
@@ -937,16 +980,23 @@ impl Hub {
             "Deleting an issue removes it and its comments for good. Only admins can do this.",
             "Delete issue",
         );
-        let subscribe_path = format!("/repos/{repo}/issues/{number}");
+        let subscribe_url = if crate::forge::is_gitlab() {
+            issue.s("html_url")
+        } else {
+            format!("{}{}", crate::forge::web(), format!("/repos/{repo}/issues/{number}").replace("/repos", ""))
+        };
         let mut actions = widgets::col().gap_1().child(
             widgets::ibtn("lock", if locked { "unlock" } else { "lock" }, if locked { "Unlock conversation" } else { "Lock conversation" }, lock)
                 .w_full(),
         );
         if !is_pr {
+            if !crate::forge::is_gitlab() {
+                actions = actions
+                    .child(widgets::ibtn("pin", "pin", "Pin issue", pin).w_full())
+                    .child(widgets::ibtn("unpin", "pin", "Unpin issue", unpin).w_full());
+            }
             actions = actions
-                .child(widgets::ibtn("pin", "pin", "Pin issue", pin).w_full())
-                .child(widgets::ibtn("unpin", "pin", "Unpin issue", unpin).w_full())
-                .child(widgets::ibtn("transfer", "arrow-right", "Transfer issue", transfer).w_full())
+                .child(widgets::ibtn("transfer", "arrow-right", if crate::forge::is_gitlab() { "Move issue" } else { "Transfer issue" }, transfer).w_full())
                 .child(widgets::ibtn(
                     "branch-for-issue",
                     "branch",
@@ -956,7 +1006,7 @@ impl Hub {
                 .child(widgets::ibtn("delete-issue", "trash", "Delete issue", delete).w_full());
         }
         actions = actions.child(
-            widgets::ibtn("subscribe", "bell", "Notification settings…", Act::Url(format!("{}{}", crate::api::WEB, subscribe_path.replace("/repos", ""))))
+            widgets::ibtn("subscribe", "bell", "Notification settings…", Act::Url(subscribe_url))
                 .w_full(),
         );
 
@@ -1006,7 +1056,7 @@ impl Hub {
                         .ok("Label deleted")
                         .inval(inval)
                         .act()
-                        .confirm("Delete label?", format!("“{name}” will be removed from every issue and pull request."), "Delete"),
+                        .confirm("Delete label?", format!("“{name}” will be removed from every issue and {}.", crate::forge::pr()), "Delete"),
                 )
                 .inline();
             row.labels = vec![(name, label.s("color"))];

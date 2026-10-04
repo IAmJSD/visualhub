@@ -10,6 +10,7 @@
 //! they make stale, which is how lists refresh after an edit.
 
 use crate::api::{self, Client};
+use crate::forge::{Account, Forge};
 use crate::form::{FormSpec, FormValues};
 use crate::json::Json as _;
 use anyhow::Result;
@@ -43,6 +44,8 @@ pub enum RepoTab {
     Security,
     Insights,
     Settings,
+    /// A GitLab project's package registry.
+    Packages,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -70,6 +73,8 @@ pub enum Route {
     Commit { repo: String, sha: String },
     Compare { repo: String, base: String, head: String },
     Run { repo: String, id: u64 },
+    /// A GitLab CI job and its log.
+    Job { repo: String, id: u64 },
     Release { repo: String, id: u64 },
     Discussion { repo: String, number: u64 },
     User { login: String },
@@ -100,6 +105,7 @@ impl Route {
             | Route::Commit { repo, .. }
             | Route::Compare { repo, .. }
             | Route::Run { repo, .. }
+            | Route::Job { repo, .. }
             | Route::Release { repo, .. }
             | Route::Discussion { repo, .. } => Some(repo),
             _ => None,
@@ -110,24 +116,27 @@ impl Route {
     pub fn title(&self) -> String {
         match self {
             Route::Home => "Home".into(),
+            Route::Notifications if crate::forge::is_gitlab() => "To-Do List".into(),
             Route::Notifications => "Notifications".into(),
-            Route::Repos => "Repositories".into(),
-            Route::Pulls => "Pull requests".into(),
+            Route::Repos => crate::forge::repos_title().into(),
+            Route::Pulls => crate::forge::prs_title().into(),
             Route::Issues => "Issues".into(),
             Route::Repo { repo, .. } => repo.clone(),
             Route::Tree { repo, path, .. } if path.is_empty() => repo.clone(),
             Route::Tree { repo, path, .. } => format!("{repo}/{path}"),
             Route::Issue { repo, number } => format!("{repo}#{number}"),
-            Route::Pull { repo, number, .. } => format!("{repo}#{number}"),
-            Route::Conflicts { repo, number } => format!("Conflicts in {repo}#{number}"),
+            Route::Pull { repo, number, .. } => format!("{repo}{}", crate::forge::pr_ref(number)),
+            Route::Conflicts { repo, number } => format!("Conflicts in {repo}{}", crate::forge::pr_ref(number)),
             Route::Commit { repo, sha } => format!("{repo}@{}", &sha[..sha.len().min(7)]),
             Route::Compare { repo, base, head } => format!("{repo} {base}...{head}"),
+            Route::Run { repo, id } if crate::forge::is_gitlab() => format!("{repo} pipeline {id}"),
             Route::Run { repo, id } => format!("{repo} run {id}"),
+            Route::Job { repo, id } => format!("{repo} job {id}"),
             Route::Release { repo, .. } => format!("{repo} release"),
             Route::Discussion { repo, number } => format!("{repo} discussion #{number}"),
             Route::User { login } | Route::Org { login } => login.clone(),
             Route::Team { org, slug } => format!("{org}/{slug}"),
-            Route::Gists => "Gists".into(),
+            Route::Gists => crate::forge::gists_title().into(),
             Route::Gist { id } => format!("Gist {}", &id[..id.len().min(8)]),
             Route::NewRepo { .. } => "New repository".into(),
             Route::NewGist => "New gist".into(),
@@ -145,13 +154,17 @@ impl Route {
     pub fn owns_scroll(&self) -> bool {
         matches!(
             self,
-            Route::Tree { file: true, .. } | Route::Pull { tab: PullTab::Files, .. }
+            Route::Tree { file: true, .. } | Route::Pull { tab: PullTab::Files, .. } | Route::Job { .. }
         )
     }
 
-    /// The same page on github.com.
+    /// The same page on the account's site.
     pub fn web_url(&self) -> String {
-        let w = api::WEB;
+        let w = crate::forge::web();
+        if crate::forge::is_gitlab() {
+            return crate::forge::gitlab_url(self, &w);
+        }
+        let w = w.as_str();
         match self {
             Route::Home => w.to_string(),
             Route::Notifications => format!("{w}/notifications"),
@@ -173,6 +186,7 @@ impl Route {
                     RepoTab::Security => "/security",
                     RepoTab::Insights => "/pulse",
                     RepoTab::Settings => "/settings",
+                    RepoTab::Packages => "/packages",
                 };
                 format!("{w}/{repo}{suffix}")
             }
@@ -186,6 +200,7 @@ impl Route {
             Route::Commit { repo, sha } => format!("{w}/{repo}/commit/{sha}"),
             Route::Compare { repo, base, head } => format!("{w}/{repo}/compare/{base}...{head}"),
             Route::Run { repo, id } => format!("{w}/{repo}/actions/runs/{id}"),
+            Route::Job { repo, id } => format!("{w}/{repo}/actions/runs/{id}"),
             Route::Release { repo, .. } => format!("{w}/{repo}/releases"),
             Route::Discussion { repo, number } => format!("{w}/{repo}/discussions/{number}"),
             Route::User { login } | Route::Org { login } => format!("{w}/{login}"),
@@ -201,8 +216,12 @@ impl Route {
     }
 }
 
-/// The page a github.com link points at, when the app has one.
+/// The page a link points at, when the app has one: a github.com link on
+/// a GitHub account, a link into the instance on a GitLab one.
 pub fn route_for_url(url: &str) -> Option<Route> {
+    if crate::forge::is_gitlab() {
+        return crate::forge::gitlab_route(url, &crate::forge::web());
+    }
     let rest = url
         .strip_prefix("https://github.com/")
         .or_else(|| url.strip_prefix("http://github.com/"))?;
@@ -577,6 +596,62 @@ pub enum Auth {
     SignedIn,
 }
 
+/// Signing in to another account while one shows.
+#[derive(Default)]
+pub struct Adding {
+    pub checking: bool,
+    pub error: Option<String>,
+}
+
+/// An account whose token works.
+#[derive(Clone)]
+pub struct Known {
+    pub account: Account,
+    /// Where its token came from, as [`api::discover_accounts`] names it.
+    pub source: &'static str,
+    /// Its user, as GitHub's `/user` reads.
+    pub me: Value,
+    /// What its token may do: a classic GitHub token's scopes, or a
+    /// GitLab token's.
+    pub scopes: String,
+}
+
+/// An account's pages, kept while another account shows.
+struct Session {
+    route: Route,
+    back: Vec<Route>,
+    forward: Vec<Route>,
+    cache: HashMap<String, Load>,
+    generation: HashMap<String, u64>,
+    stale: HashSet<String>,
+    pages: HashMap<String, usize>,
+    recent: Vec<String>,
+    commit_info: HashMap<String, crate::resource::CommitInfo>,
+    conflicts: HashMap<String, crate::screens::conflicts::SessionLoad>,
+}
+
+/// Whether `account`'s token works: its user, and what it may do.
+fn check_account(account: &Account) -> Result<(Value, String), String> {
+    let client = Client::new(account);
+    match account.forge {
+        Forge::GitHub => match client.raw("GET", "/user", None, None) {
+            Ok(reply) if reply.status == 200 => Ok((serde_json::from_str(&reply.body).unwrap_or(Value::Null), reply.scopes.unwrap_or_default())),
+            Ok(reply) => Err(format!("GitHub refused the token ({}).", reply.status)),
+            Err(e) => Err(format!("{e:#}")),
+        },
+        Forge::GitLab => {
+            let me = client.json("GET", "/user", None).map_err(|e| format!("{} refused the token: {e:#}", account.host_name()))?;
+            // OAuth tokens (the GitLab CLI's web sign-in) can't describe
+            // themselves; they get no scopes listed.
+            let scopes = client
+                .raw_json("GET", "/api/v4/personal_access_tokens/self", None)
+                .map(|t| t.list("scopes").iter().filter_map(|s| s.as_str()).collect::<Vec<_>>().join(", "))
+                .unwrap_or_default();
+            Ok((me, scopes))
+        }
+    }
+}
+
 enum Avatar {
     Loading,
     Ready(Arc<Image>),
@@ -587,9 +662,17 @@ pub struct Hub {
     pub focus: FocusHandle,
     pub client: Option<Client>,
     pub auth: Auth,
+    /// Every account whose token works.
+    pub accounts: Vec<Known>,
+    /// The one showing.
+    current: Option<Account>,
+    /// The others' pages, by [`Account::key`].
+    stash: HashMap<String, Session>,
+    /// Signing in to another account, over the app.
+    pub adding: Option<Adding>,
     pub me: Rc<Value>,
     pub scopes: String,
-    /// Where the token came from, as [`api::discover_tokens`] names it.
+    /// Where the token came from, as [`api::discover_accounts`] names it.
     pub token_source: &'static str,
     /// The walk-through for widening a token that's short of scopes.
     pub scope_fix: Option<crate::scopes::ScopeFix>,
@@ -660,6 +743,10 @@ impl Hub {
             focus,
             client: None,
             auth: Auth::Checking,
+            accounts: Vec::new(),
+            current: None,
+            stash: HashMap::new(),
+            adding: None,
             me: Rc::new(Value::Null),
             scopes: String::new(),
             token_source: "",
@@ -699,42 +786,44 @@ impl Hub {
         hub
     }
 
-    // -- signing in -----------------------------------------------------
+    // -- accounts -------------------------------------------------------
 
-    /// Try every token the machine already has.
+    /// Find every account the machine has a token for, check them all,
+    /// and show the one used last (or, with `VISUALHUB_OPEN`, the one its
+    /// page belongs to).
     fn discover(&mut self, cx: &mut Context<Self>) {
         self.auth = Auth::Checking;
         cx.spawn(async move |this, cx| {
-            let result = cx
+            let checked = cx
                 .background_executor()
                 .spawn(async move {
-                    let mut errors = Vec::new();
-                    for (token, source) in api::discover_tokens() {
-                        let client = Client::new(&token);
-                        match client.send("GET", "/user", None, None) {
-                            Ok(reply) if reply.status == 200 => {
-                                let me: Value =
-                                    serde_json::from_str(&reply.body).unwrap_or(Value::Null);
-                                return Ok((client, me, reply.scopes.unwrap_or_default(), source));
-                            }
-                            Ok(reply) => errors.push(format!(
-                                "The {source} token was refused ({}).",
-                                reply.status
-                            )),
-                            Err(e) => errors.push(format!("{source}: {e:#}")),
-                        }
-                    }
-                    Err(errors.join(" "))
+                    let found = api::discover_accounts();
+                    let results = crate::gitlab::parallel(&found, |(account, _)| check_account(account));
+                    found.into_iter().zip(results).collect::<Vec<_>>()
                 })
                 .await;
             this.update(cx, |hub, cx| {
-                match result {
-                    Ok((client, me, scopes, source)) => hub.signed_in(client, me, scopes, source),
-                    Err(error) => {
-                        hub.auth = Auth::SignedOut {
-                            error: (!error.is_empty()).then_some(error),
-                        }
+                let mut errors = Vec::new();
+                for ((account, source), result) in checked {
+                    match result {
+                        Ok((me, scopes)) => hub.know(Known { account, source, me, scopes }),
+                        Err(error) => errors.push(format!("{source} ({}): {error}", account.host_name())),
                     }
+                }
+                if hub.accounts.is_empty() {
+                    hub.auth = Auth::SignedOut {
+                        error: (!errors.is_empty()).then(|| errors.join(" ")),
+                    };
+                } else {
+                    let open = std::env::var("VISUALHUB_OPEN").unwrap_or_default();
+                    let last = api::last_account();
+                    let index = hub
+                        .accounts
+                        .iter()
+                        .position(|k| !open.is_empty() && open.starts_with(&k.account.web()))
+                        .or_else(|| hub.accounts.iter().position(|k| Some(k.account.key()) == last))
+                        .unwrap_or(0);
+                    hub.switch_to(index, cx);
                 }
                 cx.notify();
             })
@@ -743,40 +832,45 @@ impl Hub {
         .detach();
     }
 
+    /// Add `known`, or update the account it already is.
+    fn know(&mut self, known: Known) {
+        match self.accounts.iter_mut().find(|k| k.account == known.account) {
+            Some(existing) => *existing = known,
+            None => self.accounts.push(known),
+        }
+    }
+
     /// Sign in with a pasted token, keeping it for next time.
-    pub fn sign_in_with(&mut self, token: String, cx: &mut Context<Self>) {
-        let token = token.trim().to_string();
-        if token.is_empty() {
-            self.auth = Auth::SignedOut {
-                error: Some("Paste a personal access token first.".into()),
-            };
+    pub fn sign_in_with(&mut self, forge: Forge, host: String, token: String, cx: &mut Context<Self>) {
+        let account = Account::new(forge, if forge == Forge::GitHub { "github.com" } else { &host }, &token);
+        if account.token.is_empty() {
+            self.sign_in_failed("Paste a personal access token first.".into());
             cx.notify();
             return;
         }
-        self.auth = Auth::Checking;
+        match &mut self.adding {
+            Some(adding) => adding.checking = true,
+            None => self.auth = Auth::Checking,
+        }
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let client = Client::new(&token);
-                    let reply = client.send("GET", "/user", None, None)?;
-                    if reply.status != 200 {
-                        anyhow::bail!("GitHub refused the token ({}).", reply.status);
-                    }
-                    api::save_token(&token)?;
-                    let me: Value = serde_json::from_str(&reply.body)?;
-                    Ok((client, me, reply.scopes.unwrap_or_default()))
+                    let checked = check_account(&account).map_err(anyhow::Error::msg)?;
+                    api::save_account(&account)?;
+                    Ok::<_, anyhow::Error>((account, checked))
                 })
                 .await;
             this.update(cx, |hub, cx| {
                 match result {
-                    Ok((client, me, scopes)) => hub.signed_in(client, me, scopes, "saved sign-in"),
-                    Err(e) => {
-                        hub.auth = Auth::SignedOut {
-                            error: Some(format!("{e:#}")),
+                    Ok((account, (me, scopes))) => {
+                        hub.know(Known { account: account.clone(), source: "saved sign-in", me, scopes });
+                        if let Some(index) = hub.accounts.iter().position(|k| k.account == account) {
+                            hub.switch_to(index, cx);
                         }
                     }
+                    Err(e) => hub.sign_in_failed(format!("{e:#}")),
                 }
                 cx.notify();
             })
@@ -785,47 +879,167 @@ impl Hub {
         .detach();
     }
 
+    fn sign_in_failed(&mut self, error: String) {
+        match &mut self.adding {
+            Some(adding) => {
+                adding.checking = false;
+                adding.error = Some(error);
+            }
+            None => self.auth = Auth::SignedOut { error: Some(error) },
+        }
+    }
+
     pub fn rediscover(&mut self, cx: &mut Context<Self>) {
+        self.adding = None;
         self.discover(cx);
         cx.notify();
     }
 
-    fn signed_in(&mut self, client: Client, me: Value, scopes: String, source: &'static str) {
-        self.refresh_token(client, me, scopes);
-        self.recent = api::load_recent(&self.me.s("login"));
-        self.choices.extend(api::load_merge_methods());
-        self.token_source = source;
-        self.check_scopes();
+    /// Show the sign-in page over the app, to add another account.
+    pub fn add_account(&mut self, cx: &mut Context<Self>) {
+        self.blur_fields();
+        self.menu = None;
+        self.adding = Some(Adding::default());
+        cx.notify();
+    }
+
+    pub fn cancel_adding(&mut self, cx: &mut Context<Self>) {
+        self.adding = None;
+        cx.notify();
+    }
+
+    /// Show `self.accounts[index]`: the current account's pages are put
+    /// away, and the other's come back as they were left.
+    pub fn switch_to(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(known) = self.accounts.get(index).cloned() else { return };
+        let first = self.current.is_none();
+        if let Some(current) = self.current.take() {
+            if current == known.account && matches!(self.auth, Auth::SignedIn) {
+                self.current = Some(current);
+                self.adding = None;
+                cx.notify();
+                return;
+            }
+            let session = self.take_session();
+            self.stash.insert(current.key(), session);
+        }
+        crate::forge::set_current(&known.account);
+        self.client = Some(Client::new(&known.account));
+        self.me = Rc::new(known.me.clone());
+        self.scopes = known.scopes.clone();
+        self.token_source = known.source;
+        // Coming back to an account's pages doesn't ask about its token
+        // again; opening them the first time does.
+        let fresh = match self.stash.remove(&known.account.key()) {
+            Some(session) => {
+                self.put_session(session);
+                false
+            }
+            None => {
+                self.recent = api::load_recent(&known.account, &known.me.s("login"));
+                // VISUALHUB_OPEN=<a page's URL> starts on that page, for
+                // screenshots and for working on one screen.
+                self.route = first
+                    .then(|| std::env::var("VISUALHUB_OPEN").ok())
+                    .flatten()
+                    .and_then(|url| route_for_url(&url))
+                    .unwrap_or(Route::Home);
+                true
+            }
+        };
+        self.current = Some(known.account.clone());
+        if first {
+            self.choices.extend(api::load_merge_methods());
+        }
+        self.modal = None;
+        self.menu = None;
+        self.picker = None;
+        self.scope_fix = None;
+        self.adding = None;
         self.auth = Auth::SignedIn;
-        // VISUALHUB_OPEN=<a github.com URL> starts on that page, for
-        // screenshots and for working on one screen.
-        self.route = std::env::var("VISUALHUB_OPEN")
-            .ok()
-            .and_then(|url| route_for_url(&url))
-            .unwrap_or(Route::Home);
-        self.back.clear();
-        self.forward.clear();
+        if fresh {
+            self.check_scopes();
+        }
+        api::save_last_account(&known.account);
+        cx.notify();
+    }
+
+    /// The account's pages, taken out to keep while another shows.
+    fn take_session(&mut self) -> Session {
+        Session {
+            route: std::mem::replace(&mut self.route, Route::Home),
+            back: std::mem::take(&mut self.back),
+            forward: std::mem::take(&mut self.forward),
+            cache: std::mem::take(&mut self.cache),
+            generation: std::mem::take(&mut self.generation),
+            stale: std::mem::take(&mut self.stale),
+            pages: std::mem::take(&mut self.pages),
+            recent: std::mem::take(&mut self.recent),
+            commit_info: std::mem::take(&mut self.commit_info),
+            conflicts: std::mem::take(&mut self.conflicts),
+        }
+    }
+
+    fn put_session(&mut self, mut session: Session) {
+        // Answers still on their way when it was put away never landed.
+        session.cache.retain(|_, load| !matches!(load, Load::Loading));
+        self.route = session.route;
+        self.back = session.back;
+        self.forward = session.forward;
+        self.cache = session.cache;
+        self.generation = session.generation;
+        self.stale = session.stale;
+        self.pages = session.pages;
+        self.recent = session.recent;
+        self.commit_info = session.commit_info;
+        self.conflicts = session.conflicts;
+        self.scrollers.clear();
+        self.list_scrollers.clear();
+    }
+
+    /// The account showing.
+    pub fn account(&self) -> Option<&Account> {
+        self.current.as_ref()
     }
 
     /// Swap in a token for the same account, dropping what the old one
     /// fetched (some of it was errors the new one can get past).
     pub fn refresh_token(&mut self, client: Client, me: Value, scopes: String) {
+        if let Some(current) = &self.current {
+            if let Some(known) = self.accounts.iter_mut().find(|k| k.account == *current) {
+                known.me = me.clone();
+                known.scopes = scopes.clone();
+            }
+        }
         self.client = Some(client);
         self.me = Rc::new(me);
         self.scopes = scopes;
         self.cache.clear();
     }
 
+    /// Sign out of the account showing; another signed-in account shows
+    /// instead, or the sign-in page.
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
-        api::forget_token();
+        if let Some(account) = self.current.take() {
+            api::forget_account(&account);
+            self.accounts.retain(|k| k.account != account);
+            self.stash.remove(&account.key());
+        }
         self.client = None;
         self.me = Rc::new(Value::Null);
         self.cache.clear();
+        self.generation.clear();
         self.fields.clear();
         self.modal = None;
         self.menu = None;
-        self.auth = Auth::SignedOut { error: None };
-        cx.notify();
+        self.back.clear();
+        self.forward.clear();
+        if self.accounts.is_empty() {
+            self.auth = Auth::SignedOut { error: None };
+            cx.notify();
+        } else {
+            self.switch_to(0, cx);
+        }
     }
 
     pub fn login(&self) -> String {
@@ -883,7 +1097,9 @@ impl Hub {
                 self.recent.retain(|r| r != &repo);
                 self.recent.insert(0, repo);
                 self.recent.truncate(8);
-                api::save_recent(&self.me.s("login"), &self.recent);
+                if let Some(account) = &self.current {
+                    api::save_recent(account, &self.me.s("login"), &self.recent);
+                }
             }
         }
     }
@@ -1550,8 +1766,13 @@ fn sniff(bytes: &[u8]) -> Option<ImageFormat> {
 fn issues_repo(prefix: &str) -> Option<String> {
     let rest = prefix.strip_prefix("/repos/")?;
     let parts: Vec<&str> = rest.split(['/', '?', '#']).collect();
-    match parts.as_slice() {
-        [owner, name] | [owner, name, "issues" | "pulls", ..] if !owner.is_empty() && !name.is_empty() => Some(format!("{owner}/{name}")),
+    // A GitLab project's path is as long as its groups nest.
+    let n = if crate::forge::is_gitlab() { crate::forge::repo_len(&parts) } else { 2 };
+    if n < 2 || parts.len() < n || parts[..n].iter().any(|p| p.is_empty()) {
+        return None;
+    }
+    match parts.get(n) {
+        None | Some(&"issues") | Some(&"pulls") | Some(&"merge_requests") => Some(parts[..n].join("/")),
         _ => None,
     }
 }

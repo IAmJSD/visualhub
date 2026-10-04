@@ -178,6 +178,44 @@ fn protection_form(repo: &str, branch: &str) -> Act {
         .act()
 }
 
+/// GitLab's protection: who may push, who may merge, and force pushes.
+fn gitlab_protection_form(repo: &str, branch: &str) -> Act {
+    let levels = [("40", "Maintainers"), ("30", "Developers and maintainers"), ("0", "No one")];
+    let api = crate::screens::gitlab::project_api(repo);
+    let (branch_s, repo_s) = (branch.to_string(), repo.to_string());
+    FormSpec::new(format!("Protect {branch}"))
+        .submit("Save protection")
+        .note("Replaces any existing protection of this branch.")
+        .field(Field::choice("push", "Allowed to push", &levels))
+        .field(Field::choice("merge", "Allowed to merge", &levels))
+        .field(Field::bool("force", "Allow force pushes", false))
+        .build_with(move |v| {
+            let (api, branch) = (api.clone(), branch_s.clone());
+            let level = |key: &str| v.s(key).parse::<i64>().unwrap_or(40);
+            let body = json!({ "name": branch, "push_access_level": level("push"), "merge_access_level": level("merge"), "allow_force_push": v.b("force") });
+            Ok(Req::custom(move |client| {
+                let _ = client.json("DELETE", &format!("{api}/protected_branches/{}", enc(&branch)), None);
+                client.json("POST", &format!("{api}/protected_branches"), Some(&body))
+            })
+            .ok("Branch protection saved")
+            .inval(format!("/repos/{repo_s}/branches"))
+            .act())
+        })
+        .act()
+}
+
+/// A source archive's address: a branch's (`tag` false) or a tag's.
+fn archive_url(repo: &str, git_ref: &str, format: &str, tag: bool) -> String {
+    let web = crate::forge::web();
+    if crate::forge::is_gitlab() {
+        let name = crate::forge::split_repo(repo).1;
+        let file = format!("{name}-{}", git_ref.replace('/', "-"));
+        format!("{web}/{repo}/-/archive/{git_ref}/{file}.{format}")
+    } else {
+        format!("{web}/{repo}/archive/refs/{}/{git_ref}.{format}", if tag { "tags" } else { "heads" })
+    }
+}
+
 fn fork_form(repo: &str, name: &str) -> Act {
     FormSpec::new(format!("Fork {repo}"))
         .submit("Create fork")
@@ -260,7 +298,14 @@ impl Hub {
     }
 
     pub fn repo(&mut self, repo: &str, tab: RepoTab, cx: &mut Context<Self>) -> AnyElement {
-        let info = ready!(self.fetch(&format!("/repos/{repo}"), cx));
+        let gitlab = crate::forge::is_gitlab();
+        let info = match self.fetch(&format!("/repos/{repo}"), cx) {
+            Load::Ready(info) => info,
+            // GitLab's addresses don't say whether `a/b` is a project or a
+            // subgroup; a group page shows when there's no project.
+            Load::Failed(_) if gitlab && self.fetch(&format!("/orgs/{repo}"), cx).ready().is_some() => return self.gl_group(repo, cx),
+            other => return widgets::placeholder(&other),
+        };
         let header = self.repo_header(repo, &info, cx);
         let admin = info.b("permissions.admin");
         let go = |tab: RepoTab| {
@@ -277,11 +322,22 @@ impl Hub {
         if info.b("has_issues") {
             items.push(TabItem::new("Issues", "issue", tab == RepoTab::Issues, go(RepoTab::Issues)).count(open("openIssues")));
         }
-        items.push(TabItem::new("Pull requests", "pr", tab == RepoTab::Pulls, go(RepoTab::Pulls)).count(open("openPulls")));
+        items.push(TabItem::new(crate::forge::prs_title(), "pr", tab == RepoTab::Pulls, go(RepoTab::Pulls)).count(open("openPulls")));
         if info.b("has_discussions") {
             items.push(TabItem::new("Discussions", "discussion", tab == RepoTab::Discussions, go(RepoTab::Discussions)));
         }
-        items.extend([
+        if gitlab {
+            items.extend([
+                TabItem::new("CI/CD", "play", tab == RepoTab::Actions, go(RepoTab::Actions)),
+                TabItem::new("Releases", "tag", tab == RepoTab::Releases, go(RepoTab::Releases)),
+                TabItem::new("Branches", "branch", tab == RepoTab::Branches, go(RepoTab::Branches)),
+                TabItem::new("Tags", "tag", tab == RepoTab::Tags, go(RepoTab::Tags)),
+                TabItem::new("Commits", "commit", tab == RepoTab::Commits, go(RepoTab::Commits)),
+                TabItem::new("Packages", "package", tab == RepoTab::Packages, go(RepoTab::Packages)),
+                TabItem::new("Insights", "graph", tab == RepoTab::Insights, go(RepoTab::Insights)),
+            ]);
+        } else {
+            items.extend([
             TabItem::new("Actions", "play", tab == RepoTab::Actions, go(RepoTab::Actions)),
             TabItem::new("Projects", "project", tab == RepoTab::Projects, go(RepoTab::Projects)),
             TabItem::new("Releases", "tag", tab == RepoTab::Releases, go(RepoTab::Releases)),
@@ -290,7 +346,8 @@ impl Hub {
             TabItem::new("Commits", "commit", tab == RepoTab::Commits, go(RepoTab::Commits)),
             TabItem::new("Security", "shield", tab == RepoTab::Security, go(RepoTab::Security)),
             TabItem::new("Insights", "graph", tab == RepoTab::Insights, go(RepoTab::Insights)),
-        ]);
+            ]);
+        }
         if admin {
             items.push(TabItem::new("Settings", "settings", tab == RepoTab::Settings, go(RepoTab::Settings)));
         }
@@ -299,6 +356,10 @@ impl Hub {
             RepoTab::Code => self.repo_code(repo, &info, cx),
             RepoTab::Issues => self.repo_issues(repo, cx),
             RepoTab::Pulls => self.repo_pulls(repo, &default_branch, cx),
+            RepoTab::Actions if gitlab => self.gl_ci(repo, &default_branch, cx),
+            RepoTab::Settings if gitlab => self.gl_repo_settings(repo, cx),
+            RepoTab::Packages => self.gl_packages(&crate::screens::gitlab::project_api(repo), cx),
+            RepoTab::Discussions | RepoTab::Projects | RepoTab::Security if gitlab => self.gl_elsewhere(&Route::Repo { repo: repo.to_string(), tab }, "That"),
             RepoTab::Discussions => self.repo_discussions(repo, cx),
             RepoTab::Actions => self.repo_actions(repo, &default_branch, cx),
             RepoTab::Projects => self.repo_projects(repo, cx),
@@ -337,24 +398,27 @@ impl Hub {
             })),
             cx,
         );
+        let gitlab = crate::forge::is_gitlab();
         let watching = match subscription.ready() {
             Some(v) if v.b("ignored") => "Ignoring",
             Some(v) if v.b("subscribed") => "Watching",
             _ => "Watch",
         };
+        // GitLab doesn't count watchers.
+        let watch_label = if gitlab { watching.to_string() } else { format!("{watching} · {}", json::count(info.i("subscribers_count"))) };
         let watch_menu = Act::menu(vec![
             MenuEntry::check(
-                "Participating and @mentions",
+                if gitlab { "Participate" } else { "Participating and @mentions" },
                 watching == "Watch",
                 Req::rest("DELETE", sub_path.clone()).ok("Watching participating only").inval(sub_path.clone()).act(),
             ),
             MenuEntry::check(
-                "All activity",
+                if gitlab { "Watch" } else { "All activity" },
                 watching == "Watching",
                 Req::rest("PUT", sub_path.clone()).body(json!({ "subscribed": true })).ok("Watching all activity").inval(sub_path.clone()).act(),
             ),
             MenuEntry::check(
-                "Ignore",
+                if gitlab { "Disabled" } else { "Ignore" },
                 watching == "Ignoring",
                 Req::rest("PUT", sub_path.clone()).body(json!({ "ignored": true })).ok("Ignoring this repository").inval(sub_path.clone()).act(),
             ),
@@ -367,29 +431,35 @@ impl Hub {
         let name = info.s("name");
         let https = info.s("clone_url");
         let ssh = info.s("ssh_url");
-        let clone = Act::menu(vec![
+        let mut clone = vec![
             MenuEntry::Header("Clone".into()),
             MenuEntry::item(format!("Copy HTTPS  {https}"), Act::Copy(https.clone())),
             MenuEntry::item(format!("Copy SSH  {ssh}"), Act::Copy(ssh)),
-            MenuEntry::item(format!("Copy  gh repo clone {repo}"), Act::Copy(format!("gh repo clone {repo}"))),
+            MenuEntry::item(format!("Copy  {0} repo clone {repo}", crate::forge::cli()), Act::Copy(format!("{} repo clone {repo}", crate::forge::cli()))),
             MenuEntry::Sep,
-            MenuEntry::item("Open with GitHub Desktop", Act::Url(format!("x-github-client://openRepo/{}", info.s("html_url")))),
+        ];
+        if !gitlab {
+            clone.push(MenuEntry::item("Open with GitHub Desktop", Act::Url(format!("x-github-client://openRepo/{}", info.s("html_url")))));
+        }
+        clone.extend([
             MenuEntry::item("Open with Visual Studio Code", Act::Url(format!("vscode://vscode.git/clone?url={}", enc(&https)))),
-            MenuEntry::item(
-                "Download ZIP",
-                Act::Url(format!("{}/archive/refs/heads/{}.zip", info.s("html_url"), info.s("default_branch"))),
-            ),
-            MenuEntry::Sep,
-            MenuEntry::item(
-                "Create a codespace",
-                Req::rest("POST", format!("/repos/{repo}/codespaces"))
-                    .body(json!({ "ref": info.s("default_branch") }))
-                    .ok("Codespace is being created")
-                    .inval("/user/codespaces")
-                    .then(|_, value, cx| cx.open_url(&value.s("web_url")))
-                    .act(),
-            ),
+            MenuEntry::item("Download ZIP", Act::Url(archive_url(repo, &info.s("default_branch"), "zip", false))),
         ]);
+        if !gitlab {
+            clone.extend([
+                MenuEntry::Sep,
+                MenuEntry::item(
+                    "Create a codespace",
+                    Req::rest("POST", format!("/repos/{repo}/codespaces"))
+                        .body(json!({ "ref": info.s("default_branch") }))
+                        .ok("Codespace is being created")
+                        .inval("/user/codespaces")
+                        .then(|_, value, cx| cx.open_url(&value.s("web_url")))
+                        .act(),
+                ),
+            ]);
+        }
+        let clone = Act::menu(clone);
         let owner = info.s("owner.login");
         let owner_route = if info.s("owner.type") == "Organization" {
             Route::Org { login: owner.clone() }
@@ -442,7 +512,7 @@ impl Hub {
                     .when(info.b("is_template"), |d| d.child(widgets::tag("Template", p.text_dim)))
                     .child(widgets::spacer())
                     .when(info.b("is_template"), |d| d.child(widgets::go_btn("use-template", "Use this template", template_form(repo))))
-                    .child(widgets::ibtn("watch", "eye", format!("{watching} · {}", json::count(info.i("subscribers_count"))), watch_menu))
+                    .child(widgets::ibtn("watch", "eye", watch_label, watch_menu))
                     .child(widgets::ibtn("fork", "fork", format!("Fork · {}", json::count(info.i("forks_count"))), fork_form(repo, &name)))
                     .child(widgets::ibtn(
                         "star",
@@ -737,12 +807,15 @@ impl Hub {
                         format!("{} stars", json::count(info.i("stargazers_count"))),
                         Act::choose(format!("insights.view:{repo_s}"), "stargazers").then_go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Insights }),
                     ))
-                    .child(stat(
-                        "watchers",
-                        "eye",
-                        format!("{} watching", json::count(info.i("subscribers_count"))),
-                        Act::choose(format!("insights.view:{repo_s}"), "watchers").then_go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Insights }),
-                    ))
+                    // GitLab doesn't count watchers.
+                    .when(!crate::forge::is_gitlab(), |d| {
+                        d.child(stat(
+                            "watchers",
+                            "eye",
+                            format!("{} watching", json::count(info.i("subscribers_count"))),
+                            Act::choose(format!("insights.view:{repo_s}"), "watchers").then_go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Insights }),
+                        ))
+                    })
                     .child(stat(
                         "forks",
                         "fork",
@@ -845,7 +918,7 @@ impl Hub {
             }
             if !is_default {
                 row = row
-                    .action("New pull request", super::pulls::new_pull_form(&repo_s, &default_branch, &name))
+                    .action(format!("New {}", crate::forge::pr()), super::pulls::new_pull_form(&repo_s, &default_branch, &name))
                     .action(
                         "Compare",
                         Act::Go(Route::Compare {
@@ -876,7 +949,10 @@ impl Hub {
                     .act(),
             );
             if admin {
-                row = row.action("Protection rules…", protection_form(&repo_s, &name));
+                row = row.action(
+                    "Protection rules…",
+                    if crate::forge::is_gitlab() { gitlab_protection_form(&repo_s, &name) } else { protection_form(&repo_s, &name) },
+                );
                 if protected {
                     row = row.action(
                         "Remove protection",
@@ -895,7 +971,7 @@ impl Hub {
                         .ok(format!("Deleted {name}"))
                         .inval(inval)
                         .act()
-                        .confirm("Delete branch?", format!("{name} will be deleted. Open pull requests from it will be closed."), "Delete"),
+                        .confirm("Delete branch?", format!("{name} will be deleted. Open {} from it will be closed.", crate::forge::prs()), "Delete"),
                 );
             }
             row
@@ -927,8 +1003,8 @@ impl Hub {
                     "Create release",
                     super::releases::release_form(&repo_s, None, &name),
                 )
-                .action("Download ZIP", Act::Url(format!("{}/{repo_s}/archive/refs/tags/{name}.zip", crate::api::WEB)))
-                .action("Download tar.gz", Act::Url(format!("{}/{repo_s}/archive/refs/tags/{name}.tar.gz", crate::api::WEB)))
+                .action("Download ZIP", Act::Url(archive_url(&repo_s, &name, "zip", true)))
+                .action("Download tar.gz", Act::Url(archive_url(&repo_s, &name, "tar.gz", true)))
                 .action("Commit", Act::Go(Route::Commit { repo: repo_s.clone(), sha }))
                 .danger(
                     "Delete tag",
@@ -1044,7 +1120,23 @@ impl Hub {
         let lower = path.to_lowercase();
         let is_image = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"].iter().any(|e| lower.ends_with(e));
         let is_markdown = lower.ends_with(".md") || lower.ends_with(".markdown");
-        let raw_url = format!("https://raw.githubusercontent.com/{repo}/{git_ref}/{path}");
+        let gitlab = crate::forge::is_gitlab();
+        let raw_url = if gitlab {
+            format!("{}/{repo}/-/raw/{git_ref}/{path}", crate::forge::web())
+        } else {
+            format!("https://raw.githubusercontent.com/{repo}/{git_ref}/{path}")
+        };
+        // GitLab's API serves a private project's file to the token too.
+        let image_url = if gitlab {
+            format!("{}{}/repository/files/{}/raw?ref={}", crate::forge::web(), crate::screens::gitlab::project_api(repo), enc(path), enc(git_ref))
+        } else {
+            raw_url.clone()
+        };
+        let blame_url = if gitlab {
+            format!("{}/{repo}/-/blame/{git_ref}/{path}", crate::forge::web())
+        } else {
+            format!("{}/{repo}/blame/{git_ref}/{path}", crate::forge::web())
+        };
         let history = Act::run({
             let (repo, path) = (repo.to_string(), path.to_string());
             move |hub, _, cx| {
@@ -1071,7 +1163,7 @@ impl Hub {
         }
 
         let body: AnyElement = if is_image {
-            let image = self.image(&raw_url, cx);
+            let image = self.image(&image_url, cx);
             div().p_4().flex().justify_center().child(image).into_any_element()
         } else {
             let text = match self.fetch_text(&api, "application/vnd.github.raw", cx) {
@@ -1094,7 +1186,7 @@ impl Hub {
         }
         toolbar = toolbar
             .child(widgets::btn("raw", "Raw", Act::Url(raw_url.clone())))
-            .child(widgets::btn("blame", "Blame", Act::Url(format!("{}/{repo}/blame/{git_ref}/{path}", crate::api::WEB))))
+            .child(widgets::btn("blame", "Blame", Act::Url(blame_url)))
             .child(widgets::ibtn("file-history", "history", "History", history));
         div()
             .flex()

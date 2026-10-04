@@ -15,12 +15,18 @@ impl Hub {
         let tab = self.choice("repos.tab", "yours");
         let kind = self.choice("repos.kind", "all");
         let sort = self.choice("repos.sort", "pushed");
-        let tabs = widgets::chips(vec![
-            ("Your repositories".into(), tab == "yours", Act::choose("repos.tab", "yours")),
+        let gitlab = crate::forge::is_gitlab();
+        let title = crate::forge::repos_title();
+        let mut tabs = vec![
+            (format!("Your {}", title.to_lowercase()), tab == "yours", Act::choose("repos.tab", "yours")),
             ("Stars".into(), tab == "starred", Act::choose("repos.tab", "starred")),
-            ("Watching".into(), tab == "watching", Act::choose("repos.tab", "watching")),
-            ("Invitations".into(), tab == "invites", Act::choose("repos.tab", "invites")),
-        ]);
+        ];
+        // GitLab lists neither what you watch nor invitations to accept.
+        if !gitlab {
+            tabs.push(("Watching".into(), tab == "watching", Act::choose("repos.tab", "watching")));
+            tabs.push(("Invitations".into(), tab == "invites", Act::choose("repos.tab", "invites")));
+        }
+        let tabs = widgets::chips(tabs);
         let body = match tab.as_str() {
             "starred" => {
                 let spec = ListSpec::new(format!("/user/starred?sort={}", if sort == "pushed" { "updated" } else { "created" }), |r| {
@@ -74,13 +80,17 @@ impl Hub {
             }
         };
         let sorts = [("pushed", "Last pushed"), ("updated", "Last updated"), ("created", "Newest"), ("full_name", "Name")];
-        let kinds = [("all", "All"), ("owner", "Owned by you"), ("public", "Public"), ("private", "Private"), ("member", "Member")];
+        let kinds: &[(&str, &str)] = if gitlab {
+            &[("all", "All"), ("owner", "Owned by you"), ("public", "Public"), ("internal", "Internal"), ("private", "Private")]
+        } else {
+            &[("all", "All"), ("owner", "Owned by you"), ("public", "Public"), ("private", "Private"), ("member", "Member")]
+        };
         widgets::page()
             .child(
                 widgets::row()
-                    .child(widgets::title("Repositories"))
+                    .child(widgets::title(title))
                     .child(widgets::spacer())
-                    .child(widgets::go_btn("new-repo", "New repository", Act::Go(Route::NewRepo { owner: None }))),
+                    .child(widgets::go_btn("new-repo", if gitlab { "New project" } else { "New repository" }, Act::Go(Route::NewRepo { owner: None }))),
             )
             .child(
                 widgets::row()

@@ -260,6 +260,9 @@ impl Hub {
     }
 
     pub fn run(&mut self, repo: &str, id: u64, cx: &mut Context<Self>) -> AnyElement {
+        if crate::forge::is_gitlab() {
+            return self.gl_pipeline(repo, id, cx);
+        }
         let p = palette();
         let base = format!("/repos/{repo}/actions/runs/{id}");
         let run = ready!(self.fetch(&base, cx));

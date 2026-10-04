@@ -1,6 +1,7 @@
 //! The window's frame: the sidebar, the top bar, the page, and what floats
 //! over them (menus, dialogs, toasts). Also the sign-in screen.
 
+use crate::forge::{self, Forge};
 use crate::hub::{on, Act, Auth, Hub, MenuEntry, Route};
 use crate::json::Json as _;
 use crate::widgets::{self, rgb};
@@ -26,7 +27,7 @@ impl Render for Hub {
         self.submits.clear();
 
         let body: AnyElement = match &self.auth {
-            Auth::SignedIn => {
+            Auth::SignedIn if self.adding.is_none() => {
                 window.set_window_title(&format!("{} · VisualHub", self.route.title()));
                 div()
                     .flex()
@@ -153,25 +154,38 @@ impl Hub {
 
     fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = palette();
-        let unread = self
-            .fetch("/notifications?per_page=50", cx)
-            .ready()
-            .map(|v| v.list("").len() as i64);
+        let gitlab = forge::is_gitlab();
+        // GitLab's inbox is its to-do list.
+        let inbox = if gitlab { "/api/v4/todos?state=pending&per_page=50" } else { "/notifications?per_page=50" };
+        let unread = self.fetch(inbox, cx).ready().map(|v| v.list("").len() as i64);
         let route = self.route.clone();
         let is = |r: &Route| std::mem::discriminant(r) == std::mem::discriminant(&route);
-        let items: Vec<(&str, &str, Route, Option<i64>)> = vec![
-            ("Home", "home", Route::Home, None),
-            ("Notifications", "bell", Route::Notifications, unread),
-            ("Repositories", "repo", Route::Repos, None),
-            ("Pull requests", "pr", Route::Pulls, None),
-            ("Issues", "issue", Route::Issues, None),
-            ("Projects", "project", Route::Projects, None),
-            ("Gists", "gist", Route::Gists, None),
-            ("Codespaces", "codespace", Route::Codespaces, None),
-            ("Packages", "package", Route::Packages, None),
-            ("Search", "search", Route::Search, None),
-            ("Settings", "settings", Route::Settings, None),
-        ];
+        let items: Vec<(&str, &str, Route, Option<i64>)> = if gitlab {
+            vec![
+                ("Home", "home", Route::Home, None),
+                ("To-Do List", "bell", Route::Notifications, unread),
+                ("Projects", "repo", Route::Repos, None),
+                ("Merge requests", "pr", Route::Pulls, None),
+                ("Issues", "issue", Route::Issues, None),
+                ("Snippets", "gist", Route::Gists, None),
+                ("Search", "search", Route::Search, None),
+                ("Settings", "settings", Route::Settings, None),
+            ]
+        } else {
+            vec![
+                ("Home", "home", Route::Home, None),
+                ("Notifications", "bell", Route::Notifications, unread),
+                ("Repositories", "repo", Route::Repos, None),
+                ("Pull requests", "pr", Route::Pulls, None),
+                ("Issues", "issue", Route::Issues, None),
+                ("Projects", "project", Route::Projects, None),
+                ("Gists", "gist", Route::Gists, None),
+                ("Codespaces", "codespace", Route::Codespaces, None),
+                ("Packages", "package", Route::Packages, None),
+                ("Search", "search", Route::Search, None),
+                ("Settings", "settings", Route::Settings, None),
+            ]
+        };
         let mut nav = div().flex().flex_col().gap(px(2.0)).px_2();
         for (i, (label, icon_name, target, count)) in items.into_iter().enumerate() {
             let selected = is(&target);
@@ -223,6 +237,8 @@ impl Hub {
         let me = self.me.clone();
         let avatar = self.avatar(&me.s("avatar_url"), 28.0, cx);
         let login = me.s("login");
+        let switcher = self.accounts_menu();
+        let detail = if self.accounts.len() > 1 || gitlab { forge::host() } else { me.s("name") };
         div()
             .id("sidebar")
             .flex()
@@ -247,14 +263,13 @@ impl Hub {
                     .h(px(52.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(p.hover)))
-                    .on_click(on(Act::Go(Route::User {
-                        login: login.clone(),
-                    })))
+                    .on_click(on(switcher))
                     .child(avatar)
                     .child(
                         div()
                             .flex()
                             .flex_col()
+                            .flex_1()
                             .min_w_0()
                             .child(
                                 div()
@@ -262,8 +277,9 @@ impl Hub {
                                     .text_ellipsis()
                                     .child(login.clone()),
                             )
-                            .child(widgets::faint(me.s("name"))),
-                    ),
+                            .child(widgets::faint(detail)),
+                    )
+                    .child(icon("chevron-down", 14.0, p.text_dim)),
             )
             .child(div().h(px(1.0)).bg(rgb(p.divider)).mb_2())
             .child(nav)
@@ -271,7 +287,7 @@ impl Hub {
                 d.child(section_label("Recent"))
                     .child(recent)
             })
-            .child(section_label("Organizations"))
+            .child(section_label(forge::orgs_title()))
             .child(orgs)
             .child(div().h(px(16.0)))
             .into_any_element()
@@ -349,7 +365,7 @@ impl Hub {
                 IconButton::new("web", "external")
                     .size(28.0)
                     .icon_size(16.0)
-                    .tooltip("Open this page on github.com", None)
+                    .tooltip(format!("Open this page on {}", forge::host()), None)
                     .on_click(on(Act::Url(route.web_url()))),
             )
             .child(
@@ -366,14 +382,15 @@ impl Hub {
                                 login: login.clone(),
                             }),
                         ),
-                        MenuEntry::item("Your repositories", Act::Go(Route::Repos)),
+                        MenuEntry::item(format!("Your {}", forge::repos_title().to_lowercase()), Act::Go(Route::Repos)),
                         MenuEntry::item("Your stars", Act::run(|hub, _, cx| {
                             hub.choices.insert("repos.tab".into(), "starred".into());
                             hub.go(Route::Repos, cx);
                         })),
-                        MenuEntry::item("Your gists", Act::Go(Route::Gists)),
+                        MenuEntry::item(format!("Your {}", forge::gists_title().to_lowercase()), Act::Go(Route::Gists)),
                         MenuEntry::item("Settings", Act::Go(Route::Settings)),
                         MenuEntry::Sep,
+                        MenuEntry::item("Add account…", Act::run(|hub, _, cx| hub.add_account(cx))),
                         MenuEntry::item("Sign out", Act::run(|hub, _, cx| hub.sign_out(cx))),
                     ]))),
             )
@@ -392,7 +409,7 @@ impl Hub {
             .overflow_hidden()
             .text_size(px(14.0));
         if let Some(repo) = self.route.repo() {
-            let (owner, name) = repo.split_once('/').unwrap_or((repo, ""));
+            let (owner, name) = forge::split_repo(repo);
             el = el
                 .child(
                     div()
@@ -430,24 +447,28 @@ impl Hub {
 
     /// The "+" menu: what can be made from here.
     fn new_menu(&self) -> Act {
-        let mut entries = vec![
-            MenuEntry::item("New repository", Act::Go(Route::NewRepo { owner: None })),
-            MenuEntry::item("New gist", Act::Go(Route::NewGist)),
-            MenuEntry::item(
-                "Import repository",
-                Act::Url(format!("{}/new/import", crate::api::WEB)),
-            ),
-            MenuEntry::item(
-                "New organization",
-                Act::Url(format!("{}/account/organizations/new", crate::api::WEB)),
-            ),
-        ];
+        let web = forge::web();
+        let mut entries = if forge::is_gitlab() {
+            vec![
+                MenuEntry::item("New project", Act::Go(Route::NewRepo { owner: None })),
+                MenuEntry::item("New snippet", Act::Go(Route::NewGist)),
+                MenuEntry::item("Import project", Act::Url(format!("{web}/projects/new#import_project"))),
+                MenuEntry::item("New group", Act::Url(format!("{web}/groups/new"))),
+            ]
+        } else {
+            vec![
+                MenuEntry::item("New repository", Act::Go(Route::NewRepo { owner: None })),
+                MenuEntry::item("New gist", Act::Go(Route::NewGist)),
+                MenuEntry::item("Import repository", Act::Url(format!("{web}/new/import"))),
+                MenuEntry::item("New organization", Act::Url(format!("{web}/account/organizations/new"))),
+            ]
+        };
         if let Some(repo) = self.route.repo() {
             entries.insert(0, MenuEntry::Sep);
             entries.insert(
                 0,
                 MenuEntry::item(
-                    "New pull request",
+                    format!("New {}", forge::pr()),
                     crate::screens::pulls::new_pull_form(repo, "", ""),
                 ),
             );
@@ -458,7 +479,8 @@ impl Hub {
     }
 
     /// The jump box: `owner/repo`, `owner/repo#12`, `#12` in the current
-    /// repository, `@user`, a github.com URL, or a search.
+    /// repository, `@user`, a link into the forge, or a search. On GitLab a
+    /// project may nest (`group/sub/project`) and `!12` is a merge request.
     pub fn jump(&mut self, text: &str, cx: &mut Context<Self>) {
         let text = text.trim();
         if text.is_empty() {
@@ -474,10 +496,26 @@ impl Hub {
             return;
         }
         let number = |s: &str| s.parse::<u64>().ok();
+        let gitlab = forge::is_gitlab();
         if let Some(n) = text.strip_prefix('#').and_then(number) {
             if let Some(repo) = self.route.repo().map(str::to_string) {
                 self.go(Route::Issue { repo, number: n }, cx);
                 return;
+            }
+        }
+        if gitlab {
+            let pull = |repo: String, n: u64| Route::Pull { repo, number: n, tab: crate::hub::PullTab::Conversation };
+            if let Some(n) = text.strip_prefix('!').and_then(number) {
+                if let Some(repo) = self.route.repo().map(str::to_string) {
+                    self.go(pull(repo, n), cx);
+                    return;
+                }
+            }
+            if let Some((repo, n)) = text.split_once('!') {
+                if let (true, Some(n)) = (repo.contains('/'), number(n)) {
+                    self.go(pull(repo.to_string(), n), cx);
+                    return;
+                }
             }
         }
         if let Some((repo, n)) = text.split_once('#') {
@@ -491,8 +529,9 @@ impl Hub {
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
                 && !s.is_empty()
         };
+        let nested = gitlab && text.split('/').all(is_slug);
         if let Some((owner, name)) = text.split_once('/') {
-            if is_slug(owner) && is_slug(name) {
+            if nested || (is_slug(owner) && is_slug(name)) {
                 self.go(
                     Route::Repo {
                         repo: text.to_string(),
@@ -518,7 +557,14 @@ impl Hub {
 
     fn page_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let route = self.route.clone();
+        let gitlab = forge::is_gitlab();
         let content = match &route {
+            Route::Job { repo, id } => self.gl_job(repo, *id, cx),
+            Route::Conflicts { .. } if gitlab => self.gl_elsewhere(&route, "An editor for merge conflicts here"),
+            Route::Discussion { .. } if gitlab => self.gl_elsewhere(&route, "Discussions"),
+            Route::Projects | Route::Project { .. } if gitlab => self.gl_elsewhere(&route, "GitHub-style projects"),
+            Route::Codespaces if gitlab => self.gl_elsewhere(&route, "Codespaces"),
+            Route::Packages if gitlab => self.gl_elsewhere(&route, "A packages page of your own (projects and groups have theirs)"),
             Route::Home => self.home(cx),
             Route::Notifications => self.notifications(cx),
             Route::Repos => self.repos(cx),
@@ -664,21 +710,69 @@ impl Hub {
 
     // -- signing in -----------------------------------------------------
 
+    /// The accounts menu: each account to switch to, adding another, and
+    /// signing out of this one.
+    fn accounts_menu(&self) -> Act {
+        let login = self.login();
+        let mut entries = vec![MenuEntry::Header("Accounts".into())];
+        for (i, known) in self.accounts.iter().enumerate() {
+            let here = self.account() == Some(&known.account);
+            entries.push(MenuEntry::check(
+                format!("{}  ·  {}", known.me.s("login"), known.account.host_name()),
+                here,
+                Act::run(move |hub, _, cx| hub.switch_to(i, cx)),
+            ));
+        }
+        entries.extend([
+            MenuEntry::item("Add account…", Act::run(|hub, _, cx| hub.add_account(cx))),
+            MenuEntry::Sep,
+            MenuEntry::item("Your profile", Act::Go(Route::User { login: login.clone() })),
+            MenuEntry::item(
+                format!("Sign out of {login} on {}", forge::host()),
+                Act::run(|hub, _, cx| hub.sign_out(cx)),
+            ),
+        ]);
+        Act::menu(entries)
+    }
+
     fn sign_in_screen(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = palette();
-        let checking = matches!(self.auth, Auth::Checking);
-        let error = match &self.auth {
-            Auth::SignedOut { error } => error.clone(),
-            _ => None,
+        let (checking, error) = match (&self.adding, &self.auth) {
+            (Some(adding), _) => (adding.checking, adding.error.clone()),
+            (None, Auth::Checking) => (true, None),
+            (None, Auth::SignedOut { error }) => (false, error.clone()),
+            (None, Auth::SignedIn) => (false, None),
         };
-        self.submits.insert(
-            "token".into(),
-            Act::run(|hub, _, cx| {
-                let token = hub.field_text("token");
-                hub.sign_in_with(token, cx);
-            }),
-        );
-        let token_url = crate::scopes::new_token_url();
+        let adding = self.adding.is_some();
+        let gitlab = self.choice("signin.forge", "github") == "gitlab";
+        let host = {
+            let typed = self.field_text("signin.host");
+            forge::normalize_host(if typed.trim().is_empty() { "gitlab.com" } else { &typed })
+        };
+        let sign_in = Act::run(move |hub, _, cx| {
+            let token = hub.field_text("token");
+            let host = hub.field_text("signin.host");
+            let forge = if gitlab { Forge::GitLab } else { Forge::GitHub };
+            hub.sign_in_with(forge, host, token, cx);
+        });
+        self.submits.insert("token".into(), sign_in.clone());
+        self.submits.insert("signin.host".into(), sign_in.clone());
+        let (token_url, token_hint, picked_up, forge_name) = if gitlab {
+            let site = forge::Account::new(Forge::GitLab, &host, "").web();
+            (
+                format!("{site}/-/user_settings/personal_access_tokens?name=VisualHub&scopes=api,read_user,read_repository,write_repository"),
+                "glpat-…",
+                "VisualHub also picks up GITLAB_TOKEN (for GITLAB_HOST) and the GitLab CLI's logins automatically.",
+                "GitLab",
+            )
+        } else {
+            (
+                crate::scopes::new_token_url(),
+                "ghp_… or github_pat_…",
+                "VisualHub also picks up GH_TOKEN, GITHUB_TOKEN and the GitHub CLI's login automatically.",
+                "GitHub",
+            )
+        };
         let mut card = widgets::card()
             .w(px(480.0))
             .p_6()
@@ -688,8 +782,8 @@ impl Hub {
                 div()
                     .flex()
                     .flex_col()
-                    .child(widgets::title("VisualHub"))
-                    .child(widgets::dim("A native GitHub client")),
+                    .child(widgets::title(if adding { "Add an account" } else { "VisualHub" }))
+                    .child(widgets::dim("A native GitHub and GitLab client")),
             );
         if checking {
             card = card.child(
@@ -702,14 +796,25 @@ impl Hub {
                     .child("Signing in…"),
             );
         } else {
-            let input = self
-                .secret_input("token", "ghp_… or github_pat_…", cx)
-                .w_full();
+            let input = self.secret_input("token", token_hint, cx).w_full();
+            let host_input = self.input("signin.host", "gitlab.com", cx).w_full();
             card = card
-                .child(div().child(
-                    "Sign in with a personal access token. VisualHub also picks up \
-                     GH_TOKEN, GITHUB_TOKEN and the GitHub CLI's login automatically.",
-                ))
+                .child(widgets::chips(vec![
+                    ("GitHub".into(), !gitlab, Act::choose("signin.forge", "github")),
+                    ("GitLab".into(), gitlab, Act::choose("signin.forge", "gitlab")),
+                ]))
+                .child(div().child(format!("Sign in with a personal access token. {picked_up}")))
+                .when(gitlab, |c| {
+                    c.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(widgets::h3("Instance"))
+                            .child(host_input)
+                            .child(widgets::faint("gitlab.com, or your own GitLab's address.")),
+                    )
+                })
                 .child(
                     div()
                         .flex()
@@ -725,31 +830,40 @@ impl Hub {
                     div()
                         .flex()
                         .flex_row()
+                        .flex_wrap()
                         .gap_2()
                         .child(
                             Button::new("sign-in", "Sign in")
                                 .primary()
                                 .h(px(30.0))
                                 .px_4()
-                                .on_click(cx.listener(|hub, _, _, cx| {
-                                    let token = hub.field_text("token");
-                                    hub.sign_in_with(token, cx);
-                                })),
+                                .on_click(on(sign_in)),
                         )
-                        .child(widgets::btn("make-token", "Create a token on GitHub", Act::Url(token_url)))
-                        .child(
-                            Button::new("retry", "Detect again")
-                                .ghost()
-                                .h(px(30.0))
-                                .on_click(cx.listener(|hub, _, _, cx| {
-                                    hub.rediscover(cx);
-                                })),
-                        ),
+                        .child(widgets::btn("make-token", format!("Create a token on {forge_name}"), Act::Url(token_url)))
+                        .when(!adding, |d| {
+                            d.child(
+                                Button::new("retry", "Detect again")
+                                    .ghost()
+                                    .h(px(30.0))
+                                    .on_click(cx.listener(|hub, _, _, cx| {
+                                        hub.rediscover(cx);
+                                    })),
+                            )
+                        })
+                        .when(adding, |d| {
+                            d.child(
+                                Button::new("cancel-add", "Cancel")
+                                    .ghost()
+                                    .h(px(30.0))
+                                    .on_click(cx.listener(|hub, _, _, cx| hub.cancel_adding(cx))),
+                            )
+                        }),
                 )
-                .child(widgets::faint(
+                .child(widgets::faint(format!(
                     "The token is stored in your user configuration folder and never \
-                     leaves this machine except to talk to api.github.com.",
-                ));
+                     leaves this machine except to talk to {}.",
+                    if gitlab { host.trim_start_matches("http://").to_string() } else { "api.github.com".to_string() }
+                )));
         }
         div()
             .size_full()

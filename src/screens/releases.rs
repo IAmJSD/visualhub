@@ -25,10 +25,15 @@ pub fn release_form(repo: &str, existing: Option<&Value>, tag: &str) -> Act {
         .field(Field::text("target_commitish", "Target").value(v.s("target_commitish")).hint("Branch or commit for a new tag. Empty: the default branch."))
         .field(Field::text("name", "Release title").value(v.s("name")))
         .field(Field::multiline("body", "Release notes").value(v.s("body")).keep_empty())
-        .field(Field::bool("draft", "Save as draft", v.b("draft")))
-        .field(Field::bool("prerelease", "Set as a pre-release", v.b("prerelease")))
-        .field(Field::choice("make_latest", "Mark as latest", &[("true", "Yes"), ("false", "No"), ("legacy", "By date")]));
-    if !editing {
+;
+    // GitLab releases have no drafts, pre-releases or "latest" to choose.
+    if !crate::forge::is_gitlab() {
+        form = form
+            .field(Field::bool("draft", "Save as draft", v.b("draft")))
+            .field(Field::bool("prerelease", "Set as a pre-release", v.b("prerelease")))
+            .field(Field::choice("make_latest", "Mark as latest", &[("true", "Yes"), ("false", "No"), ("legacy", "By date")]));
+    }
+    if !editing && !crate::forge::is_gitlab() {
         form = form.field(Field::bool("generate_release_notes", "Generate release notes from pull requests", true));
     }
     let (method, path) = if editing {
@@ -136,7 +141,16 @@ impl Hub {
         let assets = self.list(&assets, cx);
         let repo_back = repo.to_string();
         let tag = r.s("tag_name");
-        let web = crate::api::WEB;
+        let gitlab = crate::forge::is_gitlab();
+        let archive = |format: &str| {
+            let web = crate::forge::web();
+            if gitlab {
+                let name = crate::forge::split_repo(repo).1;
+                format!("{web}/{repo}/-/archive/{tag}/{name}-{tag}.{format}")
+            } else {
+                format!("{web}/{repo}/archive/refs/tags/{tag}.{format}")
+            }
+        };
         widgets::page()
             .child(
                 widgets::row()
@@ -176,13 +190,13 @@ impl Hub {
                     .child(widgets::dim(format!("target {}", r.s("target_commitish")))),
             )
             .child(widgets::card().p_6().child(notes))
-            .child(reactions_bar("release", r.at("reactions"), &format!("{path}/reactions"), &me, &path))
+            .when(!gitlab, |d| d.child(reactions_bar("release", r.at("reactions"), &format!("{path}/reactions"), &me, &path)))
             .child(widgets::h2("Assets"))
             .child(assets)
             .child(
                 widgets::row()
-                    .child(widgets::btn("zip", "Source code (zip)", Act::Url(format!("{web}/{repo}/archive/refs/tags/{tag}.zip"))))
-                    .child(widgets::btn("tar", "Source code (tar.gz)", Act::Url(format!("{web}/{repo}/archive/refs/tags/{tag}.tar.gz"))))
+                    .child(widgets::btn("zip", "Source code (zip)", Act::Url(archive("zip"))))
+                    .child(widgets::btn("tar", "Source code (tar.gz)", Act::Url(archive("tar.gz"))))
                     .child(widgets::btn(
                         "release-tree",
                         "Browse files at this tag",

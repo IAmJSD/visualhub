@@ -39,15 +39,19 @@ impl Hub {
             "public" => "/gists/public",
             _ => "/gists",
         };
-        let spec = ListSpec::new(path, gist_row).empty("No gists.");
+        let gitlab = crate::forge::is_gitlab();
+        let spec = ListSpec::new(path, gist_row).empty(if gitlab { "No snippets." } else { "No gists." });
         let list = self.list(&spec, cx);
+        let title = crate::forge::gists_title();
+        let mut tabs = vec![(format!("Your {}", title.to_lowercase()), tab == "mine", Act::choose("gists.tab", "mine"))];
+        // GitLab's snippets have no stars.
+        if !gitlab {
+            tabs.push(("Starred".into(), tab == "starred", Act::choose("gists.tab", "starred")));
+        }
+        tabs.push((if gitlab { "Explore".into() } else { "Discover".into() }, tab == "public", Act::choose("gists.tab", "public")));
         widgets::page()
-            .child(widgets::row().child(widgets::title("Gists")).child(widgets::spacer()).child(widgets::go_btn("new-gist", "New gist", Act::Go(Route::NewGist))))
-            .child(widgets::chips(vec![
-                ("Your gists".into(), tab == "mine", Act::choose("gists.tab", "mine")),
-                ("Starred".into(), tab == "starred", Act::choose("gists.tab", "starred")),
-                ("Discover".into(), tab == "public", Act::choose("gists.tab", "public")),
-            ]))
+            .child(widgets::row().child(widgets::title(title)).child(widgets::spacer()).child(widgets::go_btn("new-gist", if gitlab { "New snippet" } else { "New gist" }, Act::Go(Route::NewGist))))
+            .child(widgets::chips(tabs))
             .child(list)
             .into_any_element()
     }
@@ -57,7 +61,9 @@ impl Hub {
         let path = format!("/gists/{id}");
         let g = ready!(self.fetch(&path, cx));
         let mine = g.s("owner.login") == self.login();
-        let starred = self.fetch_check(&format!("/gists/{id}/star"), cx).ready().map(|v| v.b("")).unwrap_or(false);
+        // Personal snippets on GitLab have no stars, forks or comments.
+        let gitlab = crate::forge::is_gitlab();
+        let starred = !gitlab && self.fetch_check(&format!("/gists/{id}/star"), cx).ready().map(|v| v.b("")).unwrap_or(false);
         let avatar = self.avatar(&g.s("owner.avatar_url"), 24.0, cx);
         let mut files = widgets::col().gap_3();
         if let Value::Object(map) = g.at("files") {
@@ -102,8 +108,8 @@ impl Hub {
         }
         let submit = post_comment(&field, &comments_path, &comments_path);
         let composer = self.composer(&field, submit, Vec::new(), cx);
-        let edit = FormSpec::new("Edit gist description")
-            .field(Field::text("description", "Description").value(g.s("description")).keep_empty())
+        let edit = FormSpec::new(if gitlab { "Edit snippet title" } else { "Edit gist description" })
+            .field(Field::text("description", if gitlab { "Title" } else { "Description" }).value(g.s("description").lines().next().unwrap_or("")).keep_empty())
             .rest("PATCH", path.clone())
             .ok("Gist updated")
             .inval(path.clone())
@@ -119,13 +125,13 @@ impl Hub {
                 widgets::row()
                     .child(avatar)
                     .child(widgets::title(format!("{} / {}", g.s("owner.login"), g.s("description").lines().next().unwrap_or(id))).flex_1())
-                    .child(widgets::ibtn(
+                    .when(!gitlab, |d| d.child(widgets::ibtn(
                         "gist-star",
                         if starred { "star-fill" } else { "star" },
                         if starred { "Unstar" } else { "Star" },
                         Req::rest(if starred { "DELETE" } else { "PUT" }, format!("/gists/{id}/star")).ok(if starred { "Unstarred" } else { "Starred" }).inval(format!("/gists/{id}")).inval("/gists/starred").act(),
-                    ))
-                    .when(!mine, |d| {
+                    )))
+                    .when(!mine && !gitlab, |d| {
                         d.child(widgets::ibtn(
                             "gist-fork",
                             "fork",
@@ -144,9 +150,7 @@ impl Hub {
                 g.list("forks").len()
             )))
             .child(files)
-            .child(widgets::h2("Comments"))
-            .child(comments)
-            .child(composer)
+            .when(!gitlab, |d| d.child(widgets::h2("Comments")).child(comments).child(composer))
             .child(div().h(px(8.0)))
             .into_any_element()
     }

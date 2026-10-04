@@ -3,7 +3,7 @@ name = "visualhub"
 version = "0.1.1"
 edition = "2021"
 license = "MIT"
-description = "A native GitHub client built on GPUI"
+description = "A native GitHub and GitLab client built on GPUI"
 
 [[bin]]
 name = "visualhub"

@@ -37,6 +37,7 @@ impl Hub {
         let me = self.login();
         let owner = self.choice(OWNER, owner.unwrap_or(&me));
         let is_org = owner != me;
+        let gitlab = crate::forge::is_gitlab();
         let visibility = self.choice(VISIBILITY, "public");
         let template = self.choice(TEMPLATE, "");
         let gitignore = self.choice(GITIGNORE, "");
@@ -106,7 +107,9 @@ impl Hub {
         let mut vis = Picker::new("Choose visibility", "Filter…", false)
             .item(PickItem::new("Public", visibility == "public", Act::choose(VISIBILITY, "public")).detail("Anyone on the internet can see this repository."))
             .item(PickItem::new("Private", visibility == "private", Act::choose(VISIBILITY, "private")).detail("You choose who can see and commit to this repository."));
-        if is_org {
+        if gitlab {
+            vis = vis.item(PickItem::new("Internal", visibility == "internal", Act::choose(VISIBILITY, "internal")).detail("Anyone signed in to this GitLab can see it."));
+        } else if is_org {
             vis = vis.item(PickItem::new("Internal", visibility == "internal", Act::choose(VISIBILITY, "internal")).detail("Members of the enterprise can see this repository."));
         }
         let vis_label = match visibility.as_str() {
@@ -162,17 +165,20 @@ impl Hub {
         let mut config = widgets::col().gap_4().child(
             widgets::card().child(widgets::setting_row(
                 "Choose visibility",
-                "Choose who can see and commit to this repository",
+                &format!("Choose who can see and commit to this {}", crate::forge::repo_word()),
                 widgets::dropdown_btn("newrepo-vis", Some(vis_icon), vis_label, vis.act()),
                 true,
             )),
-        )
-        .child(widgets::card().child(widgets::setting_row(
-            "Start with a template",
-            "Templates pre-configure your repository with files.",
-            widgets::dropdown_btn("newrepo-template", None, if template.is_empty() { "No template".to_string() } else { template.clone() }, templates.act()),
-            true,
-        )));
+        );
+        // GitLab has no template repositories of your own to start from.
+        if !gitlab {
+            config = config.child(widgets::card().child(widgets::setting_row(
+                "Start with a template",
+                "Templates pre-configure your repository with files.",
+                widgets::dropdown_btn("newrepo-template", None, if template.is_empty() { "No template".to_string() } else { template.clone() }, templates.act()),
+                true,
+            )));
+        }
         if starters {
             config = config.child(
                 widgets::card()
@@ -208,8 +214,12 @@ impl Hub {
             .child(
                 widgets::col()
                     .gap_1()
-                    .child(widgets::title("Create a new repository"))
-                    .child(widgets::dim("Repositories contain a project's files and version history."))
+                    .child(widgets::title(if gitlab { "Create a new project" } else { "Create a new repository" }))
+                    .child(widgets::dim(if gitlab {
+                        "Projects hold a repository's files and history, with its issues, merge requests and pipelines."
+                    } else {
+                        "Repositories contain a project's files and version history."
+                    }))
                     .child(widgets::dim("Required fields are marked with an asterisk (*).").italic()),
             )
             .child(
@@ -220,7 +230,7 @@ impl Hub {
             .child(
                 widgets::row()
                     .child(widgets::spacer())
-                    .child(widgets::go_btn("newrepo-create", "Create repository", create).h(px(32.0)).px_4().text_size(px(13.0)).font_weight(FontWeight::SEMIBOLD)),
+                    .child(widgets::go_btn("newrepo-create", if gitlab { "Create project" } else { "Create repository" }, create).h(px(32.0)).px_4().text_size(px(13.0)).font_weight(FontWeight::SEMIBOLD)),
             )
             .into_any_element()
     }
@@ -231,7 +241,7 @@ impl Hub {
         let name = self.field_text(NAME).trim().to_string();
         let description = self.field_text(DESC).trim().to_string();
         if name.is_empty() {
-            self.toast("Give the repository a name.", true, cx);
+            self.toast(format!("Give the {} a name.", crate::forge::repo_word()), true, cx);
             self.focus_field(NAME);
             return;
         }
@@ -255,8 +265,8 @@ impl Hub {
                 "private": visibility == "private",
                 "auto_init": self.toggle(README),
             });
-            if visibility == "internal" {
-                body["visibility"] = json!("internal");
+            if visibility == "internal" || crate::forge::is_gitlab() {
+                body["visibility"] = json!(visibility);
             }
             for (key, choice) in [("gitignore_template", GITIGNORE), ("license_template", LICENSE)] {
                 let value = self.choice(choice, "");
@@ -267,7 +277,7 @@ impl Hub {
             let path = if owner == me { "/user/repos".to_string() } else { format!("/orgs/{owner}/repos") };
             Req::rest("POST", path).body(body)
         };
-        let req = req.ok("Repository created").inval("/user/repos").then(|hub, value: &Value, cx| {
+        let req = req.ok(format!("{} created", if crate::forge::is_gitlab() { "Project" } else { "Repository" })).inval("/user/repos").then(|hub, value: &Value, cx| {
             for key in [NAME, DESC] {
                 hub.set_field(key, "");
             }
@@ -283,7 +293,8 @@ impl Hub {
         let p = palette();
         let count = self.choice("newgist.files", "1").parse::<usize>().unwrap_or(1).max(1);
         let public = self.choice("newgist.public", "false") == "true";
-        let desc = self.input("newgist.desc", "Gist description…", cx).h(px(36.0)).w_full();
+        let gitlab = crate::forge::is_gitlab();
+        let desc = self.input("newgist.desc", if gitlab { "Snippet title…" } else { "Gist description…" }, cx).h(px(36.0)).w_full();
 
         let mut files = widgets::col().gap_4();
         for i in 0..count {
@@ -318,11 +329,23 @@ impl Hub {
             );
         }
 
-        let label = if public { "Create public gist" } else { "Create secret gist" };
-        let modes = Act::menu(vec![
-            crate::hub::MenuEntry::check("Create secret gist — hidden from search, visible to anyone with the link", !public, Act::choose("newgist.public", "false")),
-            crate::hub::MenuEntry::check("Create public gist — visible to everyone", public, Act::choose("newgist.public", "true")),
-        ]);
+        let (label, modes) = if gitlab {
+            (
+                if public { "Create public snippet" } else { "Create private snippet" },
+                Act::menu(vec![
+                    crate::hub::MenuEntry::check("Create private snippet — only you can see it", !public, Act::choose("newgist.public", "false")),
+                    crate::hub::MenuEntry::check("Create public snippet — visible to everyone", public, Act::choose("newgist.public", "true")),
+                ]),
+            )
+        } else {
+            (
+                if public { "Create public gist" } else { "Create secret gist" },
+                Act::menu(vec![
+                    crate::hub::MenuEntry::check("Create secret gist — hidden from search, visible to anyone with the link", !public, Act::choose("newgist.public", "false")),
+                    crate::hub::MenuEntry::check("Create public gist — visible to everyone", public, Act::choose("newgist.public", "true")),
+                ]),
+            )
+        };
         let add = Act::run(move |hub, _, cx| {
             hub.choices.insert("newgist.files".into(), (count + 1).to_string());
             hub.focus_field(&format!("newgist.name.{count}"));
@@ -330,7 +353,7 @@ impl Hub {
         });
         widgets::page()
             .gap_4()
-            .child(widgets::title("Create a gist"))
+            .child(widgets::title(if gitlab { "Create a snippet" } else { "Create a gist" }))
             .child(desc)
             .child(files)
             .child(
@@ -388,7 +411,7 @@ impl Hub {
             "public": self.choice("newgist.public", "false") == "true",
             "files": files,
         });
-        let req = Req::rest("POST", "/gists").body(body).ok("Gist created").inval("/gists").then(move |hub, value: &Value, cx| {
+        let req = Req::rest("POST", "/gists").body(body).ok(if crate::forge::is_gitlab() { "Snippet created" } else { "Gist created" }).inval("/gists").then(move |hub, value: &Value, cx| {
             hub.set_field("newgist.desc", "");
             for i in 0..count {
                 hub.set_field(&format!("newgist.name.{i}"), "");

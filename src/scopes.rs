@@ -119,6 +119,11 @@ impl Drop for ScopeFix {
 impl Hub {
     /// After signing in: offer to fix the token if it's short of scopes.
     pub fn check_scopes(&mut self) {
+        // GitLab's tokens say their scopes another way; Settings shows them.
+        if crate::forge::is_gitlab() {
+            self.scope_fix = None;
+            return;
+        }
         let missing = missing(&self.scopes);
         self.scope_fix = (!missing.is_empty()).then(|| ScopeFix::new(missing));
     }
@@ -221,8 +226,8 @@ impl Hub {
                 .background_executor()
                 .spawn(async move {
                     let token = api::gh_cli_token().ok_or_else(|| anyhow::anyhow!("gh has no token"))?;
-                    let client = Client::new(&token);
-                    let reply = client.send("GET", "/user", None, None)?;
+                    let client = Client::new(&crate::forge::Account::new(crate::forge::Forge::GitHub, "github.com", &token));
+                    let reply = client.raw("GET", "/user", None, None)?;
                     if reply.status != 200 {
                         anyhow::bail!("GitHub refused the new token ({}).", reply.status);
                     }
@@ -382,6 +387,9 @@ impl Hub {
 
 /// The settings line saying what's missing, with a way back into the fix.
 pub fn settings_note(hub: &Hub) -> Option<AnyElement> {
+    if crate::forge::is_gitlab() {
+        return None;
+    }
     let missing = missing(&hub.scopes);
     if missing.is_empty() {
         return None;

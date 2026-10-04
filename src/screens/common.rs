@@ -15,18 +15,10 @@ use gpui::{
 use crate::ui::{icon, palette, Button, IconButton};
 use serde_json::{json, Value};
 
-/// "owner/name" from any of GitHub's API URLs for a repository or
-/// something in one.
+/// "owner/name" (on GitLab, "group/sub/project") from any API URL or
+/// page for a repository or something in one.
 pub fn repo_of(url: &str) -> String {
-    let rest = url
-        .strip_prefix("https://api.github.com/repos/")
-        .or_else(|| url.strip_prefix("https://github.com/"))
-        .unwrap_or(url);
-    let mut parts = rest.split('/');
-    match (parts.next(), parts.next()) {
-        (Some(o), Some(n)) => format!("{o}/{n}"),
-        _ => String::new(),
-    }
+    crate::forge::repo_of(url)
 }
 
 /// The icon and colour for an issue or pull request in its state.
@@ -78,9 +70,10 @@ pub fn issue_route(item: &Value) -> Route {
 pub fn issue_row(item: &Value, show_repo: bool) -> Row {
     let (icon_name, color) = issue_icon(item);
     let repo = repo_of(&item.s("repository_url"));
+    let is_pr = item.has("pull_request") || item.has("head");
     let mut meta = format!(
-        "#{} opened {} by {}",
-        item.i("number"),
+        "{} opened {} by {}",
+        if is_pr { crate::forge::pr_ref(item.i("number")) } else { format!("#{}", item.i("number")) },
         time::ago(&item.s("created_at")),
         item.s("user.login")
     );
@@ -287,7 +280,7 @@ impl Hub {
             ));
         }
         menu.push(MenuEntry::item(
-            "Open on GitHub",
+            crate::forge::open_on(),
             Act::Url(comment.s("html_url")),
         ));
         menu.extend(acts.extra);

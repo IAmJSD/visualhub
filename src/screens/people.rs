@@ -42,7 +42,9 @@ impl Hub {
         let is_me = me.eq_ignore_ascii_case(login);
         let avatar = self.avatar(&user.s("avatar_url"), 220.0, cx);
         let following = self.fetch_check(&format!("/user/following/{login}"), cx).ready().map(|v| v.b(""));
-        let blocked = if is_me { None } else { self.fetch_check(&format!("/user/blocks/{login}"), cx).ready().map(|v| v.b("")) };
+        let gitlab = crate::forge::is_gitlab();
+        // GitLab has no blocking between users.
+        let blocked = if is_me || gitlab { None } else { self.fetch_check(&format!("/user/blocks/{login}"), cx).ready().map(|v| v.b("")) };
         let follow = match following {
             Some(true) => widgets::btn("follow", "Unfollow", Req::rest("DELETE", format!("/user/following/{login}")).ok(format!("Unfollowed {login}")).inval("/user/following").inval(format!("/users/{login}")).act()),
             _ => widgets::primary("follow", "Follow", Req::rest("PUT", format!("/user/following/{login}")).ok(format!("Following {login}")).inval("/user/following").inval(format!("/users/{login}")).act()),
@@ -101,14 +103,16 @@ impl Hub {
                             .on_click(on(Act::Go(Route::Org { login: o.s("login") }))),
                     );
                 }
-                info = info.child(div().h(px(1.0)).bg(rgb(p.divider))).child(widgets::h3("Organizations")).child(grid);
+                info = info.child(div().h(px(1.0)).bg(rgb(p.divider))).child(widgets::h3(crate::forge::orgs_title())).child(grid);
             }
         }
         info = info
             .child(div().h(px(1.0)).bg(rgb(p.divider)))
             .children(block)
-            .child(widgets::btn("sponsor", "Sponsor", Act::Url(format!("{}/sponsors/{login}", crate::api::WEB))))
-            .child(widgets::btn("report", "Report abuse", Act::Url(format!("{}/contact/report-abuse?report={login}", crate::api::WEB))));
+            .when(!gitlab, |d| {
+                d.child(widgets::btn("sponsor", "Sponsor", Act::Url(format!("{}/sponsors/{login}", crate::api::WEB))))
+                    .child(widgets::btn("report", "Report abuse", Act::Url(format!("{}/contact/report-abuse?report={login}", crate::api::WEB))))
+            });
 
         let tab_key = format!("user.tab:{login}");
         let tab = self.choice(&tab_key, "overview");
@@ -116,9 +120,9 @@ impl Hub {
             "user",
             vec![
                 widgets::TabItem::new("Overview", "book", tab == "overview", Act::choose(&tab_key, "overview")),
-                widgets::TabItem::new("Repositories", "repo", tab == "repos", Act::choose(&tab_key, "repos")).count(Some(user.i("public_repos"))),
+                widgets::TabItem::new(crate::forge::repos_title(), "repo", tab == "repos", Act::choose(&tab_key, "repos")).count((!gitlab).then(|| user.i("public_repos"))),
                 widgets::TabItem::new("Stars", "star", tab == "stars", Act::choose(&tab_key, "stars")),
-                widgets::TabItem::new("Gists", "gist", tab == "gists", Act::choose(&tab_key, "gists")).count(Some(user.i("public_gists"))),
+                widgets::TabItem::new(crate::forge::gists_title(), "gist", tab == "gists", Act::choose(&tab_key, "gists")).count((!gitlab).then(|| user.i("public_gists"))),
                 widgets::TabItem::new("Followers", "people", tab == "followers", Act::choose(&tab_key, "followers")).count(Some(user.i("followers"))),
                 widgets::TabItem::new("Following", "people", tab == "following", Act::choose(&tab_key, "following")).count(Some(user.i("following"))),
             ],
@@ -362,6 +366,9 @@ impl Hub {
     }
 
     pub fn org(&mut self, login: &str, cx: &mut Context<Self>) -> AnyElement {
+        if crate::forge::is_gitlab() {
+            return self.gl_group(login, cx);
+        }
         let p = palette();
         let org = ready!(self.fetch(&format!("/orgs/{login}"), cx));
         let me = self.login();
@@ -571,6 +578,9 @@ impl Hub {
     }
 
     pub fn team(&mut self, org: &str, slug: &str, cx: &mut Context<Self>) -> AnyElement {
+        if crate::forge::is_gitlab() {
+            return self.gl_group(&format!("{org}/{slug}"), cx);
+        }
         let base = format!("/orgs/{org}/teams/{slug}");
         let team = ready!(self.fetch(&base, cx));
         let tab_key = format!("team.tab:{org}/{slug}");
