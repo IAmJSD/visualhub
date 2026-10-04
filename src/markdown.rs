@@ -25,6 +25,8 @@ struct Flags {
     strike: bool,
     code: bool,
     link: bool,
+    /// An @mention of whoever is signed in.
+    mine: bool,
 }
 
 #[derive(Default)]
@@ -69,7 +71,21 @@ impl Inline {
                 wavy: false,
             });
         }
+        if flags.mine {
+            let mut bg: gpui::Hsla = rgb(widgets::yellow()).into();
+            bg.a = 0.22;
+            style.background_color = Some(bg);
+            style.color = Some(rgb(widgets::yellow()).into());
+        }
         self.runs.push((start..self.text.len(), style));
+    }
+
+    /// `shown` as a link to `url`.
+    fn push_link(&mut self, shown: &str, url: String, mut flags: Flags) {
+        flags.link = true;
+        let start = self.text.len();
+        self.push(shown, flags);
+        self.links.push((start..self.text.len(), url));
     }
 
     fn is_blank(&self) -> bool {
@@ -97,6 +113,9 @@ struct Builder {
     heading: Option<HeadingLevel>,
     code: Option<(String, String)>,
     images: Vec<(usize, String)>,
+    /// The repository the page is about, which `#123` refers into.
+    repo: Option<String>,
+    me: String,
 }
 
 impl Builder {
@@ -176,6 +195,8 @@ impl Hub {
             heading: None,
             code: None,
             images: Vec::new(),
+            repo: self.route.repo().map(str::to_string),
+            me: self.login(),
         };
 
         for event in Parser::new_ext(source, options) {
@@ -406,7 +427,11 @@ impl Hub {
                 Event::Text(t) => {
                     if b.images.is_empty() {
                         let flags = b.flags;
-                        b.inline().push(&t, flags);
+                        if b.link_start.is_empty() {
+                            autolink(&mut b, &t, flags);
+                        } else {
+                            b.inline().push(&t, flags);
+                        }
                     }
                 }
                 Event::Code(t) => {
@@ -563,9 +588,92 @@ fn img_src(html: &str) -> Option<String> {
     }
 }
 
+/// Plain text with GitHub's references made links, as github.com shows
+/// them: bare URLs (shortened when they point into GitHub), `@login`, and
+/// `#123` in the page's repository.
+fn autolink(b: &mut Builder, text: &str, flags: Flags) {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut plain = 0;
+    let mut i = 0;
+    while i < text.len() {
+        let rest = &text[i..];
+        let after_word = text[..i].chars().next_back().is_some_and(|c| word(c) || c == '/' || c == '.');
+        let token: Option<(usize, String, String, Flags)> = if !after_word && (rest.starts_with("https://") || rest.starts_with("http://")) {
+            let mut end = rest.find(|c: char| c.is_whitespace() || c == '<' || c == '>').unwrap_or(rest.len());
+            end -= rest[..end].len() - rest[..end].trim_end_matches(['.', ',', ';', ':', '!', '?', ')', '\'', '"']).len();
+            let url = &rest[..end];
+            let (shown, code) = short_url(url, b.repo.as_deref());
+            Some((end, shown, url.to_string(), Flags { code: code || flags.code, ..flags }))
+        } else if !after_word && rest.starts_with('@') {
+            let login: String = rest[1..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').take(39).collect();
+            (!login.is_empty() && !login.starts_with('-')).then(|| {
+                let mine = login.eq_ignore_ascii_case(&b.me);
+                (1 + login.len(), format!("@{login}"), format!("{}/{login}", crate::api::WEB), Flags { mine, ..flags })
+            })
+        } else if !after_word && rest.starts_with('#') {
+            let digits: String = rest[1..].chars().take_while(|c| c.is_ascii_digit()).collect();
+            let ends_word = rest[1 + digits.len()..].chars().next().is_none_or(|c| !word(c));
+            match &b.repo {
+                Some(repo) if !digits.is_empty() && ends_word => {
+                    Some((1 + digits.len(), format!("#{digits}"), format!("{}/{repo}/issues/{digits}", crate::api::WEB), flags))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        match token {
+            Some((len, shown, url, link_flags)) => {
+                b.inline().push(&text[plain..i], flags);
+                b.inline().push_link(&shown, url, link_flags);
+                i += len;
+                plain = i;
+            }
+            None => i += rest.chars().next().map_or(1, char::len_utf8),
+        }
+    }
+    b.inline().push(&text[plain..], flags);
+}
+
+/// How GitHub shows a link to itself: `#138` in this repository,
+/// `owner/repo#138` elsewhere, a commit's short SHA, a compare's range.
+/// The flag says to set it as code.
+fn short_url(url: &str, here: Option<&str>) -> (String, bool) {
+    let Some(rest) = url.strip_prefix("https://github.com/") else {
+        return (url.to_string(), false);
+    };
+    let path = rest.split(['?', '#']).next().unwrap_or("");
+    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+    let [owner, name, kind, item, ..] = parts.as_slice() else {
+        return (url.to_string(), false);
+    };
+    let repo = format!("{owner}/{name}");
+    let prefix = if here == Some(repo.as_str()) { String::new() } else { repo };
+    match *kind {
+        "pull" | "issues" | "discussions" if item.parse::<u64>().is_ok() && parts.len() == 4 => (format!("{prefix}#{item}"), false),
+        "commit" if item.len() >= 7 => {
+            let sha = &item[..7];
+            (if prefix.is_empty() { sha.to_string() } else { format!("{prefix}@{sha}") }, true)
+        }
+        "compare" => (parts[3..].join("/"), true),
+        _ => (url.to_string(), false),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn github_links_shorten() {
+        let here = Some("Infrawrench/schist");
+        assert_eq!(short_url("https://github.com/Infrawrench/schist/pull/138", here), ("#138".into(), false));
+        assert_eq!(short_url("https://github.com/other/repo/issues/9", here), ("other/repo#9".into(), false));
+        assert_eq!(short_url("https://github.com/Infrawrench/schist/compare/v0.14.0...v0.15.0", here), ("v0.14.0...v0.15.0".into(), true));
+        assert_eq!(short_url("https://github.com/Infrawrench/schist/commit/0123456789abcdef", here), ("0123456".into(), true));
+        assert_eq!(short_url("https://github.com/Infrawrench/schist/pull/138/files", here).0, "https://github.com/Infrawrench/schist/pull/138/files");
+        assert_eq!(short_url("https://example.com/a", here).0, "https://example.com/a");
+    }
 
     #[test]
     fn img_tags_and_html_text() {
