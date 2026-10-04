@@ -17,8 +17,8 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// A commit with its authors and the length of its history.
-const COMMIT_HEAD: &str = "query($o: String!, $n: String!, $r: String!) { repository(owner: $o, name: $n) { object(expression: $r) { ... on Commit { oid messageHeadline committedDate history(first: 1) { totalCount } authors(first: 10) { nodes { name avatarUrl user { login avatarUrl } } } } } } }";
+/// A commit with its authors, its checks and the length of its history.
+const COMMIT_HEAD: &str = "query($o: String!, $n: String!, $r: String!) { repository(owner: $o, name: $n) { object(expression: $r) { ... on Commit { oid messageHeadline committedDate history(first: 1) { totalCount } authors(first: 10) { nodes { name avatarUrl user { login avatarUrl } } } statusCheckRollup { state } } } } }";
 
 /// Commit authors (GraphQL `authors.nodes`) with repeats dropped.
 pub fn distinct_authors(authors: &[Value]) -> Vec<Value> {
@@ -512,6 +512,7 @@ impl Hub {
                         .text_color(rgb(palette().text_dim))
                         .child(c.s("messageHeadline")),
                 )
+                .children(super::pulls::ci_mark_el("latest-checks", &c.s("statusCheckRollup.state")))
                 .child(widgets::btn("latest-sha", sha.chars().take(7).collect::<String>(), Act::Go(Route::Commit { repo: repo.to_string(), sha })).h(px(22.0)))
                 .child(widgets::dim(time::ago(&c.s("committedDate"))));
         }

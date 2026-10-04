@@ -634,8 +634,8 @@ pub struct Hub {
     pub polls: HashSet<String>,
     /// Merge-conflict editors in progress, by "repo#number".
     pub conflicts: HashMap<String, crate::screens::conflicts::SessionLoad>,
-    /// Commit authors as GraphQL resolved them, by SHA.
-    pub commit_people: HashMap<String, Vec<Value>>,
+    /// Commits' authors and checks as GraphQL resolved them, by SHA.
+    pub commit_info: HashMap<String, crate::resource::CommitInfo>,
     /// Expanded rows and sections, by id.
     pub open: HashSet<String>,
     /// When everything shown was last asked for again, by hand or on
@@ -688,7 +688,7 @@ impl Hub {
             scrollers: HashMap::new(),
             list_scrollers: HashMap::new(),
             frame: 0,
-            commit_people: HashMap::new(),
+            commit_info: HashMap::new(),
             conflicts: HashMap::new(),
             stale: HashSet::new(),
             polls: HashSet::new(),

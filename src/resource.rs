@@ -48,6 +48,18 @@ pub struct Row {
     pub commit: Option<CommitRef>,
     /// Those authors, once GraphQL has resolved them.
     pub authors: Vec<Value>,
+    /// How the commit's checks went (`SUCCESS`, `FAILURE`, `PENDING`),
+    /// once GraphQL has said.
+    pub checks: String,
+}
+
+/// What GraphQL tells about a commit in a list: who made it, co-authors
+/// too, and how its checks went.
+#[derive(Clone, Default)]
+pub struct CommitInfo {
+    pub authors: Vec<Value>,
+    /// `statusCheckRollup.state`, or empty for a commit without checks.
+    pub checks: String,
 }
 
 /// A commit a row is about, and what the meta line says after its
@@ -75,6 +87,7 @@ impl Row {
             inline: false,
             commit: None,
             authors: Vec::new(),
+            checks: String::new(),
         }
     }
 
@@ -317,9 +330,10 @@ impl Hub {
         card.into_any_element()
     }
 
-    /// Fill in the authors of rows about commits, asking GraphQL for each
-    /// repository's commits in batches. The batches follow list order, so
-    /// loading another page reuses the batches already answered.
+    /// Fill in the authors and checks of rows about commits, asking
+    /// GraphQL for each repository's commits in batches. The batches
+    /// follow list order, so loading another page reuses the batches
+    /// already answered.
     pub fn resolve_authors(&mut self, rows: &mut [Row], cx: &mut Context<Self>) {
         let mut by_repo: Vec<(String, Vec<usize>)> = Vec::new();
         for (i, row) in rows.iter().enumerate() {
@@ -331,19 +345,21 @@ impl Hub {
         }
         for (repo, indices) in by_repo {
             let shas: Vec<String> = indices.iter().filter_map(|&i| rows[i].commit.as_ref().map(|c| c.sha.clone())).collect();
-            let found = self.commit_authors_batch(&repo, &shas, cx);
+            let found = self.commit_batch(&repo, &shas, cx);
             for &i in &indices {
-                if let Some(authors) = rows[i].commit.as_ref().and_then(|c| found.get(&c.sha)) {
-                    rows[i].authors = authors.clone();
+                if let Some(info) = rows[i].commit.as_ref().and_then(|c| found.get(&c.sha)) {
+                    rows[i].authors = info.authors.clone();
+                    rows[i].checks = info.checks.clone();
                 }
             }
         }
     }
 
-    /// The accounts behind each of `shas` in `repo` (co-authors too), as
-    /// far as GraphQL has answered, asked in batches that follow the
-    /// list's order so a longer list reuses the batches already in.
-    pub fn commit_authors_batch(&mut self, repo: &str, shas: &[String], cx: &mut Context<Self>) -> HashMap<String, Vec<Value>> {
+    /// The accounts behind each of `shas` in `repo` (co-authors too) and
+    /// how its checks went, as far as GraphQL has answered, asked in
+    /// batches that follow the list's order so a longer list reuses the
+    /// batches already in.
+    pub fn commit_batch(&mut self, repo: &str, shas: &[String], cx: &mut Context<Self>) -> HashMap<String, CommitInfo> {
         let mut found = HashMap::new();
         let Some((owner, name)) = repo.split_once('/') else { return found };
         for chunk in shas.chunks(PER_PAGE) {
@@ -352,14 +368,21 @@ impl Hub {
                 .enumerate()
                 .map(|(n, sha)| {
                     let sha = Value::String(sha.clone());
-                    format!("c{n}: object(oid: {sha}) {{ ... on Commit {{ authors(first: 10) {{ nodes {{ name avatarUrl user {{ login avatarUrl }} }} }} }} }} ")
+                    format!("c{n}: object(oid: {sha}) {{ ... on Commit {{ authors(first: 10) {{ nodes {{ name avatarUrl user {{ login avatarUrl }} }} }} statusCheckRollup {{ state }} }} }} ")
                 })
                 .collect();
             let query = format!("query($o: String!, $n: String!) {{ repository(owner: $o, name: $n) {{ {fields}}} }}");
             let vars = serde_json::json!({ "o": owner, "n": name });
             let Some(data) = self.fetch_gql(&format!("/repos/{repo}/commits"), &query, vars, cx).ready().cloned() else { continue };
             for (n, sha) in chunk.iter().enumerate() {
-                found.insert(sha.clone(), crate::screens::repo::distinct_authors(data.list(&format!("repository.c{n}.authors.nodes"))));
+                let commit = data.at(&format!("repository.c{n}"));
+                found.insert(
+                    sha.clone(),
+                    CommitInfo {
+                        authors: crate::screens::repo::distinct_authors(commit.list("authors.nodes")),
+                        checks: commit.s("statusCheckRollup.state"),
+                    },
+                );
             }
         }
         found
@@ -405,6 +428,7 @@ impl Hub {
                     .text_color(rgb(p.text))
                     .child(row.title.clone()),
             )
+            .children(crate::screens::pulls::ci_mark_el(ElementId::Name(format!("{id}-checks").into()), &row.checks))
             .when(!row.suffix.is_empty(), |d| {
                 d.child(widgets::dim(row.suffix.clone()))
             })

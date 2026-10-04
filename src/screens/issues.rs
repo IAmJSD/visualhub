@@ -580,18 +580,25 @@ impl Hub {
                 let sha = event.s("sha");
                 let message = crate::json::first_line(&event.s("message"));
                 let author = json!({ "login": event.s("author.name") });
-                let people = self.commit_people.get(&sha).cloned().filter(|a| !a.is_empty());
-                let sha_btn = widgets::btn(
-                    ElementId::Name(format!("{id}-sha").into()),
-                    sha.chars().take(7).collect::<String>(),
-                    Act::Go(Route::Commit {
-                        repo: repo.to_string(),
-                        sha: sha.clone(),
-                    }),
-                )
-                .h(px(20.0))
-                .font_family(widgets::MONO)
-                .into_any_element();
+                let info = self.commit_info.get(&sha).cloned().unwrap_or_default();
+                let people = Some(info.authors).filter(|a| !a.is_empty());
+                // Its checks' mark, then its SHA, as github.com ends the line.
+                let sha_btn = widgets::row()
+                    .gap_2()
+                    .children(crate::screens::pulls::ci_mark_el(ElementId::Name(format!("{id}-checks").into()), &info.checks))
+                    .child(
+                        widgets::btn(
+                            ElementId::Name(format!("{id}-sha").into()),
+                            sha.chars().take(7).collect::<String>(),
+                            Act::Go(Route::Commit {
+                                repo: repo.to_string(),
+                                sha: sha.clone(),
+                            }),
+                        )
+                        .h(px(20.0))
+                        .font_family(widgets::MONO),
+                    )
+                    .into_any_element();
                 if let Some(people) = people {
                     // Every author's face and name, as on the commit.
                     let who = widgets::row()

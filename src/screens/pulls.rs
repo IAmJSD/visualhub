@@ -126,6 +126,30 @@ pub fn status_icon(status: &str, conclusion: &str) -> (&'static str, u32) {
     }
 }
 
+/// A commit's checks as one mark, the way github.com shows it beside a
+/// commit: from GraphQL's `statusCheckRollup.state`.
+pub fn ci_mark(state: &str) -> Option<(&'static str, u32, &'static str)> {
+    match state {
+        "SUCCESS" => Some(("check", widgets::green(), "All checks have passed")),
+        "FAILURE" | "ERROR" => Some(("close", widgets::red(), "Some checks were not successful")),
+        "PENDING" | "EXPECTED" => Some(("dot", widgets::yellow(), "Some checks haven't completed yet")),
+        _ => None,
+    }
+}
+
+/// [`ci_mark`] drawn, with what it means on hover.
+pub fn ci_mark_el(id: impl Into<gpui::ElementId>, state: &str) -> Option<AnyElement> {
+    let (mark, color, tip) = ci_mark(state)?;
+    Some(
+        div()
+            .id(id.into())
+            .flex_none()
+            .tooltip(crate::ui::tip(tip, None))
+            .child(icon(mark, 14.0, color))
+            .into_any_element(),
+    )
+}
+
 impl Hub {
     pub fn my_pulls(&mut self, cx: &mut Context<Self>) -> AnyElement {
         self.my_items("pr", cx)
@@ -229,8 +253,8 @@ impl Hub {
                 // Commit events carry only the git author's name; ask who
                 // the accounts are, co-authors included, in one go.
                 let shas: Vec<String> = items.iter().filter(|e| e.s("event") == "committed").map(|e| e.s("sha")).collect();
-                let found = self.commit_authors_batch(repo, &shas, cx);
-                self.commit_people.extend(found);
+                let found = self.commit_batch(repo, &shas, cx);
+                self.commit_info.extend(found);
                 for (i, event) in items.iter().enumerate() {
                     if let Some(el) = self.timeline_item(repo, &format!("tl{i}"), event, &field, &inval, &me, cx) {
                         col = col.child(el);
@@ -1076,7 +1100,9 @@ impl Hub {
         let (headline, rest) = message.split_once('\n').unwrap_or((&message, ""));
         // GraphQL resolves co-authors to accounts; until it answers (or if
         // it can't), show the REST author.
-        let authors = match self.commit_head(repo, sha, cx) {
+        let head = self.commit_head(repo, sha, cx);
+        let checks = head.as_ref().map(|h| h.s("statusCheckRollup.state")).unwrap_or_default();
+        let authors = match head {
             Some(head) => self.commit_authors("commit", head.list("authors.nodes"), cx),
             None => {
                 let login = c.s("author.login");
@@ -1132,6 +1158,7 @@ impl Hub {
                             .border_color(rgb(p.divider))
                             .child(authors)
                             .child(widgets::dim(format!("committed {}", time::ago(&c.s("commit.author.date")))))
+                            .children(ci_mark_el("commit-checks", &checks))
                             .when(c.b("commit.verification.verified"), |d| d.child(widgets::tag("Verified", widgets::green())))
                             .child(widgets::spacer())
                             .child(widgets::dim(format!("parents {parents}")))
