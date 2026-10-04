@@ -1118,6 +1118,7 @@ pub fn numbered_lines(text: &str, path: &str, scroll: gpui::UniformListScrollHan
     let p = palette();
     let lines: std::rc::Rc<Vec<String>> = std::rc::Rc::new(text.lines().map(|l| l.replace('\t', "    ")).collect());
     let colours = crate::highlight::lines(crate::highlight::syntax_for(path), &lines, &[]);
+    let block = format!("file:{path}");
     let count = lines.len();
     let width = (count.to_string().len() as f32) * 8.0 + 24.0;
     gpui::uniform_list("file-lines", count, move |range, _window, _cx| {
@@ -1136,7 +1137,7 @@ pub fn numbered_lines(text: &str, path: &str, scroll: gpui::UniformListScrollHan
                             .text_color(rgb(p.text_faint))
                             .child((i + 1).to_string()),
                     )
-                    .child(div().whitespace_nowrap().child(crate::highlight::styled(&lines[i], colours.as_ref().map(|c| c[i].as_slice()))))
+                    .child(crate::select::line(&block, &lines, i, colours.as_ref().map(|c| c[i].as_slice())))
             })
             .collect()
     })

@@ -1246,7 +1246,7 @@ impl Hub {
 
         match key {
             "escape" => {
-                if self.autoscroll.take().is_some() {
+                if crate::select::clear() || self.autoscroll.take().is_some() {
                 } else if self.menu.take().is_some() {
                 } else if self.modal.is_some() {
                     self.modal = None;
@@ -1259,6 +1259,11 @@ impl Hub {
             "left" if mods.alt => self.go_back(cx),
             "right" if mods.alt => self.go_forward(cx),
             "r" if primary => self.refresh(cx),
+            "c" if primary => {
+                if let Some(text) = crate::select::selected_text() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                }
+            }
             "k" if primary => {
                 self.focus_field("jump");
                 cx.notify();

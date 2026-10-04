@@ -7,6 +7,7 @@
 //! set of flags each appended piece of text is tagged with.
 
 use crate::hub::{perform, Act, Hub};
+use gpui::prelude::FluentBuilder as _;
 use crate::widgets::{self, rgb};
 use gpui::{
     div, px, AnyElement, Context, ElementId, FontStyle, FontWeight, HighlightStyle,
@@ -517,16 +518,13 @@ pub fn code_block(id: ElementId, lang: &str, code: &str) -> AnyElement {
     // The fence's tag names the language: ```rust, ```ts, ```shell.
     let tag = lang.split([',', ' ', '{']).next().unwrap_or("");
     let colours = crate::highlight::lines(crate::highlight::syntax_for(tag), &source, &[]);
+    let block = format!("code:{id:?}");
+    let source = Rc::new(source);
     let mut lines = div().flex().flex_col();
-    for (i, line) in source.iter().enumerate() {
-        let line = if line.is_empty() { " " } else { line.as_str() };
-        lines = lines.child(
-            div()
-                .whitespace_nowrap()
-                .min_h(px(18.0))
-                .child(crate::highlight::styled(line, colours.as_ref().map(|c| c[i].as_slice()))),
-        );
+    for i in 0..source.len() {
+        lines = lines.child(crate::select::line(&block, &source, i, colours.as_ref().map(|c| c[i].as_slice())).min_h(px(18.0)));
     }
+    let copy_id = ElementId::Name(format!("{block}-copy").into());
     let mut block = div()
         .id(id)
         .relative()
@@ -542,17 +540,26 @@ pub fn code_block(id: ElementId, lang: &str, code: &str) -> AnyElement {
         .line_height(px(18.0))
         .overflow_x_scroll()
         .child(lines);
-    if !lang.is_empty() {
-        block = block.child(
-            div()
-                .absolute()
-                .top_1()
-                .right_2()
-                .text_size(px(10.0))
-                .text_color(rgb(p.text_faint))
-                .child(lang.to_string()),
-        );
-    }
+    let all = source.join("\n");
+    block = block.child(
+        div()
+            .absolute()
+            .top_1()
+            .right_1()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .when(!lang.is_empty(), |d| d.child(div().text_size(px(10.0)).text_color(rgb(p.text_faint)).child(lang.to_string())))
+            .child(
+                crate::ui::IconButton::new(copy_id, "copy")
+                    .size(22.0)
+                    .icon_size(13.0)
+                    .color(p.text_dim)
+                    .tooltip("Copy", None)
+                    .on_click(crate::hub::on(Act::Copy(all))),
+            ),
+    );
     block.into_any_element()
 }
 

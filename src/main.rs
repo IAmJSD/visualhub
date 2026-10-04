@@ -15,6 +15,7 @@ mod markdown;
 mod picker;
 mod resource;
 mod scopes;
+mod select;
 mod screens;
 mod shell;
 mod time;

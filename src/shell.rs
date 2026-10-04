@@ -74,6 +74,11 @@ impl Render for Hub {
             // Any press takes the keyboard from whichever box had it; the
             // box under the pointer (if any) takes it back on its own press.
             .capture_any_mouse_down(cx.listener(|hub, event: &MouseDownEvent, window, cx| {
+                // A press anywhere drops a code selection; a line under
+                // the pointer starts a new one as the press bubbles.
+                if crate::select::clear() {
+                    cx.notify();
+                }
                 // While autoscrolling, any other click only stops it.
                 if event.button != MouseButton::Middle && hub.autoscroll_cancel(cx) {
                     cx.stop_propagation();
