@@ -12,6 +12,7 @@ mod form;
 mod highlight;
 mod hub;
 mod json;
+mod macos_menu;
 mod markdown;
 mod picker;
 mod resource;
@@ -32,6 +33,7 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let app = Application::new().with_assets(assets::Assets);
     app.run(|cx: &mut App| {
+        macos_menu::install(cx);
         let bounds = Bounds::centered(None, size(px(1400.0), px(900.0)), cx);
         cx.open_window(
             WindowOptions {

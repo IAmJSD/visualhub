@@ -68,6 +68,51 @@ impl Render for Hub {
             .text_size(px(widgets::TEXT))
             .track_focus(&self.focus)
             .key_context("VisualHub")
+            .on_action(cx.listener(|hub, _: &crate::macos_menu::Refresh, _, cx| hub.refresh(cx)))
+            .on_action(cx.listener(|hub, _: &crate::macos_menu::Search, _, cx| {
+                hub.focus_field("jump");
+                cx.notify();
+            }))
+            .on_action(cx.listener(|hub, _: &crate::macos_menu::CopySelection, _, cx| {
+                if let Some(id) = hub.active_field() {
+                    if let Some(field) = hub.fields.get(&id) {
+                        if field.has_selection() {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(field.selected_text().to_string()));
+                        }
+                    }
+                } else if let Some(text) = crate::select::selected_text() {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                }
+            }))
+            .on_action(cx.listener(|hub, _: &crate::macos_menu::CutSelection, _, cx| {
+                if let Some(id) = hub.active_field() {
+                    if let Some(field) = hub.fields.get_mut(&id) {
+                        if field.has_selection() {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(field.selected_text().to_string()));
+                            field.delete_selection();
+                        }
+                    }
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|hub, _: &crate::macos_menu::Paste, _, cx| {
+                if let Some(id) = hub.active_field() {
+                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                        if let Some(field) = hub.fields.get_mut(&id) {
+                            field.insert(&text);
+                        }
+                    }
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|hub, _: &crate::macos_menu::SelectAll, _, cx| {
+                if let Some(id) = hub.active_field() {
+                    if let Some(field) = hub.fields.get_mut(&id) {
+                        field.select_all();
+                    }
+                }
+                cx.notify();
+            }))
             .on_key_down(cx.listener(|hub, event: &KeyDownEvent, window, cx| {
                 hub.on_key(event, window, cx)
             }))
