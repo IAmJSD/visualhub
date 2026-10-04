@@ -263,8 +263,8 @@ fn explain(status: u16, body: &str) -> String {
 // ---------------------------------------------------------------------------
 // Where a token comes from.
 
-/// Where the signed-in token is kept between runs.
-pub fn token_file() -> Option<PathBuf> {
+/// Where VisualHub keeps what it remembers between runs.
+fn config_dir() -> Option<PathBuf> {
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)
     } else if cfg!(target_os = "macos") {
@@ -274,7 +274,28 @@ pub fn token_file() -> Option<PathBuf> {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
     }?;
-    Some(base.join("visualhub").join("token"))
+    Some(base.join("visualhub"))
+}
+
+/// Where the signed-in token is kept between runs.
+pub fn token_file() -> Option<PathBuf> {
+    Some(config_dir()?.join("token"))
+}
+
+/// The repositories `login` opened lately, newest first.
+pub fn load_recent(login: &str) -> Vec<String> {
+    config_dir()
+        .and_then(|dir| std::fs::read_to_string(dir.join(format!("recent-{login}"))).ok())
+        .map(|text| text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// Remembering is best-effort: a failed write only costs the list.
+pub fn save_recent(login: &str, repos: &[String]) {
+    let Some(dir) = config_dir() else { return };
+    if std::fs::create_dir_all(&dir).is_ok() {
+        let _ = std::fs::write(dir.join(format!("recent-{login}")), repos.join("\n"));
+    }
 }
 
 pub fn save_token(token: &str) -> Result<()> {

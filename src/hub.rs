@@ -734,6 +734,7 @@ impl Hub {
 
     fn signed_in(&mut self, client: Client, me: Value, scopes: String, source: &'static str) {
         self.refresh_token(client, me, scopes);
+        self.recent = api::load_recent(&self.me.s("login"));
         self.token_source = source;
         self.check_scopes();
         self.auth = Auth::SignedIn;
@@ -810,9 +811,12 @@ impl Hub {
         self.menu = None;
         self.blur_fields();
         if let Some(repo) = self.route.repo().map(str::to_string) {
-            self.recent.retain(|r| r != &repo);
-            self.recent.insert(0, repo);
-            self.recent.truncate(8);
+            if self.recent.first() != Some(&repo) {
+                self.recent.retain(|r| r != &repo);
+                self.recent.insert(0, repo);
+                self.recent.truncate(8);
+                api::save_recent(&self.me.s("login"), &self.recent);
+            }
         }
     }
 

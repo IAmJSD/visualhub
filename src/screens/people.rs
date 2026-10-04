@@ -227,7 +227,7 @@ impl Hub {
     fn activity_timeline(&mut self, login: &str, cx: &mut Context<Self>) -> AnyElement {
         let p = palette();
         let spec = ListSpec::new(format!("/users/{login}/events/public"), |_| Row::new(""));
-        let (events, loading, more) = match self.fetch_list(&spec, cx) {
+        let (mut events, loading, more) = match self.fetch_list(&spec, cx) {
             Fetched::Items { items, loading, more } => (items, loading, more),
             Fetched::Failed(error) => return widgets::error_box(&error),
         };
@@ -235,6 +235,8 @@ impl Hub {
             return if loading { widgets::loading() } else { widgets::card().child(widgets::empty("No recent public activity.")).into_any_element() };
         }
 
+        // GitHub doesn't always send events newest first.
+        events.sort_by_key(|e| std::cmp::Reverse(time::parse(&e.s("created_at")).unwrap_or(0)));
         let today = time::now().div_euclid(86_400);
         let day_of = |e: &Value| time::parse(&e.s("created_at")).map(|t| t.div_euclid(86_400));
         let mut timeline = widgets::card().p_4().gap_0();
