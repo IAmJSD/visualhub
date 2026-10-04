@@ -638,6 +638,9 @@ pub struct Hub {
     pub commit_people: HashMap<String, Vec<Value>>,
     /// Expanded rows and sections, by id.
     pub open: HashSet<String>,
+    /// When everything shown was last asked for again, by hand or on
+    /// coming back to the window.
+    refreshed: std::time::Instant,
 }
 
 impl Hub {
@@ -647,6 +650,12 @@ impl Hub {
         HUB.with(|h| *h.borrow_mut() = Some(cx.entity().downgrade()));
         cx.observe_window_appearance(window, |_, _, cx| cx.notify())
             .detach();
+        cx.observe_window_activation(window, |hub, window, cx| {
+            if window.is_window_active() {
+                hub.came_back(cx);
+            }
+        })
+        .detach();
         let mut hub = Hub {
             focus,
             client: None,
@@ -684,6 +693,7 @@ impl Hub {
             stale: HashSet::new(),
             polls: HashSet::new(),
             open: HashSet::new(),
+            refreshed: std::time::Instant::now(),
         };
         hub.discover(cx);
         hub
@@ -1007,13 +1017,55 @@ impl Hub {
             cx.background_executor().timer(Duration::from_secs(secs)).await;
             this.update(cx, |hub, cx| {
                 hub.polls.remove(&key);
-                let keys: Vec<String> = hub.cache.keys().filter(|k| prefixes.iter().any(|p| k.starts_with(p.as_str()))).cloned().collect();
-                hub.stale.extend(keys);
+                hub.mark_stale(&prefixes);
                 cx.notify();
             })
             .ok();
         })
         .detach();
+    }
+
+    /// Fetch what's cached under `prefixes` again next time it shows,
+    /// showing the old answer meanwhile.
+    fn mark_stale(&mut self, prefixes: &[String]) {
+        let keys: Vec<String> = self.cache.keys().filter(|k| prefixes.iter().any(|p| k.starts_with(p.as_str()))).cloned().collect();
+        self.stale.extend(keys);
+    }
+
+    /// What a write makes stale: the prefixes it names, and when they're
+    /// about an issue or pull request, the repository's lists and counts
+    /// of them and the searches that find them. GitHub's search index
+    /// takes a moment to catch up with a write, so searches are asked
+    /// again a few times over the next half minute too.
+    pub fn after_write(&mut self, prefixes: &[String], cx: &mut Context<Self>) {
+        let mut issues_changed = false;
+        for prefix in prefixes {
+            self.invalidate(prefix);
+            if let Some(repo) = issues_repo(prefix) {
+                issues_changed = true;
+                for kind in ["issues", "pulls"] {
+                    // The lists (`?state=…`) and counts (`#gql…`), not the
+                    // other issues' own pages.
+                    self.invalidate(&format!("/repos/{repo}/{kind}?"));
+                    self.invalidate(&format!("/repos/{repo}/{kind}#"));
+                }
+            }
+        }
+        if !issues_changed {
+            return;
+        }
+        self.invalidate("/search/issues");
+        for secs in [3, 10, 30] {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_secs(secs)).await;
+                this.update(cx, |hub, cx| {
+                    hub.mark_stale(&["/search/issues".to_string()]);
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
     }
 
     /// Drop every cached answer whose key starts with `prefix`; the next
@@ -1024,7 +1076,22 @@ impl Hub {
     }
 
     /// Everything, fetched again.
+    /// Back in the window after a while away: what was made elsewhere
+    /// in the meantime (an issue opened on github.com, a push) shows up.
+    /// Everything cached is asked again as it's shown, the old answer
+    /// staying up until the new one lands.
+    fn came_back(&mut self, cx: &mut Context<Self>) {
+        if self.refreshed.elapsed() < Duration::from_secs(30) || !matches!(self.auth, Auth::SignedIn) {
+            return;
+        }
+        self.refreshed = std::time::Instant::now();
+        let keys: Vec<String> = self.cache.iter().filter(|(_, load)| !matches!(load, Load::Loading)).map(|(k, _)| k.clone()).collect();
+        self.stale.extend(keys);
+        cx.notify();
+    }
+
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.refreshed = std::time::Instant::now();
         self.cache.clear();
         self.generation.clear();
         self.toast("Refreshing…", false, cx);
@@ -1093,9 +1160,7 @@ impl Hub {
                         if from_modal {
                             hub.modal = None;
                         }
-                        for prefix in &req.invalidate {
-                            hub.invalidate(prefix);
-                        }
+                        hub.after_write(&req.invalidate, cx);
                         if !req.ok.is_empty() {
                             hub.toast(req.ok.clone(), false, cx);
                         }
@@ -1480,6 +1545,17 @@ fn sniff(bytes: &[u8]) -> Option<ImageFormat> {
     }
 }
 
+/// The repository a write's prefix is about when it touched its issues or
+/// pull requests (or the whole repository: a merge).
+fn issues_repo(prefix: &str) -> Option<String> {
+    let rest = prefix.strip_prefix("/repos/")?;
+    let parts: Vec<&str> = rest.split(['/', '?', '#']).collect();
+    match parts.as_slice() {
+        [owner, name] | [owner, name, "issues" | "pulls", ..] if !owner.is_empty() && !name.is_empty() => Some(format!("{owner}/{name}")),
+        _ => None,
+    }
+}
+
 fn hash(s: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1527,5 +1603,15 @@ mod tests {
         );
         assert_eq!(route_for_url("https://example.com/a"), None);
         assert_eq!(with_query("/a?x=1", "y=2"), "/a?x=1&y=2");
+    }
+
+    #[test]
+    fn writes_to_issues_name_their_repository() {
+        assert_eq!(issues_repo("/repos/o/r/issues"), Some("o/r".into()));
+        assert_eq!(issues_repo("/repos/o/r/issues/12"), Some("o/r".into()));
+        assert_eq!(issues_repo("/repos/o/r/pulls/3"), Some("o/r".into()));
+        assert_eq!(issues_repo("/repos/o/r"), Some("o/r".into()));
+        assert_eq!(issues_repo("/repos/o/r/labels"), None);
+        assert_eq!(issues_repo("/user/starred"), None);
     }
 }
