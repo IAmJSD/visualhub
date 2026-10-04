@@ -1,7 +1,7 @@
 //! The window's frame: the sidebar, the top bar, the page, and what floats
 //! over them (menus, dialogs, toasts). Also the sign-in screen.
 
-use crate::hub::{on, Act, Auth, Hub, MenuEntry, Route, Theme};
+use crate::hub::{on, Act, Auth, Hub, MenuEntry, Route};
 use crate::json::Json as _;
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
@@ -14,14 +14,11 @@ use crate::ui::{icon, palette, Button, IconButton, MenuItem, Spinner};
 
 impl Render for Hub {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.light = match self.theme {
-            Theme::Light => true,
-            Theme::Dark => false,
-            Theme::System => matches!(
-                window.appearance(),
-                WindowAppearance::Light | WindowAppearance::VibrantLight
-            ),
-        };
+        // Always the system's appearance.
+        self.light = matches!(
+            window.appearance(),
+            WindowAppearance::Light | WindowAppearance::VibrantLight
+        );
         crate::ui::set_light(self.light);
         let p = palette();
         // Enter-handlers are registered by whatever drew their box.
@@ -240,7 +237,6 @@ impl Hub {
         let avatar = self.avatar(&me.s("avatar_url"), 22.0, cx);
         let login = me.s("login");
         let new_menu = self.new_menu();
-        let theme_icon = if self.light { "moon" } else { "sun" };
         div()
             .flex()
             .flex_row()
@@ -292,16 +288,6 @@ impl Hub {
                     .icon_size(16.0)
                     .tooltip("Open this page on github.com", None)
                     .on_click(on(Act::Url(route.web_url()))),
-            )
-            .child(
-                IconButton::new("theme", theme_icon)
-                    .size(28.0)
-                    .icon_size(16.0)
-                    .tooltip("Switch light/dark", None)
-                    .on_click(cx.listener(|hub, _, _, cx| {
-                        hub.theme = if hub.light { Theme::Dark } else { Theme::Light };
-                        cx.notify();
-                    })),
             )
             .child(
                 div()

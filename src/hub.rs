@@ -548,13 +548,6 @@ pub struct Toast {
     pub error: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Theme {
-    System,
-    Dark,
-    Light,
-}
-
 pub enum Auth {
     Checking,
     SignedOut { error: Option<String> },
@@ -602,7 +595,6 @@ pub struct Hub {
     next_toast: u64,
     pub busy: usize,
     images: HashMap<String, Avatar>,
-    pub theme: Theme,
     pub light: bool,
     pub recent: Vec<String>,
     /// Expanded rows and sections, by id.
@@ -641,7 +633,6 @@ impl Hub {
             next_toast: 0,
             busy: 0,
             images: HashMap::new(),
-            theme: Theme::System,
             light: false,
             recent: Vec::new(),
             open: HashSet::new(),

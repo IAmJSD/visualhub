@@ -1,9 +1,9 @@
 //! Your account: profile, emails, keys, social accounts, blocked users,
-//! interaction limits, installed apps, appearance, and the session.
+//! interaction limits, installed apps, and the session.
 
 use super::common::user_row;
 use crate::form::{Field, FormSpec};
-use crate::hub::{Act, Hub, Load, Req, Theme};
+use crate::hub::{Act, Hub, Load, Req};
 use crate::json::Json as _;
 use crate::resource::{ListSpec, Row};
 use crate::time;
@@ -13,7 +13,7 @@ use gpui::{div, AnyElement, Context, IntoElement as _, ParentElement as _, Style
 use crate::ui::palette;
 use serde_json::json;
 
-const SECTIONS: [(&str, &str); 11] = [
+const SECTIONS: [(&str, &str); 10] = [
     ("profile", "Public profile"),
     ("emails", "Emails"),
     ("ssh", "SSH keys"),
@@ -23,7 +23,6 @@ const SECTIONS: [(&str, &str); 11] = [
     ("blocked", "Blocked users"),
     ("limits", "Interaction limits"),
     ("apps", "Applications"),
-    ("appearance", "Appearance"),
     ("session", "Session"),
 ];
 
@@ -169,24 +168,6 @@ impl Hub {
                             .child(widgets::btn("authorized-apps", "Authorized GitHub Apps", Act::Url(format!("{}/settings/apps/authorizations", crate::api::WEB))))
                             .child(widgets::btn("oauth-apps", "Authorized OAuth apps", Act::Url(format!("{}/settings/applications", crate::api::WEB)))),
                     )
-                    .into_any_element()
-            }
-            "appearance" => {
-                let theme = self.theme;
-                let choose = |t: Theme| Act::run(move |hub, _, cx| {
-                    hub.theme = t;
-                    cx.notify();
-                });
-                widgets::card()
-                    .p_4()
-                    .gap_3()
-                    .child(widgets::h3("Theme"))
-                    .child(widgets::chips(vec![
-                        ("Sync with system".into(), theme == Theme::System, choose(Theme::System)),
-                        ("Dark".into(), theme == Theme::Dark, choose(Theme::Dark)),
-                        ("Light".into(), theme == Theme::Light, choose(Theme::Light)),
-                    ]))
-                    .child(widgets::dim("Follows the system appearance unless you pick one here."))
                     .into_any_element()
             }
             "session" => {
