@@ -713,8 +713,7 @@ impl Hub {
         let p = palette();
         let repo_s = repo.to_string();
         let stat = |id: &str, icon_name: &str, text: String, act: Act| {
-            div()
-                .child(widgets::ibtn(ElementId::Name(id.to_string().into()), icon_name, text, act).w_full().justify_start().h(px(26.0)))
+            widgets::ibtn(ElementId::Name(id.to_string().into()), icon_name, text, act).h(px(26.0)).gap_1p5()
         };
         let mut about = widgets::col()
             .gap_2()
@@ -723,24 +722,31 @@ impl Hub {
             .when(info.has("license"), |d| {
                 d.child(widgets::icon_text("book", info.s("license.name"), p.text_dim))
             })
-            .child(stat(
-                "stargazers",
-                "star",
-                format!("{} stars", json::count(info.i("stargazers_count"))),
-                Act::choose(format!("insights.view:{repo_s}"), "stargazers").then_go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Insights }),
-            ))
-            .child(stat(
-                "watchers",
-                "eye",
-                format!("{} watching", json::count(info.i("subscribers_count"))),
-                Act::choose(format!("insights.view:{repo_s}"), "watchers").then_go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Insights }),
-            ))
-            .child(stat(
-                "forks",
-                "fork",
-                format!("{} forks", json::count(info.i("forks_count"))),
-                Act::choose(format!("insights.view:{repo_s}"), "forks").then_go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Insights }),
-            ));
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap_1()
+                    .child(stat(
+                        "stargazers",
+                        "star",
+                        format!("{} stars", json::count(info.i("stargazers_count"))),
+                        Act::choose(format!("insights.view:{repo_s}"), "stargazers").then_go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Insights }),
+                    ))
+                    .child(stat(
+                        "watchers",
+                        "eye",
+                        format!("{} watching", json::count(info.i("subscribers_count"))),
+                        Act::choose(format!("insights.view:{repo_s}"), "watchers").then_go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Insights }),
+                    ))
+                    .child(stat(
+                        "forks",
+                        "fork",
+                        format!("{} forks", json::count(info.i("forks_count"))),
+                        Act::choose(format!("insights.view:{repo_s}"), "forks").then_go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Insights }),
+                    )),
+            );
 
         // Latest release.
         if let Some(release) = self.fetch(&format!("/repos/{repo}/releases?per_page=1"), cx).ready().and_then(|v| v.list("").first().cloned()) {
