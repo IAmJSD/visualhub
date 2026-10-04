@@ -12,7 +12,7 @@ use crate::resource::{Fetched, ListSpec, Row};
 use crate::time;
 use crate::widgets::{self, rgb, TabItem};
 use gpui::prelude::FluentBuilder as _;
-use gpui::{div, px, AnyElement, Context, FontWeight, IntoElement as _, ParentElement as _, Styled as _};
+use gpui::{div, px, AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _, Styled as _};
 use crate::ui::{icon, palette};
 use serde_json::{json, Value};
 
@@ -608,41 +608,139 @@ impl Hub {
             number,
             commit: pr.s("head.sha"),
         };
-        let mut col = widgets::col().gap_3().child(
-            widgets::row()
-                .child(widgets::dim("Click any line to leave a review comment on it."))
-                .child(widgets::spacer())
-                .child(widgets::primary("review-top", "Review changes", review_form(repo, number))),
-        );
-        match self.fetch_list(&spec, cx) {
-            Fetched::Items { items, loading, more } => {
-                for (i, file) in items.iter().enumerate() {
-                    let name = file.s("filename");
-                    let mine: Vec<Value> = comments
-                        .iter()
-                        .filter(|c| c.s("path") == name && c.has("line"))
-                        .cloned()
-                        .collect();
-                    col = col.child(self.diff_file(&format!("prf{number}-{i}"), file, Some(&target), &mine, cx));
-                }
-                if loading {
-                    col = col.child(widgets::loading());
-                } else if more {
-                    let id = spec.id.clone();
-                    col = col.child(widgets::btn(
-                        "files-more",
-                        "Load more files",
-                        Act::run(move |hub, _, cx| {
-                            let next = hub.page(&id) + 1;
-                            hub.pages.insert(id.clone(), next);
-                            cx.notify();
-                        }),
-                    ));
-                }
-            }
-            Fetched::Failed(error) => col = col.child(widgets::error_box(&error)),
+        let header = widgets::row()
+            .child(widgets::dim("Click any line to leave a review comment on it."))
+            .child(widgets::spacer())
+            .child(widgets::primary("review-top", "Review changes", review_form(repo, number)));
+        let (files, loading, more) = match self.fetch_list(&spec, cx) {
+            Fetched::Items { items, loading, more } => (items, loading, more),
+            Fetched::Failed(error) => return widgets::col().gap_3().child(header).child(widgets::error_box(&error)).into_any_element(),
+        };
+        if files.is_empty() {
+            let body = if loading { widgets::loading() } else { widgets::card().child(widgets::empty("No files changed.")).into_any_element() };
+            return widgets::col().gap_3().child(header).child(body).into_any_element();
         }
-        col.into_any_element()
+
+        // One file at a time on the right, picked from the list on the left.
+        let key = format!("pr.file:{repo}#{number}");
+        let chosen = self.choice(&key, "");
+        let selected = files.iter().position(|f| f.s("filename") == chosen).unwrap_or(0);
+        let comments_on = |name: &str| -> Vec<Value> {
+            comments.iter().filter(|c| c.s("path") == name && c.has("line")).cloned().collect()
+        };
+
+        let p = palette();
+        let mut picker = div()
+            .id("pr-file-list")
+            .flex()
+            .flex_col()
+            .max_h(px(720.0))
+            .overflow_y_scroll()
+            .py_1();
+        let mut last_dir = None;
+        for (i, file) in files.iter().enumerate() {
+            let name = file.s("filename");
+            let (dir, base) = match name.rsplit_once('/') {
+                Some((dir, base)) => (dir.to_string(), base.to_string()),
+                None => (String::new(), name.clone()),
+            };
+            if last_dir.as_ref() != Some(&dir) {
+                if !dir.is_empty() {
+                    picker = picker.child(
+                        widgets::row()
+                            .gap_1p5()
+                            .px_3()
+                            .pt_2()
+                            .pb_1()
+                            .child(icon("folder", 12.0, p.text_dim))
+                            .child(div().text_size(px(11.0)).text_color(rgb(p.text_dim)).text_ellipsis().overflow_hidden().whitespace_nowrap().child(dir.clone())),
+                    );
+                }
+                last_dir = Some(dir.clone());
+            }
+            let (mark, color) = match file.s("status").as_str() {
+                "added" => ("plus", widgets::green()),
+                "removed" => ("minus", widgets::red()),
+                "renamed" => ("arrow-right", widgets::yellow()),
+                _ => ("dot", widgets::yellow()),
+            };
+            let noted = comments_on(&name).len();
+            picker = picker.child(
+                div()
+                    .id(("pr-file", i))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .h(px(28.0))
+                    .px_3()
+                    .when(!dir.is_empty(), |d| d.pl_6())
+                    .cursor_pointer()
+                    .when(i == selected, |d| d.bg(rgb(p.selection_bg)))
+                    .when(i != selected, |d| d.hover(|s| s.bg(rgb(p.hover))))
+                    .tooltip(crate::ui::tip(name.clone(), None))
+                    .on_click(crate::hub::on(Act::choose(key.clone(), name.clone())))
+                    .child(icon(mark, 12.0, color))
+                    .child(div().flex_1().min_w_0().text_size(px(12.0)).text_ellipsis().overflow_hidden().whitespace_nowrap().child(base))
+                    .when(noted > 0, |d| d.child(widgets::row().gap_0p5().child(icon("comment", 11.0, p.text_dim)).child(widgets::faint(noted.to_string()))))
+                    .child(div().text_size(px(11.0)).text_color(rgb(widgets::green())).child(format!("+{}", file.i("additions"))))
+                    .child(div().text_size(px(11.0)).text_color(rgb(widgets::red())).child(format!("−{}", file.i("deletions")))),
+            );
+        }
+        if loading {
+            picker = picker.child(widgets::loading());
+        } else if more {
+            let id = spec.id.clone();
+            picker = picker.child(div().p_2().child(widgets::btn(
+                "files-more",
+                "Load more files",
+                Act::run(move |hub, _, cx| {
+                    let next = hub.page(&id) + 1;
+                    hub.pages.insert(id.clone(), next);
+                    cx.notify();
+                }),
+            )));
+        }
+        let picker = widgets::card()
+            .w(px(280.0))
+            .flex_none()
+            .child(
+                widgets::row()
+                    .px_3()
+                    .h(px(34.0))
+                    .border_b_1()
+                    .border_color(rgb(p.divider))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(format!("{} files", pr.i("changed_files"))))
+                    .child(widgets::spacer())
+                    .child(widgets::faint(format!("{} of {}", selected + 1, files.len()))),
+            )
+            .child(picker);
+
+        let file = &files[selected];
+        let name = file.s("filename");
+        let step = |id: &'static str, icon_name: &'static str, label: &'static str, to: Option<&Value>| {
+            let act = to.map(|f| Act::choose(key.clone(), f.s("filename"))).unwrap_or(Act::None);
+            widgets::ibtn(id, icon_name, label, act).disabled(to.is_none())
+        };
+        let nav = widgets::row()
+            .child(step("file-prev", "chevron-left", "Previous file", selected.checked_sub(1).and_then(|i| files.get(i))))
+            .child(widgets::spacer())
+            .child(step("file-next", "chevron-right", "Next file", files.get(selected + 1)));
+        let diff = self.diff_file(&format!("prf{number}-{selected}"), file, Some(&target), &comments_on(&name), cx);
+
+        widgets::col()
+            .gap_3()
+            .child(header)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_3()
+                    .child(picker)
+                    .child(widgets::col().flex_1().min_w_0().gap_2().child(diff).child(nav)),
+            )
+            .into_any_element()
     }
 
     pub fn pull_checks(&mut self, repo: &str, sha: &str, cx: &mut Context<Self>) -> AnyElement {
