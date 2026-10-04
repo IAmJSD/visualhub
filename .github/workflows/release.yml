@@ -11,7 +11,7 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           # Both halves of the universal binary.
@@ -73,17 +73,96 @@ jobs:
           # bundle's permissions or symlinks, which would void the signature.
           rm -rf dist/VisualHub.app
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: visualhub-macos
           path: dist/*
 
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: visualhub-linux-x86_64
+          - os: ubuntu-24.04-arm
+            artifact: visualhub-linux-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: System deps
+        run: |
+          sudo apt-get update
+          # What GPUI links and builds against on Linux.
+          sudo apt-get install -y libfontconfig-dev libwayland-dev \
+            libxkbcommon-x11-dev libxcb1-dev libxcb-render0-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev libvulkan-dev
+          # libfuse2: appimagetool. rpm: rpmbuild, for the .rpm.
+          # libarchive-tools: bsdtar, which writes the .pkg.tar.zst's .MTREE.
+          sudo apt-get install -y libfuse2 rpm libarchive-tools zstd
+
+      - name: Package
+        run: |
+          curl -sSL -o /tmp/appimagetool \
+            "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-$(uname -m).AppImage"
+          chmod +x /tmp/appimagetool
+          mkdir -p dist
+          APPIMAGETOOL=/tmp/appimagetool ./packaging/linux/appimage.sh
+          ./packaging/linux/packages.sh
+          # The bare binary too, arch-suffixed: both Linux jobs publish into
+          # one release, and same-named assets would collide there.
+          cp target/release/visualhub "dist/visualhub-linux-$(uname -m)"
+          strip --strip-unneeded "dist/visualhub-linux-$(uname -m)"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/visualhub.exe dist/visualhub-windows-x86_64.exe
+          # NSIS isn't on the runner image.
+          choco install nsis --no-progress -y
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (-not (Test-Path $makensis)) {
+            $found = Get-Command makensis -ErrorAction SilentlyContinue
+            if (-not $found) { throw 'makensis missing after installing NSIS' }
+            $makensis = $found.Source
+          }
+          # Quoted: unquoted, PowerShell hands makensis the literal text, and
+          # a ':' in the OutFile writes the installer into an NTFS stream.
+          & $makensis "-DVERSION=$version" packaging/windows/installer.nsi
+          $out = "dist/VisualHub-$version-setup.exe"
+          if (-not (Test-Path $out) -or (Get-Item $out).Length -eq 0) { throw "no installer at $out" }
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: visualhub-windows-x86_64
+          path: dist/*
+
   publish:
-    needs: macos
+    needs: [macos, linux, windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts
       - uses: softprops/action-gh-release@v2

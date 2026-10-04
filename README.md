@@ -87,20 +87,29 @@ nothing else needs to be checked out next to it.
 `VISUALHUB_OPEN=<a github.com URL>` starts the app on that page, which is how
 the screenshots above were taken.
 
-### Packaging (macOS)
+### Packaging
 
 ```sh
 make release
 ```
 
-builds a universal `VisualHub.app` (Apple Silicon and Intel, joined with
-`lipo`) and leaves `dist/VisualHub.dmg` and `dist/VisualHub.zip`. Set
-`MACOS_CERT_NAME` (and optionally `MACOS_KEYCHAIN`) to sign it, and
-`MACOS_NOTARY_PROFILE` or `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and
-`APPLE_TEAM_ID` to notarize it too; see `packaging/macos/bundle.sh`. Pushing a
-`v*` tag runs the same build in CI (`.github/workflows/release.yml`) and
-attaches the image and zip to a release. `make icon` rebuilds the `.icns`
-from `assets/icon.svg`.
+packages for the machine it runs on, into `dist/`:
+
+- **Linux:** an AppImage carrying its libraries, plus `.deb`, `.rpm` and
+  Arch `.pkg.tar.zst` packages (`packaging/linux/`). Each native format is
+  skipped, with a note, when its tool (`rpmbuild`, `bsdtar`) is missing.
+- **Windows:** `VisualHub-VERSION-setup.exe`, an NSIS installer
+  (`packaging/windows/installer.nsi`); the `.exe` carries the app icon.
+- **macOS:** a universal `VisualHub.app` (Apple Silicon and Intel, joined
+  with `lipo`), `VisualHub.dmg` and `VisualHub.zip`. Set `MACOS_CERT_NAME`
+  (and optionally `MACOS_KEYCHAIN`) to sign it, and `MACOS_NOTARY_PROFILE` or
+  `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` to notarize it
+  too; see `packaging/macos/bundle.sh`. `make icon` rebuilds the `.icns` from
+  `assets/icon.svg`.
+
+Pushing a `v*` tag runs all of these in CI (`.github/workflows/release.yml`):
+macOS (signed and notarized), Linux on x86_64 and arm64, and Windows, and
+attaches everything to a GitHub release.
 
 ## How it's built
 

@@ -8,6 +8,15 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
+    // On Windows the executable carries the app icon, so Explorer, the
+    // taskbar and shortcuts show it rather than a blank one.
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        println!("cargo:rerun-if-changed=packaging/windows/visualhub.ico");
+        let mut res = winresource::WindowsResource::new();
+        res.set_icon("packaging/windows/visualhub.ico");
+        res.compile().expect("embedding the Windows icon");
+    }
+
     let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let icons = root.join("assets").join("icons");
     println!("cargo:rerun-if-changed={}", icons.display());

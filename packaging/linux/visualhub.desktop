@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=VisualHub
+GenericName=GitHub Client
+Comment=A native GitHub client
+Exec=visualhub
+Icon=com.infrawrench.visualhub
+Terminal=false
+Categories=Development;RevisionControl;
+StartupWMClass=visualhub
