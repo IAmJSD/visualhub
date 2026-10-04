@@ -265,6 +265,9 @@ impl Hub {
         let p = palette();
         let base = format!("/repos/{repo}/actions/runs/{id}");
         let run = ready!(self.fetch(&base, cx));
+        if run.s("status") != "completed" {
+            self.poll(std::slice::from_ref(&base), 5, cx);
+        }
         let jobs: Vec<Value> = match self.fetch(&format!("{base}/jobs?filter=latest&per_page=100"), cx) {
             Load::Ready(list) => list.list("jobs").to_vec(),
             _ => Vec::new(),
@@ -599,14 +602,15 @@ impl Hub {
         let p = palette();
         let path = format!("/repos/{repo}/actions/jobs/{id}/logs");
         let finished = job.s("status") == "completed";
-        let text = if finished {
-            match self.fetch_text(&path, "application/vnd.github+json", cx) {
-                Load::Ready(v) => Some(v.s("")),
-                Load::Failed(_) => None,
-                Load::Loading => Some(String::new()),
-            }
-        } else {
-            None
+        // A running job's log is there for its finished steps; keep it,
+        // and the steps, coming in until the job ends.
+        if !finished {
+            self.poll(&[format!("/repos/{repo}/actions/jobs/{id}"), format!("/repos/{repo}/actions/runs/{}", job.i("run_id"))], 5, cx);
+        }
+        let text = match self.fetch_text(&path, "application/vnd.github+json", cx) {
+            Load::Ready(v) => Some(v.s("")),
+            Load::Failed(_) => None,
+            Load::Loading => Some(String::new()),
         };
         let steps = job.list("steps").to_vec();
         let logs = split_by_step(text.as_deref().unwrap_or(""), &steps);
@@ -635,7 +639,7 @@ impl Hub {
                     items.push(LogItem::Line { step: n, number: i + 1, hit });
                 }
                 if lines.is_empty() {
-                    items.push(LogItem::Empty);
+                    items.push(LogItem::Empty { done: step.s("status") == "completed" });
                 }
             }
         }
@@ -645,7 +649,7 @@ impl Hub {
         let outcome = if finished {
             format!("{} {} in {took}", verdict(&job.s("status"), &job.s("conclusion")).to_lowercase(), time::ago(&job.s("completed_at")))
         } else {
-            format!("{} — the log appears when the job finishes", verdict(&job.s("status"), &job.s("conclusion")).to_lowercase())
+            format!("{} — started {}, updating live", verdict(&job.s("status"), &job.s("conclusion")).to_lowercase(), time::ago(&job.s("started_at")))
         };
         let reload_path = path.clone();
         let head = widgets::row()
@@ -694,6 +698,7 @@ impl Hub {
                         let key = key.clone();
                         div()
                             .id(("job-step", i))
+                            .w_full()
                             .flex()
                             .flex_row()
                             .items_center()
@@ -718,6 +723,7 @@ impl Hub {
                     LogItem::Line { step, number, hit } => {
                         let line = &logs[*step][*number - 1];
                         div()
+                            .w_full()
                             .flex()
                             .flex_row()
                             .h(px(ROW))
@@ -741,11 +747,11 @@ impl Hub {
                             )
                             .into_any_element()
                     }
-                    LogItem::Empty => div()
+                    LogItem::Empty { done } => div()
                         .h(px(ROW))
                         .pl(px(84.0))
                         .text_color(rgb(p.text_faint))
-                        .child("No output")
+                        .child(if *done { "No output" } else { "Waiting for output…" })
                         .into_any_element(),
                 })
                 .collect()
@@ -783,7 +789,9 @@ const ROW: f32 = 22.0;
 enum LogItem {
     Step { n: usize, open: bool, key: String, hits: usize },
     Line { step: usize, number: usize, hit: bool },
-    Empty,
+    /// An open step with nothing to show: done and silent, or not yet
+    /// written.
+    Empty { done: bool },
 }
 
 #[derive(Clone, Copy, PartialEq)]

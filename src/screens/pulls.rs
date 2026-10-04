@@ -370,6 +370,11 @@ impl Hub {
             _ => ("clock", widgets::gray(), "Checking mergeability…", ""),
         };
         let mergeable = matches!(state.as_str(), "clean" | "has_hooks" | "unstable");
+        // GitHub works mergeability out after the first ask, answering
+        // "unknown" until then; ask again until it has.
+        if matches!(state.as_str(), "unknown" | "") || pr.at("mergeable").is_null() {
+            self.poll(std::slice::from_ref(&pr_path), 3, cx);
+        }
 
         let method_key = format!("merge.method:{repo}");
         let method = self.choice(&method_key, "merge");

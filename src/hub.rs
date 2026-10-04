@@ -616,6 +616,10 @@ pub struct Hub {
     pub list_scrollers: HashMap<String, gpui::UniformListScrollHandle>,
     /// Counts renders, to tell which panes are on screen.
     pub frame: u64,
+    /// Cached answers to fetch again on next use, shown meanwhile.
+    pub stale: HashSet<String>,
+    /// Polls waiting to fire, by their prefixes.
+    pub polls: HashSet<String>,
     /// Commit authors as GraphQL resolved them, by SHA.
     pub commit_people: HashMap<String, Vec<Value>>,
     /// Expanded rows and sections, by id.
@@ -662,6 +666,8 @@ impl Hub {
             list_scrollers: HashMap::new(),
             frame: 0,
             commit_people: HashMap::new(),
+            stale: HashSet::new(),
+            polls: HashSet::new(),
             open: HashSet::new(),
         };
         hub.discover(cx);
@@ -921,12 +927,23 @@ impl Hub {
 
     pub fn fetch_with(&mut self, key: String, work: Work, cx: &mut Context<Self>) -> Load {
         if let Some(load) = self.cache.get(&key) {
-            return load.clone();
+            let load = load.clone();
+            // Stale: keep showing it while a fresh copy comes in.
+            if self.stale.remove(&key) {
+                self.start_fetch(key, work, cx);
+            }
+            return load;
         }
-        let Some(client) = self.client.clone() else {
+        if self.client.is_none() {
             return Load::Failed("Not signed in".into());
-        };
+        }
         self.cache.insert(key.clone(), Load::Loading);
+        self.start_fetch(key, work, cx);
+        Load::Loading
+    }
+
+    fn start_fetch(&mut self, key: String, work: Work, cx: &mut Context<Self>) {
+        let Some(client) = self.client.clone() else { return };
         self.next_generation += 1;
         let generation = self.next_generation;
         self.generation.insert(key.clone(), generation);
@@ -943,13 +960,40 @@ impl Hub {
                     Ok(value) => Load::Ready(Rc::new(value)),
                     Err(error) => Load::Failed(error.into()),
                 };
+                // A failed refresh of something already shown keeps
+                // what was there.
+                if matches!(load, Load::Failed(_)) && matches!(hub.cache.get(&key), Some(Load::Ready(_))) {
+                    return;
+                }
                 hub.cache.insert(key, load);
                 cx.notify();
             })
             .ok();
         })
         .detach();
-        Load::Loading
+    }
+
+    /// While something is changing on GitHub (a running job), refresh
+    /// what's cached under `prefixes` every `secs`, without blanking it.
+    /// Call it on each render the page should keep live; it stops when
+    /// renders stop asking.
+    pub fn poll(&mut self, prefixes: &[String], secs: u64, cx: &mut Context<Self>) {
+        let key = prefixes.join("|");
+        if !self.polls.insert(key.clone()) {
+            return;
+        }
+        let prefixes = prefixes.to_vec();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(secs)).await;
+            this.update(cx, |hub, cx| {
+                hub.polls.remove(&key);
+                let keys: Vec<String> = hub.cache.keys().filter(|k| prefixes.iter().any(|p| k.starts_with(p.as_str()))).cloned().collect();
+                hub.stale.extend(keys);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Drop every cached answer whose key starts with `prefix`; the next
