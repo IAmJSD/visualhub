@@ -1,4 +1,53 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#7c3aed"/>
-  <text x="32" y="32" dy="0.35em" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="600" fill="#ffffff">V</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- VisualHub's app icon, on Apple's macOS grid: an 824 px rounded
+       square centred in 1024, with room left for its shadow. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8B5CF6"/>
+      <stop offset="0.55" stop-color="#6D28D9"/>
+      <stop offset="1" stop-color="#3B1A8F"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.3" cy="0.18" r="0.9">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.32"/>
+      <stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="lens" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.06"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#1B0B4A" flood-opacity="0.45"/>
+    </filter>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#1B0B4A" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- The tile. -->
+  <g filter="url(#shadow)">
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  </g>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#glow)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="3"/>
+
+  <!-- The lens: a frosted disc the graph sits in. -->
+  <circle cx="512" cy="512" r="292" fill="url(#lens)" stroke="#FFFFFF" stroke-opacity="0.35" stroke-width="6"/>
+
+  <!-- A branch: main running up the left, a branch forking off it and
+       rising beside it: GitHub's own branch mark, centred in the lens. -->
+  <g filter="url(#soft)" fill="none" stroke="#FFFFFF" stroke-width="38" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M412 690 V334"/>
+    <path d="M412 640 C412 540 612 560 612 440 V334"/>
+  </g>
+  <g filter="url(#soft)" fill="#FFFFFF">
+    <circle cx="412" cy="334" r="52"/>
+    <circle cx="412" cy="690" r="52"/>
+    <circle cx="612" cy="334" r="52"/>
+  </g>
+  <!-- Commits read as rings: the tile shows through their middles. -->
+  <g fill="#6D28D9">
+    <circle cx="412" cy="334" r="23"/>
+    <circle cx="412" cy="690" r="23"/>
+    <circle cx="612" cy="334" r="23"/>
+  </g>
 </svg>

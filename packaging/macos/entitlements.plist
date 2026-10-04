@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The hardened runtime's defaults suit VisualHub: it talks HTTPS, runs
+     the GitHub CLI as a child process, and loads no unsigned libraries or
+     JIT. Nothing to loosen, so nothing is listed; the file is here so a
+     need found later has an obvious place to go. -->
+<plist version="1.0">
+<dict>
+</dict>
+</plist>
