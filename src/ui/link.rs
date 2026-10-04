@@ -51,7 +51,7 @@ impl Styled for Link {
 impl RenderOnce for Link {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let p = palette();
-        let mut el = div().text_color(gpui::rgb(p.accent));
+        let mut el = div().min_w_0().text_color(gpui::rgb(p.accent));
         el.style().refine(&self.style);
         let mut el = el
             .id(self.id)
@@ -60,6 +60,8 @@ impl RenderOnce for Link {
         if let Some(on_click) = self.on_click {
             el = el.on_click(on_click);
         }
-        el.child(self.label)
+        // Wrapped in a flex row so a column parent can't stretch the
+        // clickable box past the end of the text.
+        div().flex().child(el.child(self.label))
     }
 }
