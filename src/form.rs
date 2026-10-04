@@ -706,7 +706,9 @@ impl Hub {
                 } else {
                     ""
                 };
-                let mut el = self.textarea(&id, placeholder, cx).min_h_full();
+                // Fills the dialog's spare height, and grows past it with
+                // its text.
+                let mut el = self.textarea(&id, placeholder, cx).flex_grow().flex_shrink_0();
                 if matches!(field.kind, Kind::Json) {
                     el = el.font_family(widgets::MONO);
                 }
@@ -715,6 +717,8 @@ impl Hub {
                 let scroll = self.scroller(&format!("{id}-scroll"));
                 div()
                     .id(ElementId::Name(format!("{id}-scroll").into()))
+                    .flex()
+                    .flex_col()
                     .flex_1()
                     .min_h(px(100.0))
                     .overflow_y_scroll()
