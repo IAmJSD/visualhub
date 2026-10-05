@@ -103,6 +103,8 @@ enum Frame {
     Item(String),
     Table,
     TableRow(bool),
+    /// A cell, which holds images as well as its text.
+    TableCell,
 }
 
 struct Builder {
@@ -111,6 +113,9 @@ struct Builder {
     stack: Vec<(Frame, Vec<AnyElement>)>,
     inline: Option<Inline>,
     flags: Flags,
+    /// Inside an HTML comment, which an HTML block hands over a line at a
+    /// time.
+    in_comment: bool,
     link_start: Vec<(usize, String)>,
     heading: Option<HeadingLevel>,
     code: Option<(String, String)>,
@@ -252,6 +257,7 @@ impl Hub {
             stack: vec![(Frame::Root, Vec::new())],
             inline: None,
             flags: Flags::default(),
+            in_comment: false,
             link_start: Vec::new(),
             heading: None,
             code: None,
@@ -300,7 +306,8 @@ impl Hub {
             prose: Rc::default(),
         };
 
-        for event in Parser::new_ext(source, options) {
+        let mut events = Parser::new_ext(source, options).peekable();
+        while let Some(event) = events.next() {
             if let Some((_, code)) = &mut b.code {
                 match event {
                     Event::Text(t) => {
@@ -355,6 +362,7 @@ impl Hub {
                     Tag::TableHead => b.stack.push((Frame::TableRow(true), Vec::new())),
                     Tag::TableRow => b.stack.push((Frame::TableRow(false), Vec::new())),
                     Tag::TableCell => {
+                        b.stack.push((Frame::TableCell, Vec::new()));
                         b.inline = Some(Inline::default());
                     }
                     Tag::Emphasis => b.flags.italic = true,
@@ -459,8 +467,13 @@ impl Hub {
                         }
                     }
                     TagEnd::TableCell => {
+                        b.flush_paragraph();
+                        let children = match b.stack.last() {
+                            Some((Frame::TableCell, _)) => b.stack.pop().map(|(_, c)| c),
+                            _ => None,
+                        }
+                        .unwrap_or_default();
                         let head = matches!(b.stack.last(), Some((Frame::TableRow(true), _)));
-                        let text = b.take_text();
                         b.push_el(
                             div()
                                 .flex_1()
@@ -470,7 +483,10 @@ impl Hub {
                                 .border_r_1()
                                 .border_color(rgb(p.divider))
                                 .when_head(head)
-                                .children(text)
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .children(children)
                                 .into_any_element(),
                         );
                     }
@@ -517,10 +533,29 @@ impl Hub {
                     TagEnd::Image => {
                         if let Some((_, url)) = b.images.pop() {
                             let url = b.resolve(&url);
+                            // GitLab sizes an image with attributes after
+                            // it: `![x](a.png){width=12}`.
+                            let attrs = match events.peek() {
+                                Some(Event::Text(t)) => image_attrs(t),
+                                _ => None,
+                            };
+                            let (width, height) = match attrs {
+                                Some((width, height, used)) => {
+                                    if let Some(Event::Text(t)) = events.next() {
+                                        let rest = t[used..].to_string();
+                                        if !rest.is_empty() {
+                                            let flags = b.flags;
+                                            b.inline().push(&rest, flags);
+                                        }
+                                    }
+                                    (width, height)
+                                }
+                                None => (None, None),
+                            };
                             // The image goes in a block of its own, after
                             // whatever text led up to it.
                             b.flush_paragraph();
-                            let image = self.image(&url, cx);
+                            let image = self.image_sized(&url, width, height, cx);
                             b.push_el(image);
                         }
                     }
@@ -561,6 +596,12 @@ impl Hub {
                         .push(if done { "☑ " } else { "☐ " }, Flags::default());
                 }
                 Event::Html(html) | Event::InlineHtml(html) => {
+                    // Templates leave their instructions in comments,
+                    // which the forges' own pages hide.
+                    let html = strip_comments(&html, &mut b.in_comment);
+                    if html.trim().is_empty() {
+                        continue;
+                    }
                     if let Some(tag) = img_tag(&html) {
                         b.flush_paragraph();
                         // A <picture> may offer a dark-mode version.
@@ -705,7 +746,61 @@ pub fn code_block(id: ElementId, lang: &str, code: &str) -> AnyElement {
     block.into_any_element()
 }
 
-fn strip_tags(html: &str) -> String {
+/// The `{width=12 height=8}` GitLab allows after an image: its width and
+/// height in pixels, and how much of `text` it took.
+fn image_attrs(text: &str) -> Option<(Option<f32>, Option<f32>, usize)> {
+    let inner = text.strip_prefix('{')?;
+    let end = inner.find('}')?;
+    let (mut width, mut height) = (None, None);
+    for attr in inner[..end].split_whitespace() {
+        let (key, value) = attr.split_once('=')?;
+        let value = value.trim_matches('"');
+        // Percentages have nothing to be a share of here.
+        let pixels = value
+            .strip_suffix("px")
+            .unwrap_or(value)
+            .parse::<f32>()
+            .ok();
+        match key {
+            "width" => width = pixels,
+            "height" => height = pixels,
+            _ => {}
+        }
+    }
+    (width.is_some() || height.is_some()).then_some((width, height, end + 2))
+}
+
+/// `html` without its comments, carrying whether one is still open over
+/// to the next piece.
+fn strip_comments(html: &str, in_comment: &mut bool) -> String {
+    let mut out = String::new();
+    let mut rest = html;
+    loop {
+        if *in_comment {
+            match rest.find("-->") {
+                Some(end) => {
+                    rest = &rest[end + 3..];
+                    *in_comment = false;
+                }
+                None => return out,
+            }
+        } else {
+            match rest.find("<!--") {
+                Some(start) => {
+                    out.push_str(&rest[..start]);
+                    rest = &rest[start + 4..];
+                    *in_comment = true;
+                }
+                None => {
+                    out.push_str(rest);
+                    return out;
+                }
+            }
+        }
+    }
+}
+
+pub fn strip_tags(html: &str) -> String {
     let mut out = String::new();
     let mut in_tag = false;
     for c in html.chars() {
@@ -969,6 +1064,36 @@ fn short_gitlab_url(url: &str, here: Option<&str>) -> (String, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn images_take_gitlabs_sizes() {
+        assert_eq!(image_attrs("{width=12}"), Some((Some(12.0), None, 10)));
+        assert_eq!(
+            image_attrs("{width=\"30px\" height=20} after"),
+            Some((Some(30.0), Some(20.0), 24))
+        );
+        assert_eq!(image_attrs("{width=50%}"), None);
+        assert_eq!(image_attrs("(UTC+1)"), None);
+        assert_eq!(image_attrs("{: .class}"), None);
+    }
+
+    #[test]
+    fn comments_are_hidden() {
+        let mut open = false;
+        assert_eq!(strip_comments("<!--", &mut open), "");
+        assert!(open);
+        assert_eq!(
+            strip_comments("**Not ready yet?** see [x](y)", &mut open),
+            ""
+        );
+        assert_eq!(
+            strip_comments("--> <b>after</b>", &mut open),
+            " <b>after</b>"
+        );
+        assert!(!open);
+        assert_eq!(strip_comments("a <!-- b --> c <!--- d", &mut open), "a  c ");
+        assert!(open);
+    }
 
     #[test]
     fn github_links_shorten() {

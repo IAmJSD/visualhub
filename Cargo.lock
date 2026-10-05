@@ -6628,6 +6628,7 @@ dependencies = [
  "diffy",
  "env_logger",
  "gpui",
+ "image",
  "log",
  "pulldown-cmark",
  "serde_json",

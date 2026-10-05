@@ -776,7 +776,8 @@ fn check_account(account: &Account) -> Result<(Value, String), String> {
 
 enum Avatar {
     Loading,
-    Ready(Arc<Image>),
+    /// The image, and its size in pixels when its header says.
+    Ready(Arc<Image>, Option<(u32, u32)>),
     Failed,
 }
 
@@ -1942,7 +1943,7 @@ impl Hub {
     /// while it is on its way or if it could not be read.
     fn load_image(&mut self, key: String, cx: &mut Context<Self>) -> Option<Arc<Image>> {
         match self.images.get(&key) {
-            Some(Avatar::Ready(image)) => return Some(image.clone()),
+            Some(Avatar::Ready(image, _)) => return Some(image.clone()),
             Some(_) => return None,
             None => {}
         }
@@ -1952,12 +1953,22 @@ impl Hub {
             let fetch_key = key.clone();
             let bytes = cx
                 .background_executor()
-                .spawn(async move { client.fetch_bytes(&fetch_key) })
+                .spawn(async move {
+                    client.fetch_bytes(&fetch_key).map(|bytes| {
+                        let size = image::ImageReader::new(std::io::Cursor::new(&bytes))
+                            .with_guessed_format()
+                            .ok()
+                            .and_then(|r| r.into_dimensions().ok());
+                        (bytes, size)
+                    })
+                })
                 .await;
             this.update(cx, |hub, cx| {
                 let image = match bytes {
-                    Ok(bytes) => match sniff(&bytes) {
-                        Some(format) => Avatar::Ready(Arc::new(Image::from_bytes(format, bytes))),
+                    Ok((bytes, size)) => match sniff(&bytes) {
+                        Some(format) => {
+                            Avatar::Ready(Arc::new(Image::from_bytes(format, bytes)), size)
+                        }
                         None => Avatar::Failed,
                     },
                     Err(_) => Avatar::Failed,
@@ -2069,14 +2080,35 @@ impl Hub {
             Styled as _,
         };
         let p = crate::ui::palette();
-        match self.load_image(url.to_string(), cx) {
-            Some(image) => img(image)
+        let image = self.load_image(url.to_string(), cx);
+        let natural = match self.images.get(url) {
+            Some(Avatar::Ready(_, Some((w, h)))) if *w > 0 && *h > 0 => {
+                Some((*w as f32, *h as f32))
+            }
+            _ => None,
+        };
+        match (image, natural) {
+            // No size asked for: as wide as the picture is, up to the
+            // column, and as tall as its proportions make that, rather
+            // than a fixed box it floats in. (The box carries the
+            // proportions: an `img` as wide as its column takes its own
+            // pixel height.) A size asked for is absolute, and `img` works
+            // out the other side itself.
+            (Some(image), Some((w, h))) if width.is_none() && height.is_none() => {
+                let mut frame = div()
+                    .w_full()
+                    .max_w(px(w.min(760.0)))
+                    .child(img(image).size_full());
+                frame.style().aspect_ratio = Some(w / h);
+                frame.into_any_element()
+            }
+            (Some(image), _) => img(image)
                 .when_some(width, |i, w| i.w(px(w)))
                 .when_some(height, |i, h| i.h(px(h)))
                 .max_w(px(760.0))
                 .max_h(px(560.0))
                 .into_any_element(),
-            None => div()
+            (None, _) => div()
                 .w(px(240.0))
                 .h(px(60.0))
                 .rounded_md()
