@@ -261,7 +261,7 @@ impl Hub {
                     == Route::Org {
                         login: login.clone(),
                     };
-                let avatar = self.avatar(&org.s("avatar_url"), 16.0, cx);
+                let avatar = self.avatar_of(org, 16.0, cx);
                 orgs = orgs.child(
                     div()
                         .id(("org", i))
@@ -283,7 +283,7 @@ impl Hub {
         }
 
         let me = self.me.clone();
-        let avatar = self.avatar(&me.s("avatar_url"), 28.0, cx);
+        let avatar = self.avatar_of(&me, 28.0, cx);
         let login = me.s("login");
         let switcher = self.accounts_menu();
         let detail = if self.accounts.len() > 1 || !forge::is_github() {
@@ -364,7 +364,7 @@ impl Hub {
         };
         let jump = self.input("jump", &placeholder, cx).w(px(380.0));
         let me = self.me.clone();
-        let avatar = self.avatar(&me.s("avatar_url"), 22.0, cx);
+        let avatar = self.avatar_of(&me, 22.0, cx);
         let login = me.s("login");
         let new_menu = self.new_menu();
         div()

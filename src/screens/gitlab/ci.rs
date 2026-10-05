@@ -636,7 +636,7 @@ impl Hub {
             );
 
         let sha = pipeline.s("sha");
-        let avatar = self.avatar(&pipeline.s("user.avatar_url"), 20.0, cx);
+        let avatar = self.avatar_of(pipeline.at("user"), 20.0, cx);
         let block = |label: &str, body: AnyElement| {
             widgets::col()
                 .gap_1()

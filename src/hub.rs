@@ -1973,23 +1973,75 @@ impl Hub {
 
     /// A round avatar, fetched once per URL and size.
     pub fn avatar(&mut self, url: &str, size: f32, cx: &mut Context<Self>) -> gpui::AnyElement {
-        use gpui::{div, img, px, IntoElement as _, Styled as _};
+        self.avatar_or_initial(url, "", size, cx)
+    }
+
+    /// Someone's avatar, or, when they have none or it can't be fetched
+    /// (a GitLab that keeps its uploads from anyone not signed in to the
+    /// site serves them to no token), their initial on a colour of their
+    /// own, as GitLab does.
+    pub fn avatar_of(
+        &mut self,
+        who: &Value,
+        size: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let name = [who.s("login"), who.s("name")]
+            .into_iter()
+            .find(|n| !n.is_empty())
+            .unwrap_or_default();
+        self.avatar_or_initial(&who.s("avatar_url"), &name, size, cx)
+    }
+
+    fn avatar_or_initial(
+        &mut self,
+        url: &str,
+        name: &str,
+        size: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        use gpui::{div, img, px, IntoElement as _, ParentElement as _, Styled as _};
         let p = crate::ui::palette();
         let pixels = (size * 2.0).round() as u32;
-        let image = if url.is_empty() {
-            None
+        let key = if url.is_empty() {
+            String::new()
         } else if url.contains('?') {
-            self.load_image(format!("{url}&s={pixels}"), cx)
+            format!("{url}&s={pixels}")
         } else {
-            self.load_image(format!("{url}?s={pixels}"), cx)
+            format!("{url}?s={pixels}")
         };
-        match image {
-            Some(image) => img(image)
+        let image = if key.is_empty() {
+            None
+        } else {
+            self.load_image(key.clone(), cx)
+        };
+        let missing = key.is_empty() || matches!(self.images.get(&key), Some(Avatar::Failed));
+        let initial = name.chars().next().filter(|_| missing);
+        match (image, initial) {
+            (Some(image), _) => img(image)
                 .size(px(size))
                 .flex_none()
                 .rounded_full()
                 .into_any_element(),
-            None => div()
+            (None, Some(initial)) => {
+                const COLORS: [u32; 6] =
+                    [0x6e49cb, 0x1f75cb, 0x108548, 0xab6100, 0xc0341d, 0x0b6b7a];
+                let color = COLORS[(hash(&name.to_lowercase()) % COLORS.len() as u64) as usize];
+                div()
+                    .size(px(size))
+                    .flex_none()
+                    .rounded_full()
+                    .bg(gpui::rgb(color))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(px((size * 0.5).max(8.0)))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(gpui::rgb(0xffffff))
+                    .child(initial.to_uppercase().to_string())
+                    .into_any_element()
+            }
+            (None, None) => div()
                 .size(px(size))
                 .flex_none()
                 .rounded_full()

@@ -407,7 +407,7 @@ impl Hub {
             .fetch(&format!("{base}/artifacts"), cx)
             .ready()
             .map(|v| v.i("total_count"));
-        let actor_avatar = self.avatar(&run.s("triggering_actor.avatar_url"), 20.0, cx);
+        let actor_avatar = self.avatar_of(run.at("triggering_actor"), 20.0, cx);
         let block = |label: &str, body: AnyElement| {
             widgets::col()
                 .gap_1()

@@ -338,7 +338,7 @@ impl Hub {
             Load::Ready(v) => {
                 for (i, r) in v.list("").iter().enumerate() {
                     let full = r.s("full_name");
-                    let avatar = self.avatar(&r.s("owner.avatar_url"), 18.0, cx);
+                    let avatar = self.avatar_of(r.at("owner"), 18.0, cx);
                     top_list = top_list.child(
                         widgets::list_row(
                             ("top", i),

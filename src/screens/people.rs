@@ -46,7 +46,7 @@ impl Hub {
         let p = palette();
         let me = self.login();
         let is_me = me.eq_ignore_ascii_case(login);
-        let avatar = self.avatar(&user.s("avatar_url"), 220.0, cx);
+        let avatar = self.avatar_of(&user, 220.0, cx);
         let following = self
             .fetch_check(&format!("/user/following/{login}"), cx)
             .ready()
@@ -173,7 +173,7 @@ impl Hub {
             if !orgs.list("").is_empty() {
                 let mut grid = div().flex().flex_row().flex_wrap().gap_1();
                 for (i, o) in orgs.list("").iter().enumerate() {
-                    let avatar = self.avatar(&o.s("avatar_url"), 32.0, cx);
+                    let avatar = self.avatar_of(o, 32.0, cx);
                     grid = grid.child(
                         div()
                             .id(("user-org", i))
@@ -600,7 +600,7 @@ impl Hub {
             .ready()
             .map(|m| m.s("state") == "active")
             .unwrap_or(false);
-        let avatar = self.avatar(&org.s("avatar_url"), 72.0, cx);
+        let avatar = self.avatar_of(&org, 72.0, cx);
         let tab_key = format!("org.tab:{login}");
         let tab = self.choice(&tab_key, "repos");
         let mut names = vec![

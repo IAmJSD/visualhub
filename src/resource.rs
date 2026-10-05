@@ -748,7 +748,7 @@ impl Hub {
                 buttons = buttons.child(button);
             }
 
-            let avatar = self.avatar(&user.s("avatar_url"), 48.0, cx);
+            let avatar = self.avatar_of(user, 48.0, cx);
             grid = grid.child(
                 div()
                     .id(ElementId::Name(format!("{}#{i}", spec.id).into()))

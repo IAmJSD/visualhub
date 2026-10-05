@@ -179,7 +179,7 @@ impl Hub {
         let path = format!("/repos/{repo}/releases/{id}");
         let r = ready!(self.fetch(&path, cx));
         let notes = self.markdown(&format!("release-{id}"), &r.s("body"), cx);
-        let avatar = self.avatar(&r.s("author.avatar_url"), 20.0, cx);
+        let avatar = self.avatar_of(r.at("author"), 20.0, cx);
         let me = self.login();
         let repo_s = repo.to_string();
         let assets = ListSpec::new(format!("{path}/assets"), move |a| {

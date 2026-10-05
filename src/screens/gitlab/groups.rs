@@ -110,7 +110,7 @@ impl Hub {
                 "You lose the access the group gave you.",
                 "Leave",
             );
-        let avatar = self.avatar(&crate::forge::absolute(&group.s("avatar_url")), 72.0, cx);
+        let avatar = self.avatar_of(&serde_json::json!({ "login": group.s("full_name"), "avatar_url": crate::forge::absolute(&group.s("avatar_url")) }), 72.0, cx);
         let parent = group
             .s("full_path")
             .rsplit_once('/')

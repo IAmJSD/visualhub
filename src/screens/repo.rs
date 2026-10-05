@@ -598,7 +598,7 @@ impl Hub {
 
     fn repo_header(&mut self, repo: &str, info: &Value, cx: &mut Context<Self>) -> AnyElement {
         let p = palette();
-        let owner_avatar = self.avatar(&info.s("owner.avatar_url"), 24.0, cx);
+        let owner_avatar = self.avatar_of(info.at("owner"), 24.0, cx);
         let starred = self
             .fetch_check(&format!("/user/starred/{repo}"), cx)
             .ready()
@@ -1370,7 +1370,7 @@ impl Hub {
         {
             let mut grid = div().flex().flex_row().flex_wrap().gap_1();
             for (i, person) in people.list("").iter().enumerate() {
-                let avatar = self.avatar(&person.s("avatar_url"), 28.0, cx);
+                let avatar = self.avatar_of(person, 28.0, cx);
                 let login = person.s("login");
                 grid = grid.child(
                     div()

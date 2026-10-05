@@ -284,8 +284,8 @@ impl Hub {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = palette();
-        let login = comment.s("user.login");
-        let avatar = self.avatar(&comment.s("user.avatar_url"), 32.0, cx);
+        let login = shown_name(comment.at("user"));
+        let avatar = self.avatar_of(comment.at("user"), 32.0, cx);
         let body_text = comment.s("body");
         let body = self.markdown(id, &body_text, cx);
         let association = comment.s("author_association");
@@ -382,7 +382,7 @@ impl Hub {
         extra: Option<AnyElement>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let avatar = self.avatar(&actor.s("avatar_url"), 18.0, cx);
+        let avatar = self.avatar_of(actor, 18.0, cx);
         let who = widgets::row()
             .gap_2()
             .child(avatar)

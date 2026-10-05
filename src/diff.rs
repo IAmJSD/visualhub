@@ -668,7 +668,7 @@ impl Hub {
 
     /// A review comment under its line: author, time, body, reply.
     fn review_comment(&mut self, id: &str, comment: &Value, cx: &mut Context<Self>) -> AnyElement {
-        let avatar = self.avatar(&comment.s("user.avatar_url"), 20.0, cx);
+        let avatar = self.avatar_of(comment.at("user"), 20.0, cx);
         let body = self.markdown(id, &comment.s("body"), cx);
         let url = comment.s("url");
         let pulls_url = comment.s("pull_request_url");

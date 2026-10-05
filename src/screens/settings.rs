@@ -484,7 +484,7 @@ impl Hub {
                         cx.notify();
                     })
                     .act();
-                let avatar = self.avatar(&me.s("avatar_url"), 120.0, cx);
+                let avatar = self.avatar_of(&me, 120.0, cx);
                 let mut info = widgets::col().gap_1().flex_1();
                 for (label, key) in [
                     ("Name", "name"),

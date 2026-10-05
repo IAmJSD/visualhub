@@ -326,6 +326,22 @@ impl Client {
     /// own files, and Bitbucket's API, get the token, for private
     /// projects' uploads and files.
     pub fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        let api = if self.is_gitlab() {
+            gitlab_avatar_api(&self.web, url).or_else(|| gitlab_upload_api(&self.web, url))
+        } else {
+            None
+        };
+        match api {
+            // The API's copy, or, from a GitLab older than its uploads
+            // endpoint (17.4), the site's.
+            Some(api) => self
+                .fetch_bytes_at(&api)
+                .or_else(|_| self.fetch_bytes_at(url)),
+            None => self.fetch_bytes_at(url),
+        }
+    }
+
+    fn fetch_bytes_at(&self, url: &str) -> Result<Vec<u8>> {
         let mut request = self.agent.get(url);
         if self.is_gitlab() && url.starts_with(&*self.web) && !self.token.is_empty() {
             request = request.header("Authorization", format!("Bearer {}", self.token));
@@ -346,6 +362,47 @@ impl Client {
             .limit(16 * 1024 * 1024)
             .read_to_vec()?)
     }
+}
+
+/// A file attached to an issue, merge request or comment
+/// (`/group/project/uploads/<secret>/shot.png`, or
+/// `/-/project/12/uploads/…`), which GitLab serves only to a signed-in
+/// browser, as the API's copy, which takes the token.
+fn gitlab_upload_api(web: &str, url: &str) -> Option<String> {
+    let rest = url.strip_prefix(web)?.strip_prefix('/')?;
+    let rest = rest.split(['?', '#']).next()?;
+    let (project, upload) = rest.split_once("/uploads/")?;
+    let (secret, file) = upload.split_once('/')?;
+    if secret.len() != 32 || !secret.bytes().all(|b| b.is_ascii_hexdigit()) || file.is_empty() {
+        return None;
+    }
+    let project = match project.strip_prefix("-/project/") {
+        Some(id) if id.bytes().all(|b| b.is_ascii_digit()) => id.to_string(),
+        Some(_) => return None,
+        None => crate::json::enc(project.trim_end_matches("/-")),
+    };
+    Some(format!(
+        "{web}/api/v4/projects/{project}/uploads/{secret}/{file}"
+    ))
+}
+
+/// A GitLab group's or project's avatar, which the site serves only to a
+/// signed-in browser once the group or project is private (or the
+/// instance keeps everything from the public), as the API's copy, which
+/// takes the token.
+fn gitlab_avatar_api(web: &str, url: &str) -> Option<String> {
+    let rest = url.strip_prefix(web)?.strip_prefix("/uploads/-/system/")?;
+    let (kind, rest) = rest.split_once("/avatar/")?;
+    let id = rest.split('/').next()?;
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let kind = match kind {
+        "group" | "namespace" => "groups",
+        "project" => "projects",
+        _ => return None,
+    };
+    Some(format!("{web}/api/v4/{kind}/{id}/avatar"))
 }
 
 /// How Bitbucket takes a token: an API token or access token as Bearer,
@@ -853,6 +910,41 @@ mod tests {
         assert_eq!(
             super::glab_config_hosts(yaml),
             ["gitlab.com", "git.example.com"]
+        );
+    }
+
+    #[test]
+    fn private_avatars_come_from_the_api() {
+        let web = "https://gitlab.com";
+        assert_eq!(
+            super::gitlab_avatar_api(
+                web,
+                "https://gitlab.com/uploads/-/system/group/avatar/2340376/logo.png?v=1&s=32"
+            )
+            .as_deref(),
+            Some("https://gitlab.com/api/v4/groups/2340376/avatar")
+        );
+        assert_eq!(
+            super::gitlab_avatar_api(
+                web,
+                "https://gitlab.com/uploads/-/system/project/avatar/15/a.png"
+            )
+            .as_deref(),
+            Some("https://gitlab.com/api/v4/projects/15/avatar")
+        );
+        assert_eq!(
+            super::gitlab_avatar_api(
+                web,
+                "https://gitlab.com/uploads/-/system/user/avatar/1/a.png"
+            ),
+            None
+        );
+        assert_eq!(
+            super::gitlab_avatar_api(
+                web,
+                "https://elsewhere.com/uploads/-/system/group/avatar/1/a.png"
+            ),
+            None
         );
     }
 }

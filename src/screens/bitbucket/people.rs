@@ -21,7 +21,7 @@ impl Hub {
             return self.bb_workspace(login, cx);
         }
         let is_me = user.s("login") == self.login();
-        let avatar = self.avatar(&user.s("avatar_url"), 96.0, cx);
+        let avatar = self.avatar_of(&user, 96.0, cx);
         let tab_key = format!("user.tab:{login}");
         let tab = self.choice(&tab_key, if is_me { "repos" } else { "pulls" });
         let mut tabs = vec![widgets::TabItem::new(
@@ -85,7 +85,7 @@ impl Hub {
 
     pub fn bb_workspace(&mut self, slug: &str, cx: &mut Context<Self>) -> AnyElement {
         let ws = ready!(self.fetch(&format!("/orgs/{slug}"), cx));
-        let avatar = self.avatar(&ws.s("avatar_url"), 64.0, cx);
+        let avatar = self.avatar_of(&ws, 64.0, cx);
         let tab_key = format!("org.tab:{slug}");
         let tab = self.choice(&tab_key, "repos");
         let tabs = vec![

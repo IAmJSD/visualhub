@@ -1184,7 +1184,7 @@ impl Hub {
             );
         }
         for a in issue.list("assignees").to_vec() {
-            let avatar = self.avatar(&a.s("avatar_url"), 20.0, cx);
+            let avatar = self.avatar_of(&a, 20.0, cx);
             assignees = assignees.child(widgets::row().child(avatar).child(a.s("login")));
         }
 

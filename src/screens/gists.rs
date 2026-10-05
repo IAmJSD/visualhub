@@ -112,7 +112,7 @@ impl Hub {
                 .ready()
                 .map(|v| v.b(""))
                 .unwrap_or(false);
-        let avatar = self.avatar(&g.s("owner.avatar_url"), 24.0, cx);
+        let avatar = self.avatar_of(g.at("owner"), 24.0, cx);
         let mut files = widgets::col().gap_3();
         if let Value::Object(map) = g.at("files") {
             for (i, (name, f)) in map.iter().enumerate() {
