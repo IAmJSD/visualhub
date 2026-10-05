@@ -908,7 +908,7 @@ impl Hub {
             "running" | "pending" | "created" | "preparing" | "waiting_for_resource"
         );
         if running {
-            self.poll(&[base.clone()], 4, cx);
+            self.poll(std::slice::from_ref(&base), 4, cx);
         }
         let (mark, color) = ci_icon(&job.s("status"));
         let mut buttons = widgets::row();

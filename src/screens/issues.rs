@@ -144,7 +144,7 @@ impl Hub {
                 Act::choose(&state_key, "closed"),
             ),
         ];
-        if kind == "pr" && crate::forge::is_gitlab() {
+        if kind == "pr" && !crate::forge::is_github() {
             states.insert(
                 1,
                 (
@@ -362,7 +362,7 @@ impl Hub {
             Some(n) => format!("{n} {label}"),
             None => label.to_string(),
         };
-        let gitlab_prs = kind == "pr" && crate::forge::is_gitlab();
+        let gitlab_prs = kind == "pr" && !crate::forge::is_github();
         let (open_key, closed_key) = match (kind, gitlab_prs) {
             (_, true) => ("openPulls", "closedOnlyPulls"),
             ("pr", _) => ("openPulls", "closedPulls"),
@@ -599,7 +599,9 @@ impl Hub {
             ),
             delete: None,
             extra: Vec::new(),
-            reactions: Some(format!("/repos/{repo}/issues/{number}/reactions")),
+            // Bitbucket has no reactions.
+            reactions: (!crate::forge::is_bitbucket())
+                .then(|| format!("/repos/{repo}/issues/{number}/reactions")),
             invalidate: inval.clone(),
             quote_into: Some(field.clone()),
         };
@@ -736,7 +738,8 @@ impl Hub {
                     edit: mine.then(|| edit_comment(&url, &event.s("body"), inval)),
                     delete: Some(delete_comment(&url, inval)),
                     extra: Vec::new(),
-                    reactions: Some(format!("{}/reactions", api_path(&url))),
+                    reactions: (!crate::forge::is_bitbucket())
+                        .then(|| format!("{}/reactions", api_path(&url))),
                     invalidate: inval.to_string(),
                     quote_into: Some(field.to_string()),
                 };
@@ -1122,6 +1125,11 @@ impl Hub {
         is_pr: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        // Bitbucket's pull requests have no assignees, labels or
+        // milestones, and nothing else here applies to them.
+        if crate::forge::is_bitbucket() {
+            return widgets::col().into_any_element();
+        }
         let number = issue.i("number");
         let path = crate::forge::issue_api(repo, number, is_pr);
         let inval_issue = path.clone();

@@ -27,6 +27,19 @@ const SECTIONS: [(&str, &str); 11] = [
     ("updates", "Updates"),
 ];
 
+/// Bitbucket's account sections: the rest is the Atlassian account's.
+const BITBUCKET_SECTIONS: [(&str, &str); 6] = [
+    ("profile", "Profile"),
+    ("emails", "Emails"),
+    ("ssh", "SSH keys"),
+    ("gpg", "GPG keys"),
+    ("session", "Session"),
+    ("updates", "Updates"),
+];
+
+/// Where an Atlassian account's profile is edited.
+const ATLASSIAN_PROFILE: &str = "https://id.atlassian.com/manage-profile/profile-and-visibility";
+
 /// GitLab's account sections: no social accounts, blocks, interaction
 /// limits or apps to list, and its own access tokens.
 const GITLAB_SECTIONS: [(&str, &str); 8] = [
@@ -44,9 +57,44 @@ impl Hub {
     pub fn settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let section = self.choice("settings.section", "profile");
         let gitlab = crate::forge::is_gitlab();
+        let bitbucket = crate::forge::is_bitbucket();
         let web = crate::forge::web();
         let body = match section.as_str() {
             "tokens" if gitlab => self.gl_tokens(cx),
+            // Bitbucket shows the Atlassian account's emails, changed there.
+            "emails" if bitbucket => {
+                let spec = ListSpec::new("/user/emails", |e| {
+                    let mut row = Row::new(e.s("email")).icon("mail", widgets::gray()).meta(
+                        if e.b("verified") {
+                            "verified"
+                        } else {
+                            "unverified"
+                        },
+                    );
+                    if e.b("primary") {
+                        row = row.tag("Primary", widgets::green());
+                    }
+                    row.inline()
+                })
+                .empty("No email addresses.");
+                let list = self.list(&spec, cx);
+                widgets::col()
+                    .gap_3()
+                    .child(
+                        widgets::row()
+                            .child(widgets::dim(
+                                "Your emails belong to your Atlassian account.",
+                            ))
+                            .child(widgets::spacer())
+                            .child(widgets::btn(
+                                "atlassian-emails",
+                                "Change them at Atlassian",
+                                Act::Url(ATLASSIAN_PROFILE.into()),
+                            )),
+                    )
+                    .child(list)
+                    .into_any_element()
+            }
             "updates" => {
                 let at_launch = crate::update::check_at_launch();
                 widgets::col()
@@ -328,7 +376,7 @@ impl Hub {
                     .into_any_element()
             }
             "session" => {
-                let rate = if gitlab {
+                let rate = if !crate::forge::is_github() {
                     crate::hub::Load::Loading
                 } else {
                     self.fetch("/rate_limit", cx)
@@ -377,7 +425,9 @@ impl Hub {
                         .child(widgets::btn(
                             "tokens",
                             format!("Manage tokens on {}", crate::forge::name()),
-                            Act::Url(if gitlab {
+                            Act::Url(if bitbucket {
+                                "https://id.atlassian.com/manage-profile/security/api-tokens".into()
+                            } else if gitlab {
                                 format!("{web}/-/user_settings/personal_access_tokens")
                             } else {
                                 format!("{web}/settings/tokens")
@@ -465,7 +515,9 @@ impl Hub {
                                 .child(widgets::btn(
                                     "change-avatar",
                                     "Change picture",
-                                    Act::Url(if gitlab {
+                                    Act::Url(if bitbucket {
+                                        ATLASSIAN_PROFILE.into()
+                                    } else if gitlab {
                                         format!("{web}/-/user_settings/profile")
                                     } else {
                                         format!("{web}/settings/profile")
@@ -474,7 +526,13 @@ impl Hub {
                         ),
                     )
                     // GitLab's API doesn't let you edit your own profile.
-                    .child(div().pt_3().child(if gitlab {
+                    .child(div().pt_3().child(if bitbucket {
+                        widgets::primary(
+                            "edit-profile",
+                            "Edit profile at Atlassian",
+                            Act::Url(ATLASSIAN_PROFILE.into()),
+                        )
+                    } else if gitlab {
                         widgets::primary(
                             "edit-profile",
                             "Edit profile on GitLab",
@@ -487,7 +545,13 @@ impl Hub {
             }
         };
         let mut nav = widgets::col().gap_1().w(gpui::px(200.0)).flex_none();
-        let sections: &[(&str, &str)] = if gitlab { &GITLAB_SECTIONS } else { &SECTIONS };
+        let sections: &[(&str, &str)] = if bitbucket {
+            &BITBUCKET_SECTIONS
+        } else if gitlab {
+            &GITLAB_SECTIONS
+        } else {
+            &SECTIONS
+        };
         for (i, (key, label)) in sections.iter().enumerate() {
             let selected = section == *key;
             nav = nav.child(

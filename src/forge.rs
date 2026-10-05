@@ -1,9 +1,10 @@
-//! Which forge an account lives on -- GitHub, or a GitLab instance -- and
-//! what the screens draw differently because of it.
+//! Which forge an account lives on -- GitHub, a GitLab instance, or
+//! Bitbucket Cloud -- and what the screens draw differently because of it.
 //!
 //! The screens are written against GitHub's API and GitHub's words. On a
-//! GitLab account the client translates those requests ([`crate::gitlab`]),
-//! so most pages need nothing from here. What they do need is what they
+//! GitLab or Bitbucket account the client translates those requests
+//! ([`crate::gitlab`], [`crate::bitbucket`]), so most pages need nothing
+//! from here. What they do need is what they
 //! draw themselves: what a pull request is called, where a page lives on
 //! the web, how a link reads back as a page, and where a repository's path
 //! ends now that GitLab's groups nest (`group/subgroup/project`).
@@ -15,6 +16,7 @@ use std::cell::RefCell;
 pub enum Forge {
     GitHub,
     GitLab,
+    Bitbucket,
 }
 
 impl Forge {
@@ -22,6 +24,7 @@ impl Forge {
         match self {
             Forge::GitHub => "GitHub",
             Forge::GitLab => "GitLab",
+            Forge::Bitbucket => "Bitbucket",
         }
     }
 
@@ -30,6 +33,7 @@ impl Forge {
         match self {
             Forge::GitHub => "github",
             Forge::GitLab => "gitlab",
+            Forge::Bitbucket => "bitbucket",
         }
     }
 
@@ -37,6 +41,7 @@ impl Forge {
         match key {
             "github" => Some(Forge::GitHub),
             "gitlab" => Some(Forge::GitLab),
+            "bitbucket" => Some(Forge::Bitbucket),
             _ => None,
         }
     }
@@ -46,8 +51,9 @@ impl Forge {
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Account {
     pub forge: Forge,
-    /// `github.com`, `gitlab.com`, or a self-managed GitLab's host. An
-    /// `http://` prefix is kept for instances without TLS.
+    /// `github.com`, `gitlab.com`, a self-managed GitLab's host, or
+    /// `bitbucket.org`. An `http://` prefix is kept for instances without
+    /// TLS.
     pub host: String,
     pub token: String,
 }
@@ -56,7 +62,11 @@ impl Account {
     pub fn new(forge: Forge, host: &str, token: &str) -> Self {
         Account {
             forge,
-            host: normalize_host(host),
+            // Bitbucket Cloud is the one site.
+            host: match forge {
+                Forge::Bitbucket => BITBUCKET_HOST.into(),
+                _ => normalize_host(host),
+            },
             token: token.trim().to_string(),
         }
     }
@@ -75,6 +85,7 @@ impl Account {
         match self.forge {
             Forge::GitHub => "https://api.github.com".into(),
             Forge::GitLab => format!("{}/api/v4", self.web()),
+            Forge::Bitbucket => BITBUCKET_API.into(),
         }
     }
 
@@ -91,6 +102,12 @@ impl Account {
         format!("{}:{}:{:x}", self.forge.key(), self.host, h.finish())
     }
 }
+
+pub const BITBUCKET_HOST: &str = "bitbucket.org";
+/// Bitbucket Cloud's REST API. Pages only Bitbucket has ask for paths
+/// under `/2.0/` on [`BITBUCKET_ROOT`] directly.
+pub const BITBUCKET_API: &str = "https://api.bitbucket.org/2.0";
+pub const BITBUCKET_ROOT: &str = "https://api.bitbucket.org";
 
 /// `https://gitlab.example.com/` as `gitlab.example.com`.
 pub fn normalize_host(host: &str) -> String {
@@ -131,6 +148,14 @@ pub fn current() -> Forge {
 
 pub fn is_gitlab() -> bool {
     current() == Forge::GitLab
+}
+
+pub fn is_bitbucket() -> bool {
+    current() == Forge::Bitbucket
+}
+
+pub fn is_github() -> bool {
+    current() == Forge::GitHub
 }
 
 /// The site the current account lives on: `https://github.com`.
@@ -225,27 +250,27 @@ pub fn repos_title() -> &'static str {
 }
 
 pub fn orgs_title() -> &'static str {
-    if is_gitlab() {
-        "Groups"
-    } else {
-        "Organizations"
+    match current() {
+        Forge::GitHub => "Organizations",
+        Forge::GitLab => "Groups",
+        Forge::Bitbucket => "Workspaces",
     }
 }
 
 pub fn gists_title() -> &'static str {
-    if is_gitlab() {
-        "Snippets"
-    } else {
+    if is_github() {
         "Gists"
+    } else {
+        "Snippets"
     }
 }
 
-/// The command-line tool: `gh` or `glab`.
-pub fn cli() -> &'static str {
-    if is_gitlab() {
-        "glab"
-    } else {
-        "gh"
+/// The command-line tool: `gh` or `glab`. Bitbucket has none of its own.
+pub fn cli() -> Option<&'static str> {
+    match current() {
+        Forge::GitHub => Some("gh"),
+        Forge::GitLab => Some("glab"),
+        Forge::Bitbucket => None,
     }
 }
 
@@ -575,6 +600,172 @@ pub fn gitlab_route(url: &str, w: &str) -> Option<Route> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// Pages on Bitbucket's site.
+
+/// A pipeline step as the app's job number: Bitbucket names steps by
+/// UUID, so a job is its pipeline's build number and its place in the
+/// pipeline, which the step page turns back into the step by looking.
+pub fn step_job_id(build: u64, index: usize) -> u64 {
+    build * 1000 + index as u64
+}
+
+/// [`step_job_id`] taken apart: the build number and the step's place.
+pub fn job_step(id: u64) -> (u64, usize) {
+    (id / 1000, (id % 1000) as usize)
+}
+
+/// The page for `route` on Bitbucket at `w`. Bitbucket's issue tracker
+/// is gone, so an issue's number is a pull request's.
+pub fn bitbucket_url(route: &Route, w: &str) -> String {
+    match route {
+        Route::Home | Route::Notifications | Route::Issues => w.to_string(),
+        Route::Repos => format!("{w}/dashboard/repositories"),
+        Route::Pulls => format!("{w}/dashboard/pullrequests"),
+        Route::Repo { repo, tab } => {
+            let suffix = match tab {
+                RepoTab::Pulls | RepoTab::Issues => "/pull-requests/",
+                RepoTab::Actions => "/pipelines",
+                RepoTab::Branches => "/branches/",
+                RepoTab::Tags => "/downloads/?tab=tags",
+                RepoTab::Releases | RepoTab::Packages => "/downloads/",
+                RepoTab::Commits => "/commits/",
+                RepoTab::Settings => "/admin",
+                RepoTab::Code
+                | RepoTab::Insights
+                | RepoTab::Discussions
+                | RepoTab::Projects
+                | RepoTab::Security => "",
+            };
+            format!("{w}/{repo}{suffix}")
+        }
+        Route::Tree {
+            repo,
+            git_ref,
+            path,
+            file,
+        } => format!(
+            "{w}/{repo}/src/{git_ref}/{path}{}",
+            if *file || path.is_empty() { "" } else { "/" }
+        ),
+        Route::Issue { repo, number } | Route::Conflicts { repo, number } => {
+            format!("{w}/{repo}/pull-requests/{number}")
+        }
+        Route::Pull { repo, number, tab } => {
+            let suffix = match tab {
+                PullTab::Files => "/diff",
+                PullTab::Commits => "/commits",
+                PullTab::Conversation | PullTab::Checks => "",
+            };
+            format!("{w}/{repo}/pull-requests/{number}{suffix}")
+        }
+        Route::Commit { repo, sha } => format!("{w}/{repo}/commits/{sha}"),
+        Route::Compare { repo, base, head } => {
+            format!("{w}/{repo}/branches/compare/{head}%0D{base}")
+        }
+        Route::Run { repo, id } => format!("{w}/{repo}/pipelines/results/{id}"),
+        Route::Job { repo, id } => format!("{w}/{repo}/pipelines/results/{}", job_step(*id).0),
+        Route::Release { repo, .. } => format!("{w}/{repo}/downloads/"),
+        Route::Discussion { repo, .. } => format!("{w}/{repo}"),
+        Route::Org { login } => format!("{w}/{login}/"),
+        Route::Team { org, .. } => format!("{w}/{org}/"),
+        Route::User { .. } => w.to_string(),
+        Route::Gists | Route::NewGist => format!("{w}/dashboard/snippets"),
+        Route::Gist { id } => format!("{w}/snippets/{id}"),
+        Route::NewRepo { .. } => format!("{w}/repo/create"),
+        Route::Search => format!("{w}/search"),
+        Route::Settings => format!("{w}/account/settings/"),
+        Route::Projects | Route::Project { .. } | Route::Codespaces | Route::Packages => {
+            w.to_string()
+        }
+    }
+}
+
+/// The page a link on Bitbucket at `w` points at, when the app has one.
+pub fn bitbucket_route(url: &str, w: &str) -> Option<Route> {
+    let rest = url.strip_prefix(w)?;
+    if !(rest.is_empty() || rest.starts_with('/')) {
+        return None;
+    }
+    let path = rest.split(['?', '#']).next().unwrap_or("");
+    // Bitbucket ends a directory's address with a slash, a file's without.
+    let dir = path.ends_with('/');
+    let path = path.trim_matches('/');
+    if path.is_empty() {
+        return Some(Route::Home);
+    }
+    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+    let num = |s: &str| s.parse::<u64>().ok();
+    match parts.as_slice() {
+        ["dashboard", "pullrequests", ..] => return Some(Route::Pulls),
+        ["dashboard", "repositories", ..] => return Some(Route::Repos),
+        ["dashboard", "snippets", ..] => return Some(Route::Gists),
+        ["dashboard", ..] => return Some(Route::Home),
+        ["account", ..] => return Some(Route::Settings),
+        ["repo", "create", ..] => return Some(Route::NewRepo { owner: None }),
+        ["search", ..] => return Some(Route::Search),
+        ["snippets", ws, id, ..] => {
+            return Some(Route::Gist {
+                id: format!("{ws}/{id}"),
+            })
+        }
+        ["site", ..] | ["product", ..] | ["support", ..] | ["blog", ..] | ["snippets", ..] => {
+            return None
+        }
+        [ws] | [ws, "workspace", ..] => {
+            return Some(Route::Org {
+                login: ws.to_string(),
+            })
+        }
+        _ => {}
+    }
+    let repo = format!("{}/{}", parts[0], parts[1]);
+    let tab = |tab: RepoTab| Route::Repo {
+        repo: repo.clone(),
+        tab,
+    };
+    Some(match &parts[2..] {
+        [] => tab(RepoTab::Code),
+        ["pull-requests", n, rest @ ..] if num(n).is_some() => Route::Pull {
+            repo,
+            number: num(n)?,
+            tab: match rest.first().copied() {
+                Some("diff") => PullTab::Files,
+                Some("commits") => PullTab::Commits,
+                _ => PullTab::Conversation,
+            },
+        },
+        ["pull-requests", ..] => tab(RepoTab::Pulls),
+        ["src", git_ref, path @ ..] => Route::Tree {
+            repo,
+            git_ref: git_ref.to_string(),
+            path: path.join("/"),
+            file: !path.is_empty() && !dir,
+        },
+        ["src"] => tab(RepoTab::Code),
+        ["commits", "branch", ..] | ["commits"] => tab(RepoTab::Commits),
+        ["commits", sha, ..] => Route::Commit {
+            repo,
+            sha: sha.to_string(),
+        },
+        ["branches", "compare", spec, ..] => {
+            let spec = crate::gitlab::decode(spec);
+            let (head, base) = spec.split_once(['\r', '\n'])?;
+            Route::Compare {
+                repo,
+                base: base.to_string(),
+                head: head.to_string(),
+            }
+        }
+        ["branches", ..] => tab(RepoTab::Branches),
+        ["pipelines", "results", n, ..] if num(n).is_some() => Route::Run { repo, id: num(n)? },
+        ["pipelines", ..] | ["addon", "pipelines", ..] => tab(RepoTab::Actions),
+        ["downloads", ..] => tab(RepoTab::Releases),
+        ["admin", ..] => tab(RepoTab::Settings),
+        _ => return None,
+    })
+}
+
 /// GitLab names a release by its tag; the app's routes number them. The
 /// number is the tag's hash, kept within the integers JSON carries
 /// exactly, which the client turns back into the tag by looking.
@@ -651,5 +842,70 @@ mod tests {
         assert_eq!(gitlab_route(&gitlab_url(&route, w), w), Some(route));
         assert_eq!(release_id("v1.0"), release_id("v1.0"));
         assert!(release_id("v1.0") < (1 << 53));
+    }
+
+    #[test]
+    fn bitbucket_links_become_pages() {
+        let w = "https://bitbucket.org";
+        assert_eq!(
+            bitbucket_route("https://bitbucket.org/ws/repo/pull-requests/7/diff", w),
+            Some(Route::Pull {
+                repo: "ws/repo".into(),
+                number: 7,
+                tab: PullTab::Files
+            })
+        );
+        assert_eq!(
+            bitbucket_route("https://bitbucket.org/ws/repo/src/main/src/x.rs", w),
+            Some(Route::Tree {
+                repo: "ws/repo".into(),
+                git_ref: "main".into(),
+                path: "src/x.rs".into(),
+                file: true
+            })
+        );
+        assert_eq!(
+            bitbucket_route("https://bitbucket.org/ws/repo/src/main/src/", w),
+            Some(Route::Tree {
+                repo: "ws/repo".into(),
+                git_ref: "main".into(),
+                path: "src".into(),
+                file: false
+            })
+        );
+        assert_eq!(
+            bitbucket_route("https://bitbucket.org/ws/", w),
+            Some(Route::Org { login: "ws".into() })
+        );
+        assert_eq!(
+            bitbucket_route("https://bitbucket.org.evil.example/a/b", w),
+            None
+        );
+        for route in [
+            Route::Pull {
+                repo: "ws/r".into(),
+                number: 3,
+                tab: PullTab::Commits,
+            },
+            Route::Compare {
+                repo: "ws/r".into(),
+                base: "main".into(),
+                head: "feature".into(),
+            },
+            Route::Run {
+                repo: "ws/r".into(),
+                id: 42,
+            },
+            Route::Gist {
+                id: "ws/abc12".into(),
+            },
+        ] {
+            assert_eq!(bitbucket_route(&bitbucket_url(&route, w), w), Some(route));
+        }
+        assert_eq!(job_step(step_job_id(5758, 2)), (5758, 2));
+        assert_eq!(
+            Account::new(Forge::Bitbucket, "", "t").api(),
+            "https://api.bitbucket.org/2.0"
+        );
     }
 }

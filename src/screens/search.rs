@@ -142,12 +142,11 @@ impl Hub {
                 }),
                 "topics" => ListSpec::new(format!("/search/topics?q={q}"), |t| {
                     let name = t.s("name");
-                    Row::new(
+                    Row::new(if t.s("display_name").is_empty() {
+                        name.clone()
+                    } else {
                         t.s("display_name")
-                            .is_empty()
-                            .then(|| name.clone())
-                            .unwrap_or_else(|| t.s("display_name")),
-                    )
+                    })
                     .icon("tag", widgets::gray())
                     .meta(format!("#{name}"))
                     .body(t.s("short_description"))

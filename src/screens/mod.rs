@@ -1,6 +1,7 @@
 //! The pages, one module per area. Each is a set of `impl Hub` methods.
 
 pub mod actions;
+pub mod bitbucket;
 pub mod common;
 pub mod conflicts;
 pub mod create;

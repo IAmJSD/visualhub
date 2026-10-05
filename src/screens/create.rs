@@ -241,7 +241,7 @@ impl Hub {
                 )
                 .detail("Anyone signed in to this GitLab can see it."),
             );
-        } else if is_org {
+        } else if is_org && crate::forge::is_github() {
             vis = vis.item(
                 PickItem::new(
                     "Internal",
@@ -338,15 +338,17 @@ impl Hub {
             .gap_4()
             .child(widgets::card().child(widgets::setting_row(
                 "Choose visibility",
-                &format!(
+                format!(
                     "Choose who can see and commit to this {}",
                     crate::forge::repo_word()
                 ),
                 widgets::dropdown_btn("newrepo-vis", Some(vis_icon), vis_label, vis.act()),
                 true,
             )));
-        // GitLab has no template repositories of your own to start from.
-        if !gitlab {
+        // GitLab and Bitbucket have no template repositories of your own
+        // to start from.
+        let bitbucket = crate::forge::is_bitbucket();
+        if !gitlab && !bitbucket {
             config = config.child(widgets::card().child(widgets::setting_row(
                 "Start with a template",
                 "Templates pre-configure your repository with files.",
@@ -363,7 +365,8 @@ impl Hub {
                 true,
             )));
         }
-        if starters {
+        // Bitbucket's API makes repositories empty, without starter files.
+        if starters && !bitbucket {
             config = config.child(
                 widgets::card()
                     .child(widgets::setting_row(

@@ -240,6 +240,8 @@ impl Field {
 
 type Build = Rc<dyn Fn(&FormValues) -> Result<Act, String>>;
 type MapBody = Rc<dyn Fn(Value, &FormValues) -> Value>;
+/// A GraphQL form's variables, from what was typed.
+type GqlVars = Rc<dyn Fn(&FormValues) -> Value>;
 
 pub struct FormSpec {
     pub title: String,
@@ -252,7 +254,7 @@ pub struct FormSpec {
     path: Option<String>,
     extra: Option<Value>,
     map: Option<MapBody>,
-    gql: Option<(String, Rc<dyn Fn(&FormValues) -> Value>)>,
+    gql: Option<(String, GqlVars)>,
     ok: String,
     inval: Vec<String>,
     then: Option<Then>,

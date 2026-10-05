@@ -17,19 +17,22 @@ impl Hub {
         let sort = self.choice("repos.sort", "pushed");
         let gitlab = crate::forge::is_gitlab();
         let title = crate::forge::repos_title();
-        let mut tabs = vec![
-            (
-                format!("Your {}", title.to_lowercase()),
-                tab == "yours",
-                Act::choose("repos.tab", "yours"),
-            ),
-            (
+        let mut tabs = vec![(
+            format!("Your {}", title.to_lowercase()),
+            tab == "yours",
+            Act::choose("repos.tab", "yours"),
+        )];
+        // Bitbucket has no stars.
+        if !crate::forge::is_bitbucket() {
+            tabs.push((
                 "Stars".into(),
                 tab == "starred",
                 Act::choose("repos.tab", "starred"),
-            ),
-        ];
-        // GitLab lists neither what you watch nor invitations to accept.
+            ));
+        }
+        // GitLab and Bitbucket list neither what you watch nor
+        // invitations to accept.
+        let gitlab = gitlab || crate::forge::is_bitbucket();
         if !gitlab {
             tabs.push((
                 "Watching".into(),

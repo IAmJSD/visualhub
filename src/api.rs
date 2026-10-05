@@ -5,6 +5,8 @@
 //! Screens speak GitHub's API. A client for a GitLab account answers those
 //! same requests from GitLab's API (see [`crate::gitlab`]); paths under
 //! `/api/v4/` go to GitLab as they are, for the pages only GitLab has.
+//! Bitbucket is the same ([`crate::bitbucket`]), with its own pages asking
+//! for `/2.0/...`.
 //!
 //! Everything comes back as `serde_json::Value`; see [`crate::json`] for
 //! how it is read.
@@ -75,6 +77,13 @@ impl Client {
             .http_status_as_error(false)
             .timeout_global(Some(Duration::from_secs(90)))
             .user_agent("visualhub")
+            // Bitbucket answers a pull request's diff with a redirect to
+            // its own API, which needs the token too.
+            .redirect_auth_headers(if account.forge == Forge::Bitbucket {
+                ureq::config::RedirectAuthHeaders::SameHost
+            } else {
+                ureq::config::RedirectAuthHeaders::Never
+            })
             .build()
             .into();
         Client {
@@ -91,23 +100,35 @@ impl Client {
         self.forge == Forge::GitLab
     }
 
+    pub fn is_bitbucket(&self) -> bool {
+        self.forge == Forge::Bitbucket
+    }
+
     fn url(&self, path: &str) -> String {
         if path.starts_with("http://") || path.starts_with("https://") {
             path.to_string()
         } else if self.is_gitlab() && path.starts_with("/api/") {
             format!("{}{path}", self.web)
+        } else if self.is_bitbucket() && path.starts_with("/2.0/") {
+            format!("{}{path}", crate::forge::BITBUCKET_ROOT)
         } else {
             format!("{}{path}", self.api)
         }
     }
 
-    /// Whether a path goes to GitLab as it is rather than translated.
+    /// Whether a path goes to the forge as it is rather than translated.
     fn native(&self, path: &str) -> bool {
-        path.starts_with("/api/v4/") || path.starts_with("http://") || path.starts_with("https://")
+        path.starts_with("http://")
+            || path.starts_with("https://")
+            || match self.forge {
+                Forge::GitHub => true,
+                Forge::GitLab => path.starts_with("/api/v4/"),
+                Forge::Bitbucket => path.starts_with("/2.0/"),
+            }
     }
 
     /// A request as the screens make it: to GitHub, or translated for
-    /// GitLab and answered as GitHub would.
+    /// GitLab or Bitbucket and answered as GitHub would.
     pub fn send(
         &self,
         method: &str,
@@ -115,8 +136,12 @@ impl Client {
         body: Option<&Value>,
         accept: Option<&str>,
     ) -> Result<Reply> {
-        if self.is_gitlab() && !self.native(path) {
-            return crate::gitlab::send(self, method, path, body);
+        if !self.native(path) {
+            match self.forge {
+                Forge::GitLab => return crate::gitlab::send(self, method, path, body),
+                Forge::Bitbucket => return crate::bitbucket::send(self, method, path, body),
+                Forge::GitHub => {}
+            }
         }
         self.raw(method, path, body, accept)
     }
@@ -136,7 +161,9 @@ impl Client {
             Forge::GitHub => builder
                 .header("Accept", accept.unwrap_or("application/vnd.github+json"))
                 .header("X-GitHub-Api-Version", "2022-11-28"),
-            Forge::GitLab => builder.header("Accept", accept.unwrap_or("application/json")),
+            Forge::GitLab | Forge::Bitbucket => {
+                builder.header("Accept", accept.unwrap_or("application/json"))
+            }
         };
         // Only the forge gets the token; redirects to blob storage (logs,
         // archives) are signed URLs and ureq drops auth headers on them.
@@ -149,6 +176,9 @@ impl Client {
             // way, but OAuth tokens (the GitLab CLI's web sign-in) only so.
             Forge::GitLab if url.starts_with(&*self.web) => {
                 builder.header("Authorization", format!("Bearer {}", self.token))
+            }
+            Forge::Bitbucket if url.starts_with(crate::forge::BITBUCKET_ROOT) => {
+                builder.header("Authorization", bitbucket_auth(&self.token))
             }
             _ => builder,
         };
@@ -216,10 +246,19 @@ impl Client {
     /// A JSON request; an error status becomes an `Err` carrying the
     /// forge's message. An empty success body reads as `null`.
     pub fn json(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value> {
-        if self.is_gitlab() && !self.native(path) {
-            return crate::gitlab::rest(self, method, path, body);
+        match self.forge {
+            Forge::GitLab if !self.native(path) => crate::gitlab::rest(self, method, path, body),
+            Forge::Bitbucket if !self.native(path) => {
+                crate::bitbucket::rest(self, method, path, body)
+            }
+            // Bitbucket's own pages page as GitHub does, and read its
+            // pages' items as a list.
+            Forge::Bitbucket if path.starts_with("/2.0/") => {
+                let value = self.raw_json(method, &crate::bitbucket::paged(path), body)?;
+                Ok(crate::bitbucket::unpage(value))
+            }
+            _ => self.raw_json(method, path, body),
         }
-        self.raw_json(method, path, body)
     }
 
     pub fn get(&self, path: &str) -> Result<Value> {
@@ -228,17 +267,20 @@ impl Client {
 
     /// Raw text: file contents, job logs, diffs.
     pub fn text(&self, path: &str, accept: &str) -> Result<String> {
-        if self.is_gitlab() && !self.native(path) {
-            return crate::gitlab::text(self, path);
+        match self.forge {
+            Forge::GitLab if !self.native(path) => crate::gitlab::text(self, path),
+            Forge::Bitbucket if !self.native(path) => crate::bitbucket::text(self, path),
+            _ => self.raw_text(path, accept),
         }
-        self.raw_text(path, accept)
     }
 
     /// Whether a "check" endpoint answered 204 (yes) or 404 (no):
     /// `/user/starred/{owner}/{repo}`, `/user/following/{user}`.
     pub fn check(&self, path: &str) -> Result<bool> {
-        if self.is_gitlab() && !self.native(path) {
-            return crate::gitlab::check(self, path);
+        match self.forge {
+            Forge::GitLab if !self.native(path) => return crate::gitlab::check(self, path),
+            Forge::Bitbucket if !self.native(path) => return crate::bitbucket::check(self, path),
+            _ => {}
         }
         let reply = self.raw("GET", path, None, None)?;
         match reply.status {
@@ -251,8 +293,10 @@ impl Client {
     /// A GraphQL query or mutation; GraphQL errors become an `Err`. On
     /// GitLab the few queries the screens send are answered from REST.
     pub fn graphql(&self, query: &str, variables: Value) -> Result<Value> {
-        if self.is_gitlab() {
-            return crate::gitlab::graphql(self, query, variables);
+        match self.forge {
+            Forge::GitLab => return crate::gitlab::graphql(self, query, variables),
+            Forge::Bitbucket => return crate::bitbucket::graphql(self, query, variables),
+            Forge::GitHub => {}
         }
         self.graphql_at("/graphql", query, variables)
     }
@@ -279,11 +323,18 @@ impl Client {
     }
 
     /// Bytes from anywhere: avatars and images. Only a GitLab instance's
-    /// own files get the token, for private projects' uploads and files.
+    /// own files, and Bitbucket's API, get the token, for private
+    /// projects' uploads and files.
     pub fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>> {
         let mut request = self.agent.get(url);
         if self.is_gitlab() && url.starts_with(&*self.web) && !self.token.is_empty() {
             request = request.header("Authorization", format!("Bearer {}", self.token));
+        }
+        if self.is_bitbucket()
+            && url.starts_with(crate::forge::BITBUCKET_ROOT)
+            && !self.token.is_empty()
+        {
+            request = request.header("Authorization", bitbucket_auth(&self.token));
         }
         let mut response = request.call()?;
         if response.status().as_u16() >= 400 {
@@ -294,6 +345,22 @@ impl Client {
             .with_config()
             .limit(16 * 1024 * 1024)
             .read_to_vec()?)
+    }
+}
+
+/// How Bitbucket takes a token: an API token or access token as Bearer,
+/// or `email:token` (as people used to pair app passwords with their
+/// username) as Basic.
+fn bitbucket_auth(token: &str) -> String {
+    match token.split_once(':') {
+        Some(_) => {
+            use base64::Engine as _;
+            format!(
+                "Basic {}",
+                base64::engine::general_purpose::STANDARD.encode(token)
+            )
+        }
+        None => format!("Bearer {token}"),
     }
 }
 
@@ -356,6 +423,30 @@ fn missing_scope(reply: &Reply) -> Option<String> {
 /// GitHub's error body as one readable line.
 fn explain(status: u16, body: &str) -> String {
     let parsed: Option<Value> = serde_json::from_str(body).ok();
+    // Bitbucket's: `{"type": "error", "error": {"message": …, "detail": …}}`.
+    if let Some(error) = parsed
+        .as_ref()
+        .and_then(|v| v.get("error"))
+        .filter(|e| e.get("message").is_some_and(Value::is_string))
+    {
+        let message = error.get("message").and_then(Value::as_str).unwrap_or("");
+        let detail = match error.get("detail") {
+            Some(Value::String(d)) => d.lines().next().unwrap_or("").to_string(),
+            // Field errors: `{"detail": {"name": ["is taken"]}}`.
+            Some(Value::Object(fields)) => fields
+                .iter()
+                .map(|(k, v)| format!("{k}: {}", v.to_string().trim_matches(['[', ']', '"'])))
+                .collect::<Vec<_>>()
+                .join("; "),
+            _ => String::new(),
+        };
+        let message = if detail.is_empty() || detail == message {
+            message.to_string()
+        } else {
+            format!("{message} ({detail})")
+        };
+        return format!("{status}: {message}");
+    }
     let mut message = match parsed
         .as_ref()
         .and_then(|v| v.get("message").or_else(|| v.get("error")))
@@ -408,6 +499,9 @@ fn explain(status: u16, body: &str) -> String {
             message = format!("{message} ({})", details.join("; "));
         }
     }
+    if status == 429 && (message.is_empty() || parsed.is_none()) {
+        return "429: The rate limit was reached; try again in a few minutes.".into();
+    }
     if message.is_empty() {
         message = body.chars().take(200).collect();
     }
@@ -441,7 +535,7 @@ pub fn config_dir() -> Option<PathBuf> {
 fn account_file(prefix: &str, account: &Account, login: &str) -> String {
     match account.forge {
         Forge::GitHub => format!("{prefix}-{login}"),
-        Forge::GitLab => format!(
+        Forge::GitLab | Forge::Bitbucket => format!(
             "{prefix}-{}-{login}",
             account.host_name().replace([':', '/'], "_")
         ),
@@ -577,7 +671,7 @@ pub fn save_last_account(account: &Account) {
 /// Every account this machine already has a token for: the ones signed
 /// in to here; `GH_TOKEN`/`GITHUB_TOKEN` and the GitHub CLI's login;
 /// `GITLAB_TOKEN` (for `GITLAB_HOST`, or gitlab.com) and the GitLab CLI's
-/// logins.
+/// logins; `BITBUCKET_TOKEN` (with `BITBUCKET_EMAIL` for Basic auth).
 pub fn discover_accounts() -> Vec<(Account, &'static str)> {
     let mut found: Vec<(Account, &'static str)> = Vec::new();
     let mut add = |account: Account, source: &'static str| {
@@ -615,6 +709,25 @@ pub fn discover_accounts() -> Vec<(Account, &'static str)> {
                 ),
                 "environment",
             );
+        }
+    }
+    let email = ["BITBUCKET_EMAIL", "BITBUCKET_USERNAME"]
+        .iter()
+        .find_map(|v| std::env::var(v).ok().filter(|e| !e.trim().is_empty()));
+    for var in [
+        "BITBUCKET_TOKEN",
+        "BITBUCKET_API_TOKEN",
+        "BITBUCKET_ACCESS_TOKEN",
+    ] {
+        if let Ok(token) = std::env::var(var) {
+            let token = match (&email, var) {
+                // Access tokens are Bearer only.
+                (Some(email), "BITBUCKET_TOKEN" | "BITBUCKET_API_TOKEN") => {
+                    format!("{}:{}", email.trim(), token.trim())
+                }
+                _ => token,
+            };
+            add(Account::new(Forge::Bitbucket, "", &token), "environment");
         }
     }
     let mut hosts = glab_hosts();

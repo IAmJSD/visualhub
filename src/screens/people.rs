@@ -36,6 +36,9 @@ fn gists_spec(path: String) -> ListSpec {
 
 impl Hub {
     pub fn user(&mut self, login: &str, cx: &mut Context<Self>) -> AnyElement {
+        if crate::forge::is_bitbucket() {
+            return self.bb_user(login, cx);
+        }
         let user = ready!(self.fetch(&format!("/users/{login}"), cx));
         if user.s("type") == "Organization" {
             return self.org(login, cx);
@@ -579,6 +582,9 @@ impl Hub {
     }
 
     pub fn org(&mut self, login: &str, cx: &mut Context<Self>) -> AnyElement {
+        if crate::forge::is_bitbucket() {
+            return self.bb_workspace(login, cx);
+        }
         if crate::forge::is_gitlab() {
             return self.gl_group(login, cx);
         }

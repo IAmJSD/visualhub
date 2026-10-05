@@ -131,7 +131,7 @@ fn commit_head(c: &Client, repo: &str, rev: &str) -> Result<Value> {
 
 /// Every string literal after `marker` in `query`, with the alias before
 /// it: `e3: history(first: 1, path: "src")` gives `("e3", "src")`.
-fn aliased(query: &str, marker: &str) -> Vec<(String, String)> {
+pub fn aliased(query: &str, marker: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut at = 0;
     while let Some(found) = query[at..].find(marker) {

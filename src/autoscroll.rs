@@ -127,7 +127,7 @@ impl Hub {
         let handle = self
             .list_scrollers
             .entry(key.to_string())
-            .or_insert_with(UniformListScrollHandle::new)
+            .or_default()
             .clone();
         let base = handle.0.borrow().base_handle.clone();
         self.scrollers.insert(key.to_string(), (base, self.frame));

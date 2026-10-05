@@ -83,7 +83,7 @@ fn thousands(n: i64) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -237,7 +237,9 @@ fn gitlab_protection_form(repo: &str, branch: &str) -> Act {
 /// A source archive's address: a branch's (`tag` false) or a tag's.
 fn archive_url(repo: &str, git_ref: &str, format: &str, tag: bool) -> String {
     let web = crate::forge::web();
-    if crate::forge::is_gitlab() {
+    if crate::forge::is_bitbucket() {
+        format!("{web}/{repo}/get/{}.{format}", enc(git_ref))
+    } else if crate::forge::is_gitlab() {
         let name = crate::forge::split_repo(repo).1;
         let file = format!("{name}-{}", git_ref.replace('/', "-"));
         format!("{web}/{repo}/-/archive/{git_ref}/{file}.{format}")
@@ -362,6 +364,7 @@ impl Hub {
 
     pub fn repo(&mut self, repo: &str, tab: RepoTab, cx: &mut Context<Self>) -> AnyElement {
         let gitlab = crate::forge::is_gitlab();
+        let bitbucket = crate::forge::is_bitbucket();
         let info = match self.fetch(&format!("/repos/{repo}"), cx) {
             Load::Ready(info) => info,
             // GitLab's addresses don't say whether `a/b` is a project or a
@@ -417,7 +420,35 @@ impl Hub {
                 go(RepoTab::Discussions),
             ));
         }
-        if gitlab {
+        if crate::forge::is_bitbucket() {
+            items.extend([
+                TabItem::new(
+                    "Pipelines",
+                    "play",
+                    tab == RepoTab::Actions,
+                    go(RepoTab::Actions),
+                ),
+                TabItem::new(
+                    "Branches",
+                    "branch",
+                    tab == RepoTab::Branches,
+                    go(RepoTab::Branches),
+                ),
+                TabItem::new("Tags", "tag", tab == RepoTab::Tags, go(RepoTab::Tags)),
+                TabItem::new(
+                    "Commits",
+                    "commit",
+                    tab == RepoTab::Commits,
+                    go(RepoTab::Commits),
+                ),
+                TabItem::new(
+                    "Insights",
+                    "graph",
+                    tab == RepoTab::Insights,
+                    go(RepoTab::Insights),
+                ),
+            ]);
+        } else if gitlab {
             items.extend([
                 TabItem::new(
                     "CI/CD",
@@ -514,6 +545,24 @@ impl Hub {
         }
         let default_branch = info.s("default_branch");
         let body = match tab {
+            RepoTab::Actions if bitbucket => self.bb_pipelines(repo, &default_branch, cx),
+            RepoTab::Settings if bitbucket => self.bb_repo_settings(repo, &info, cx),
+            RepoTab::Issues
+            | RepoTab::Releases
+            | RepoTab::Packages
+            | RepoTab::Discussions
+            | RepoTab::Projects
+            | RepoTab::Security
+                if bitbucket =>
+            {
+                self.gl_elsewhere(
+                    &Route::Repo {
+                        repo: repo.to_string(),
+                        tab,
+                    },
+                    "That",
+                )
+            }
             RepoTab::Code => self.repo_code(repo, &info, cx),
             RepoTab::Issues => self.repo_issues(repo, cx),
             RepoTab::Pulls => self.repo_pulls(repo, &default_branch, cx),
@@ -571,6 +620,7 @@ impl Hub {
             cx,
         );
         let gitlab = crate::forge::is_gitlab();
+        let bitbucket = crate::forge::is_bitbucket();
         let watching = match subscription.ready() {
             Some(v) if v.b("ignored") => "Ignoring",
             Some(v) if v.b("subscribed") => "Watching",
@@ -629,13 +679,15 @@ impl Hub {
             MenuEntry::Header("Clone".into()),
             MenuEntry::item(format!("Copy HTTPS  {https}"), Act::Copy(https.clone())),
             MenuEntry::item(format!("Copy SSH  {ssh}"), Act::Copy(ssh)),
-            MenuEntry::item(
-                format!("Copy  {0} repo clone {repo}", crate::forge::cli()),
-                Act::Copy(format!("{} repo clone {repo}", crate::forge::cli())),
-            ),
-            MenuEntry::Sep,
         ];
-        if !gitlab {
+        if let Some(cli) = crate::forge::cli() {
+            clone.push(MenuEntry::item(
+                format!("Copy  {cli} repo clone {repo}"),
+                Act::Copy(format!("{cli} repo clone {repo}")),
+            ));
+        }
+        clone.push(MenuEntry::Sep);
+        if crate::forge::is_github() {
             clone.push(MenuEntry::item(
                 "Open with GitHub Desktop",
                 Act::Url(format!("x-github-client://openRepo/{}", info.s("html_url"))),
@@ -651,7 +703,7 @@ impl Hub {
                 Act::Url(archive_url(repo, &info.s("default_branch"), "zip", false)),
             ),
         ]);
-        if !gitlab {
+        if crate::forge::is_github() {
             clone.extend([
                 MenuEntry::Sep,
                 MenuEntry::item(
@@ -755,23 +807,33 @@ impl Hub {
                             template_form(repo),
                         ))
                     })
-                    .child(widgets::ibtn("watch", "eye", watch_label, watch_menu))
+                    // Bitbucket has no stars, and no watching through its
+                    // API; it doesn't count forks.
+                    .when(!bitbucket, |d| {
+                        d.child(widgets::ibtn("watch", "eye", watch_label, watch_menu))
+                    })
                     .child(widgets::ibtn(
                         "fork",
                         "fork",
-                        format!("Fork · {}", json::count(info.i("forks_count"))),
+                        if bitbucket {
+                            "Fork".to_string()
+                        } else {
+                            format!("Fork · {}", json::count(info.i("forks_count")))
+                        },
                         fork_form(repo, &name),
                     ))
-                    .child(widgets::ibtn(
-                        "star",
-                        if starred { "star-fill" } else { "star" },
-                        format!(
-                            "{} · {}",
-                            if starred { "Starred" } else { "Star" },
-                            json::count(info.i("stargazers_count"))
-                        ),
-                        star,
-                    ))
+                    .when(!bitbucket, |d| {
+                        d.child(widgets::ibtn(
+                            "star",
+                            if starred { "star-fill" } else { "star" },
+                            format!(
+                                "{} · {}",
+                                if starred { "Starred" } else { "Star" },
+                                json::count(info.i("stargazers_count"))
+                            ),
+                            star,
+                        ))
+                    })
                     .child(widgets::primary("clone", "Code ▾", clone)),
             )
             .when(info.has("parent"), |d| {
@@ -1171,49 +1233,52 @@ impl Hub {
                     p.text_dim,
                 ))
             })
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap_1()
-                    .child(stat(
-                        "stargazers",
-                        "star",
-                        format!("{} stars", json::count(info.i("stargazers_count"))),
-                        Act::choose(format!("insights.view:{repo_s}"), "stargazers").then_go(
-                            Route::Repo {
-                                repo: repo_s.clone(),
-                                tab: RepoTab::Insights,
-                            },
-                        ),
-                    ))
-                    // GitLab doesn't count watchers.
-                    .when(!crate::forge::is_gitlab(), |d| {
-                        d.child(stat(
-                            "watchers",
-                            "eye",
-                            format!("{} watching", json::count(info.i("subscribers_count"))),
-                            Act::choose(format!("insights.view:{repo_s}"), "watchers").then_go(
+            // Bitbucket counts none of these.
+            .when(!crate::forge::is_bitbucket(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap_1()
+                        .child(stat(
+                            "stargazers",
+                            "star",
+                            format!("{} stars", json::count(info.i("stargazers_count"))),
+                            Act::choose(format!("insights.view:{repo_s}"), "stargazers").then_go(
                                 Route::Repo {
                                     repo: repo_s.clone(),
                                     tab: RepoTab::Insights,
                                 },
                             ),
                         ))
-                    })
-                    .child(stat(
-                        "forks",
-                        "fork",
-                        format!("{} forks", json::count(info.i("forks_count"))),
-                        Act::choose(format!("insights.view:{repo_s}"), "forks").then_go(
-                            Route::Repo {
-                                repo: repo_s.clone(),
-                                tab: RepoTab::Insights,
-                            },
-                        ),
-                    )),
-            );
+                        // GitLab doesn't count watchers.
+                        .when(!crate::forge::is_gitlab(), |d| {
+                            d.child(stat(
+                                "watchers",
+                                "eye",
+                                format!("{} watching", json::count(info.i("subscribers_count"))),
+                                Act::choose(format!("insights.view:{repo_s}"), "watchers").then_go(
+                                    Route::Repo {
+                                        repo: repo_s.clone(),
+                                        tab: RepoTab::Insights,
+                                    },
+                                ),
+                            ))
+                        })
+                        .child(stat(
+                            "forks",
+                            "fork",
+                            format!("{} forks", json::count(info.i("forks_count"))),
+                            Act::choose(format!("insights.view:{repo_s}"), "forks").then_go(
+                                Route::Repo {
+                                    repo: repo_s.clone(),
+                                    tab: RepoTab::Insights,
+                                },
+                            ),
+                        )),
+                )
+            });
 
         // Latest release.
         if let Some(release) = self
@@ -1263,7 +1328,7 @@ impl Hub {
                         .iter()
                         .map(|(k, v)| (k, v.as_i64().unwrap_or(0)))
                         .collect();
-                    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+                    sorted.sort_by_key(|l| std::cmp::Reverse(l.1));
                     for (name, bytes) in sorted.iter().take(8) {
                         let color = language_color(name);
                         let pct = *bytes as f32 * 100.0 / total as f32;
@@ -1375,24 +1440,29 @@ impl Hub {
                     );
                 }
             }
-            row = row.action(
-                "Rename",
-                FormSpec::new(format!("Rename {name}"))
-                    .submit("Rename branch")
-                    .field(
-                        Field::text("new_name", "New name")
-                            .value(name.clone())
-                            .required(),
-                    )
-                    .rest(
-                        "POST",
-                        format!("/repos/{repo_s}/branches/{}/rename", enc(&name)),
-                    )
-                    .ok("Branch renamed")
-                    .inval(inval.clone())
-                    .act(),
-            );
-            if admin {
+            // Bitbucket can't rename a branch, or protect one the way
+            // GitHub does; its branch restrictions are in its settings.
+            let bitbucket = crate::forge::is_bitbucket();
+            if !bitbucket {
+                row = row.action(
+                    "Rename",
+                    FormSpec::new(format!("Rename {name}"))
+                        .submit("Rename branch")
+                        .field(
+                            Field::text("new_name", "New name")
+                                .value(name.clone())
+                                .required(),
+                        )
+                        .rest(
+                            "POST",
+                            format!("/repos/{repo_s}/branches/{}/rename", enc(&name)),
+                        )
+                        .ok("Branch renamed")
+                        .inval(inval.clone())
+                        .act(),
+                );
+            }
+            if admin && !bitbucket {
                 row = row.action(
                     "Protection rules…",
                     if crate::forge::is_gitlab() {
@@ -1672,13 +1742,24 @@ impl Hub {
             .any(|e| lower.ends_with(e));
         let is_markdown = lower.ends_with(".md") || lower.ends_with(".markdown");
         let gitlab = crate::forge::is_gitlab();
-        let raw_url = if gitlab {
+        let bitbucket = crate::forge::is_bitbucket();
+        let raw_url = if bitbucket {
+            format!("{}/{repo}/raw/{git_ref}/{path}", crate::forge::web())
+        } else if gitlab {
             format!("{}/{repo}/-/raw/{git_ref}/{path}", crate::forge::web())
         } else {
             format!("https://raw.githubusercontent.com/{repo}/{git_ref}/{path}")
         };
         // GitLab's API serves a private project's file to the token too.
-        let image_url = if gitlab {
+        // Bitbucket's API serves a private repository's file to the token.
+        let image_url = if bitbucket {
+            format!(
+                "{}/repositories/{repo}/src/{}/{}",
+                crate::forge::BITBUCKET_API,
+                enc(git_ref),
+                enc_path(path)
+            )
+        } else if gitlab {
             format!(
                 "{}{}/repository/files/{}/raw?ref={}",
                 crate::forge::web(),
@@ -1689,7 +1770,9 @@ impl Hub {
         } else {
             raw_url.clone()
         };
-        let blame_url = if gitlab {
+        let blame_url = if bitbucket {
+            format!("{}/{repo}/annotate/{git_ref}/{path}", crate::forge::web())
+        } else if gitlab {
             format!("{}/{repo}/-/blame/{git_ref}/{path}", crate::forge::web())
         } else {
             format!("{}/{repo}/blame/{git_ref}/{path}", crate::forge::web())

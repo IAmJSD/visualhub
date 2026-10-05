@@ -44,9 +44,13 @@ impl Hub {
             "public" => "/gists/public",
             _ => "/gists",
         };
-        let gitlab = crate::forge::is_gitlab();
-        let spec =
-            ListSpec::new(path, gist_row).empty(if gitlab { "No snippets." } else { "No gists." });
+        // GitLab's and Bitbucket's are snippets.
+        let snippets = !crate::forge::is_github();
+        let spec = ListSpec::new(path, gist_row).empty(if snippets {
+            "No snippets."
+        } else {
+            "No gists."
+        });
         let list = self.list(&spec, cx);
         let title = crate::forge::gists_title();
         let mut tabs = vec![(
@@ -55,22 +59,24 @@ impl Hub {
             Act::choose("gists.tab", "mine"),
         )];
         // GitLab's snippets have no stars.
-        if !gitlab {
+        if !snippets {
             tabs.push((
                 "Starred".into(),
                 tab == "starred",
                 Act::choose("gists.tab", "starred"),
             ));
         }
-        tabs.push((
-            if gitlab {
-                "Explore".into()
-            } else {
-                "Discover".into()
-            },
-            tab == "public",
-            Act::choose("gists.tab", "public"),
-        ));
+        if !crate::forge::is_bitbucket() {
+            tabs.push((
+                if snippets {
+                    "Explore".into()
+                } else {
+                    "Discover".into()
+                },
+                tab == "public",
+                Act::choose("gists.tab", "public"),
+            ));
+        }
         widgets::page()
             .child(
                 widgets::row()
@@ -78,8 +84,13 @@ impl Hub {
                     .child(widgets::spacer())
                     .child(widgets::go_btn(
                         "new-gist",
-                        if gitlab { "New snippet" } else { "New gist" },
-                        Act::Go(Route::NewGist),
+                        if snippets { "New snippet" } else { "New gist" },
+                        // Bitbucket makes snippets from uploads, on its site.
+                        if crate::forge::is_bitbucket() {
+                            Act::Url(format!("{}/snippets/new", crate::forge::web()))
+                        } else {
+                            Act::Go(Route::NewGist)
+                        },
                     )),
             )
             .child(widgets::chips(tabs))
@@ -92,9 +103,10 @@ impl Hub {
         let path = format!("/gists/{id}");
         let g = ready!(self.fetch(&path, cx));
         let mine = g.s("owner.login") == self.login();
-        // Personal snippets on GitLab have no stars, forks or comments.
-        let gitlab = crate::forge::is_gitlab();
-        let starred = !gitlab
+        // Snippets have no stars or forks; GitLab's personal ones have no
+        // comments either.
+        let snippets = !crate::forge::is_github();
+        let starred = !snippets
             && self
                 .fetch_check(&format!("/gists/{id}/star"), cx)
                 .ready()
@@ -162,15 +174,18 @@ impl Hub {
         }
         let submit = post_comment(&field, &comments_path, &comments_path);
         let composer = self.composer(&field, submit, Vec::new(), cx);
-        let edit = FormSpec::new(if gitlab {
+        let edit = FormSpec::new(if snippets {
             "Edit snippet title"
         } else {
             "Edit gist description"
         })
         .field(
-            Field::text("description", if gitlab { "Title" } else { "Description" })
-                .value(g.s("description").lines().next().unwrap_or(""))
-                .keep_empty(),
+            Field::text(
+                "description",
+                if snippets { "Title" } else { "Description" },
+            )
+            .value(g.s("description").lines().next().unwrap_or(""))
+            .keep_empty(),
         )
         .rest("PATCH", path.clone())
         .ok("Gist updated")
@@ -198,7 +213,7 @@ impl Hub {
                         ))
                         .flex_1(),
                     )
-                    .when(!gitlab, |d| {
+                    .when(!snippets, |d| {
                         d.child(widgets::ibtn(
                             "gist-star",
                             if starred { "star-fill" } else { "star" },
@@ -213,7 +228,7 @@ impl Hub {
                             .act(),
                         ))
                     })
-                    .when(!mine && !gitlab, |d| {
+                    .when(!mine && !snippets, |d| {
                         d.child(widgets::ibtn(
                             "gist-fork",
                             "fork",
@@ -243,7 +258,7 @@ impl Hub {
                 g.list("forks").len()
             )))
             .child(files)
-            .when(!gitlab, |d| {
+            .when(!crate::forge::is_gitlab(), |d| {
                 d.child(widgets::h2("Comments"))
                     .child(comments)
                     .child(composer)

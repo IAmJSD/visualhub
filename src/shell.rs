@@ -173,19 +173,32 @@ impl Hub {
     fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = palette();
         let gitlab = forge::is_gitlab();
-        // GitLab's inbox is its to-do list.
+        let bitbucket = forge::is_bitbucket();
+        // GitLab's inbox is its to-do list; Bitbucket has none.
         let inbox = if gitlab {
-            "/api/v4/todos?state=pending&per_page=50"
+            Some("/api/v4/todos?state=pending&per_page=50")
+        } else if bitbucket {
+            None
         } else {
-            "/notifications?per_page=50"
+            Some("/notifications?per_page=50")
         };
-        let unread = self
-            .fetch(inbox, cx)
-            .ready()
-            .map(|v| v.list("").len() as i64);
+        let unread = inbox.and_then(|inbox| {
+            self.fetch(inbox, cx)
+                .ready()
+                .map(|v| v.list("").len() as i64)
+        });
         let route = self.route.clone();
         let is = |r: &Route| std::mem::discriminant(r) == std::mem::discriminant(&route);
-        let items: Vec<(&str, &str, Route, Option<i64>)> = if gitlab {
+        let items: Vec<(&str, &str, Route, Option<i64>)> = if bitbucket {
+            vec![
+                ("Home", "home", Route::Home, None),
+                ("Repositories", "repo", Route::Repos, None),
+                ("Pull requests", "pr", Route::Pulls, None),
+                ("Snippets", "gist", Route::Gists, None),
+                ("Search", "search", Route::Search, None),
+                ("Settings", "settings", Route::Settings, None),
+            ]
+        } else if gitlab {
             vec![
                 ("Home", "home", Route::Home, None),
                 ("To-Do List", "bell", Route::Notifications, unread),
@@ -273,7 +286,7 @@ impl Hub {
         let avatar = self.avatar(&me.s("avatar_url"), 28.0, cx);
         let login = me.s("login");
         let switcher = self.accounts_menu();
-        let detail = if self.accounts.len() > 1 || gitlab {
+        let detail = if self.accounts.len() > 1 || !forge::is_github() {
             forge::host()
         } else {
             me.s("name")
@@ -495,7 +508,14 @@ impl Hub {
     /// The "+" menu: what can be made from here.
     fn new_menu(&self) -> Act {
         let web = forge::web();
-        let mut entries = if forge::is_gitlab() {
+        let mut entries = if forge::is_bitbucket() {
+            vec![
+                MenuEntry::item("New repository", Act::Go(Route::NewRepo { owner: None })),
+                MenuEntry::item("New snippet", Act::Url(format!("{web}/snippets/new"))),
+                MenuEntry::item("Import repository", Act::Url(format!("{web}/repo/import"))),
+                MenuEntry::item("New workspace", Act::Url(format!("{web}/workspace/create"))),
+            ]
+        } else if forge::is_gitlab() {
             vec![
                 MenuEntry::item("New project", Act::Go(Route::NewRepo { owner: None })),
                 MenuEntry::item("New snippet", Act::Go(Route::NewGist)),
@@ -525,10 +545,12 @@ impl Hub {
                     crate::screens::pulls::new_pull_form(repo, "", ""),
                 ),
             );
-            entries.insert(
-                0,
-                MenuEntry::item("New issue", crate::screens::issues::new_issue_form(repo)),
-            );
+            if !forge::is_bitbucket() {
+                entries.insert(
+                    0,
+                    MenuEntry::item("New issue", crate::screens::issues::new_issue_form(repo)),
+                );
+            }
             entries.insert(0, MenuEntry::Header(repo.to_string()));
         }
         Act::menu(entries)
@@ -560,7 +582,8 @@ impl Hub {
         let gitlab = forge::is_gitlab();
         if let Some(n) = text.strip_prefix('#').and_then(number) {
             if let Some(repo) = self.route.repo().map(str::to_string) {
-                self.go(Route::Issue { repo, number: n }, cx);
+                // Bitbucket's only numbered things are pull requests.
+                self.go(issue_or_pull(repo, n), cx);
                 return;
             }
         }
@@ -585,13 +608,7 @@ impl Hub {
         }
         if let Some((repo, n)) = text.split_once('#') {
             if let (true, Some(n)) = (repo.contains('/'), number(n)) {
-                self.go(
-                    Route::Issue {
-                        repo: repo.to_string(),
-                        number: n,
-                    },
-                    cx,
-                );
+                self.go(issue_or_pull(repo.to_string(), n), cx);
                 return;
             }
         }
@@ -633,16 +650,35 @@ impl Hub {
     fn page_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let route = self.route.clone();
         let gitlab = forge::is_gitlab();
+        let bitbucket = forge::is_bitbucket();
+        let elsewhere = gitlab || bitbucket;
         let content = match &route {
+            Route::Job { repo, id } if bitbucket => self.bb_step(repo, *id, cx),
             Route::Job { repo, id } => self.gl_job(repo, *id, cx),
+            // Bitbucket's issues are gone; its numbers are pull requests'.
+            Route::Issue { repo, number } if bitbucket => {
+                self.pull(repo, *number, crate::hub::PullTab::Conversation, cx)
+            }
+            Route::Notifications if bitbucket => self.gl_elsewhere(&route, "A notifications inbox"),
+            Route::Issues if bitbucket => self.gl_elsewhere(
+                &route,
+                "An issue tracker (Atlassian moved Bitbucket's issues to Jira in 2026)",
+            ),
+            Route::Team { org, .. } if bitbucket => self.org(org, cx),
+            Route::NewGist if bitbucket => self.gl_elsewhere(&route, "Making a snippet here"),
             Route::Conflicts { .. } if gitlab => {
                 self.gl_elsewhere(&route, "An editor for merge conflicts here")
             }
-            Route::Discussion { .. } if gitlab => self.gl_elsewhere(&route, "Discussions"),
-            Route::Projects | Route::Project { .. } if gitlab => {
+            Route::Conflicts { .. } if bitbucket => {
+                self.gl_elsewhere(&route, "An editor for merge conflicts here")
+            }
+            Route::Discussion { .. } if elsewhere => self.gl_elsewhere(&route, "Discussions"),
+            Route::Projects | Route::Project { .. } if elsewhere => {
                 self.gl_elsewhere(&route, "GitHub-style projects")
             }
-            Route::Codespaces if gitlab => self.gl_elsewhere(&route, "Codespaces"),
+            Route::Codespaces if elsewhere => self.gl_elsewhere(&route, "Codespaces"),
+            Route::Release { .. } if bitbucket => self.gl_elsewhere(&route, "Releases"),
+            Route::Packages if bitbucket => self.gl_elsewhere(&route, "Packages"),
             Route::Packages if gitlab => self.gl_elsewhere(
                 &route,
                 "A packages page of your own (projects and groups have theirs)",
@@ -835,7 +871,9 @@ impl Hub {
             (None, Auth::SignedIn) => (false, None),
         };
         let adding = self.adding.is_some();
-        let gitlab = self.choice("signin.forge", "github") == "gitlab";
+        let chosen = self.choice("signin.forge", "github");
+        let gitlab = chosen == "gitlab";
+        let bitbucket = chosen == "bitbucket";
         let host = {
             let typed = self.field_text("signin.host");
             forge::normalize_host(if typed.trim().is_empty() {
@@ -847,12 +885,25 @@ impl Hub {
         let sign_in = Act::run(move |hub, _, cx| {
             let token = hub.field_text("token");
             let host = hub.field_text("signin.host");
-            let forge = if gitlab { Forge::GitLab } else { Forge::GitHub };
+            let forge = if gitlab {
+                Forge::GitLab
+            } else if bitbucket {
+                Forge::Bitbucket
+            } else {
+                Forge::GitHub
+            };
             hub.sign_in_with(forge, host, token, cx);
         });
         self.submits.insert("token".into(), sign_in.clone());
         self.submits.insert("signin.host".into(), sign_in.clone());
-        let (token_url, token_hint, picked_up, forge_name) = if gitlab {
+        let (token_url, token_hint, picked_up, forge_name) = if bitbucket {
+            (
+                "https://id.atlassian.com/manage-profile/security/api-tokens".to_string(),
+                "ATATT… or email:ATATT…",
+                "Use an Atlassian API token with Bitbucket scopes (account, workspace, repository, pull request and pipeline, read and write), or a workspace or repository access token. If Bitbucket refuses the token alone, paste it as email:token. VisualHub also picks up BITBUCKET_TOKEN automatically, with BITBUCKET_EMAIL if it's set.",
+                "Atlassian",
+            )
+        } else if gitlab {
             let site = forge::Account::new(Forge::GitLab, &host, "").web();
             (
                 format!("{site}/-/user_settings/personal_access_tokens?name=VisualHub&scopes=api,read_user,read_repository,write_repository"),
@@ -882,7 +933,7 @@ impl Hub {
                     } else {
                         "VisualHub"
                     }))
-                    .child(widgets::dim("A native GitHub and GitLab client")),
+                    .child(widgets::dim("A native GitHub, GitLab and Bitbucket client")),
             );
         if checking {
             card = card.child(
@@ -909,8 +960,17 @@ impl Hub {
                         gitlab,
                         Act::choose("signin.forge", "gitlab"),
                     ),
+                    (
+                        "Bitbucket".into(),
+                        bitbucket,
+                        Act::choose("signin.forge", "bitbucket"),
+                    ),
                 ]))
-                .child(div().child(format!("Sign in with a personal access token. {picked_up}")))
+                .child(div().child(if bitbucket {
+                    format!("Sign in to Bitbucket Cloud with a token. {picked_up}")
+                } else {
+                    format!("Sign in with a personal access token. {picked_up}")
+                }))
                 .when(gitlab, |c| {
                     c.child(
                         div()
@@ -927,7 +987,11 @@ impl Hub {
                         .flex()
                         .flex_col()
                         .gap_1()
-                        .child(widgets::h3("Personal access token"))
+                        .child(widgets::h3(if bitbucket {
+                            "API token"
+                        } else {
+                            "Personal access token"
+                        }))
                         .child(input),
                 )
                 .when_some(error, |c, error| {
@@ -1010,7 +1074,7 @@ fn nav_item(
         .h(px(30.0))
         .rounded_md()
         .cursor_pointer()
-        .text_color(rgb(if selected { p.text } else { p.text }))
+        .text_color(rgb(p.text))
         .when(selected, |d| {
             d.bg(rgb(p.selection_bg)).font_weight(FontWeight::MEDIUM)
         })
@@ -1054,4 +1118,18 @@ fn section_label(text: &str) -> AnyElement {
         .text_color(rgb(palette().text_faint))
         .child(text.to_uppercase())
         .into_any_element()
+}
+
+/// `#12` as a page: an issue, or on Bitbucket (whose issues are gone) a
+/// pull request.
+fn issue_or_pull(repo: String, number: u64) -> Route {
+    if forge::is_bitbucket() {
+        Route::Pull {
+            repo,
+            number,
+            tab: crate::hub::PullTab::Conversation,
+        }
+    } else {
+        Route::Issue { repo, number }
+    }
 }

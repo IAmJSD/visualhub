@@ -167,6 +167,13 @@ impl Route {
         match self {
             Route::Home => "Home".into(),
             Route::Notifications if crate::forge::is_gitlab() => "To-Do List".into(),
+            Route::Run { repo, id } if crate::forge::is_bitbucket() => {
+                format!("{repo} pipeline #{id}")
+            }
+            Route::Job { repo, id } if crate::forge::is_bitbucket() => {
+                let (build, step) = crate::forge::job_step(*id);
+                format!("{repo} pipeline #{build} step {step}")
+            }
             Route::Notifications => "Notifications".into(),
             Route::Repos => crate::forge::repos_title().into(),
             Route::Pulls => crate::forge::prs_title().into(),
@@ -220,6 +227,9 @@ impl Route {
         let w = crate::forge::web();
         if crate::forge::is_gitlab() {
             return crate::forge::gitlab_url(self, &w);
+        }
+        if crate::forge::is_bitbucket() {
+            return crate::forge::bitbucket_url(self, &w);
         }
         let w = w.as_str();
         match self {
@@ -279,10 +289,14 @@ impl Route {
 }
 
 /// The page a link points at, when the app has one: a github.com link on
-/// a GitHub account, a link into the instance on a GitLab one.
+/// a GitHub account, a link into the instance on a GitLab one, a
+/// bitbucket.org link on a Bitbucket one.
 pub fn route_for_url(url: &str) -> Option<Route> {
     if crate::forge::is_gitlab() {
         return crate::forge::gitlab_route(url, &crate::forge::web());
+    }
+    if crate::forge::is_bitbucket() {
+        return crate::forge::bitbucket_route(url, &crate::forge::web());
     }
     let rest = url
         .strip_prefix("https://github.com/")
@@ -438,8 +452,11 @@ pub enum Work {
     Check {
         path: String,
     },
-    Custom(Arc<dyn Fn(&Client) -> Result<Value> + Send + Sync>),
+    Custom(CustomWork),
 }
+
+/// A fetch made by hand, off the UI thread.
+pub type CustomWork = Arc<dyn Fn(&Client) -> Result<Value> + Send + Sync>;
 
 impl Work {
     pub fn run(&self, client: &Client) -> Result<Value> {
@@ -733,6 +750,26 @@ fn check_account(account: &Account) -> Result<(Value, String), String> {
                 })
                 .unwrap_or_default();
             Ok((me, scopes))
+        }
+        Forge::Bitbucket => {
+            let reply = client
+                .raw("GET", "/user", None, None)
+                .map_err(|e| format!("{e:#}"))?;
+            match reply.status {
+                200 => Ok((
+                    crate::bitbucket::shape::user(
+                        &client,
+                        &serde_json::from_str(&reply.body).unwrap_or(Value::Null),
+                    ),
+                    String::new(),
+                )),
+                401 | 403 => Err(format!(
+                    "Bitbucket refused the token ({}). An API token needs the read:user:bitbucket scope; \
+                     with an API token you can also paste email:token.",
+                    reply.status
+                )),
+                _ => Err(format!("Bitbucket refused the token: {}", crate::api::failure(&reply))),
+            }
         }
     }
 }
@@ -1761,12 +1798,16 @@ impl Hub {
 
         match key {
             "escape" => {
-                if crate::select::clear() || self.autoscroll.take().is_some() {
-                } else if self.menu.take().is_some() {
-                } else if self.modal.is_some() {
-                    self.close_modal(cx);
-                } else {
-                    self.scope_fix = None;
+                // The first of these that's open closes.
+                let closed = crate::select::clear()
+                    || self.autoscroll.take().is_some()
+                    || self.menu.take().is_some();
+                if !closed {
+                    if self.modal.is_some() {
+                        self.close_modal(cx);
+                    } else {
+                        self.scope_fix = None;
+                    }
                 }
                 cx.notify();
             }

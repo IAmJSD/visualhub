@@ -180,6 +180,7 @@ impl Row {
 }
 
 pub type RowFn = Rc<dyn Fn(&Value) -> Row>;
+pub type RowFilter = Rc<dyn Fn(&Value) -> bool>;
 
 /// Where a list comes from and how its items read.
 #[derive(Clone)]
@@ -190,7 +191,7 @@ pub struct ListSpec {
     pub paged: bool,
     pub empty: String,
     pub row: RowFn,
-    pub filter: Option<Rc<dyn Fn(&Value) -> bool>>,
+    pub filter: Option<RowFilter>,
     /// People, drawn as a grid of profile cards.
     pub people: bool,
 }

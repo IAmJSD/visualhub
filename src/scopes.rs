@@ -135,8 +135,8 @@ impl Drop for ScopeFix {
 impl Hub {
     /// After signing in: offer to fix the token if it's short of scopes.
     pub fn check_scopes(&mut self) {
-        // GitLab's tokens say their scopes another way; Settings shows them.
-        if crate::forge::is_gitlab() {
+        // GitLab's and Bitbucket's tokens say their scopes another way.
+        if !crate::forge::is_github() {
             self.scope_fix = None;
             return;
         }
@@ -462,7 +462,7 @@ impl Hub {
 
 /// The settings line saying what's missing, with a way back into the fix.
 pub fn settings_note(hub: &Hub) -> Option<AnyElement> {
-    if crate::forge::is_gitlab() {
+    if !crate::forge::is_github() {
         return None;
     }
     let missing = missing(&hub.scopes);

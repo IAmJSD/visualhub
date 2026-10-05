@@ -7,6 +7,7 @@ use crate::json::{self, Json as _};
 use crate::resource::{ListSpec, Row};
 use crate::time;
 use crate::widgets;
+use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, AnyElement, Context, IntoElement as _, ParentElement as _, Styled as _};
 use serde_json::Value;
 
@@ -203,7 +204,7 @@ pub fn describe_event(e: &Value) -> EventText {
         ),
         "CommitCommentEvent" => (
             "comment",
-            format!("commented on a commit"),
+            "commented on a commit".to_string(),
             json::clip(&p.s("comment.body"), 200),
             repo_act,
         ),
@@ -299,15 +300,32 @@ fn notification_route(n: &Value) -> Act {
 impl Hub {
     pub fn home(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let login = self.login();
-        let feed = ListSpec::new(format!("/users/{login}/received_events"), event_row)
-            .empty("Your feed is empty. Follow people and star repositories to fill it.");
+        // Bitbucket keeps no activity feed; what's open in your
+        // repositories stands in for it.
+        let bitbucket = crate::forge::is_bitbucket();
+        let (feed_title, feed) = if bitbucket {
+            let mut spec =
+                search_spec("is:open is:pr", true).empty("Nothing is open in your repositories.");
+            spec.id = "home-open".into();
+            ("Open pull requests", spec)
+        } else {
+            (
+                "Feed",
+                ListSpec::new(format!("/users/{login}/received_events"), event_row)
+                    .empty("Your feed is empty. Follow people and star repositories to fill it."),
+            )
+        };
         let feed = self.list(&feed, cx);
 
         let mut review = search_spec("is:open is:pr review-requested:@me archived:false", true);
         review.id = "home-review".into();
         let review = self.compact_list(&review, 6, cx);
-        let assigned = search_spec("is:open assignee:@me archived:false", true);
-        let assigned = self.compact_list(&assigned, 8, cx);
+        let assigned = if bitbucket {
+            div().into_any_element()
+        } else {
+            let spec = search_spec("is:open assignee:@me archived:false", true);
+            self.compact_list(&spec, 8, cx)
+        };
         let mine = search_spec("is:open is:pr author:@me archived:false", true);
         let mine = self.compact_list(&mine, 6, cx);
 
@@ -391,7 +409,7 @@ impl Hub {
                             .gap_3()
                             .flex_1()
                             .min_w_0()
-                            .child(widgets::h2("Feed"))
+                            .child(widgets::h2(feed_title))
                             .child(feed),
                     )
                     .child(
@@ -401,8 +419,10 @@ impl Hub {
                             .flex_none()
                             .child(widgets::h3("Review requests"))
                             .child(review)
-                            .child(widgets::h3("Assigned to you"))
-                            .child(assigned)
+                            // Bitbucket assigns nothing.
+                            .when(!bitbucket, |d| {
+                                d.child(widgets::h3("Assigned to you")).child(assigned)
+                            })
                             .child(widgets::h3(format!("Your open {}", crate::forge::prs())))
                             .child(mine),
                     ),

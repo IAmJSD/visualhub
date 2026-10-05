@@ -351,6 +351,8 @@ impl Hub {
     }
 
     /// A small line in a timeline: an icon, and what happened.
+    // Each is its own thing, and two dozen callers name them in order.
+    #[allow(clippy::too_many_arguments)]
     pub fn timeline_event(
         &mut self,
         icon_name: &str,

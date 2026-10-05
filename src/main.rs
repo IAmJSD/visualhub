@@ -7,6 +7,7 @@
 mod api;
 mod assets;
 mod autoscroll;
+mod bitbucket;
 mod cli;
 mod diff;
 mod forge;

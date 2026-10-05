@@ -252,6 +252,16 @@ impl Hub {
             repo: self.route.repo().map(str::to_string),
             raw_root: match &self.route {
                 _ if crate::forge::is_gitlab() => None,
+                // Bitbucket's API serves a private repository's images to
+                // the token.
+                Route::Repo { repo, .. } if crate::forge::is_bitbucket() => Some(format!(
+                    "{}/repositories/{repo}/src/HEAD",
+                    crate::forge::BITBUCKET_API
+                )),
+                Route::Tree { repo, git_ref, .. } if crate::forge::is_bitbucket() => Some(format!(
+                    "{}/repositories/{repo}/src/{git_ref}",
+                    crate::forge::BITBUCKET_API
+                )),
                 Route::Repo { repo, .. } => {
                     Some(format!("https://raw.githubusercontent.com/{repo}/HEAD"))
                 }
@@ -843,6 +853,10 @@ fn autolink(b: &mut Builder, text: &str, flags: Flags) {
                 match &b.repo {
                     Some(repo) if !digits.is_empty() && ends_word => {
                         let url = match (crate::forge::is_gitlab(), mark) {
+                            // Bitbucket's numbers are pull requests'.
+                            _ if crate::forge::is_bitbucket() => {
+                                format!("{web}/{repo}/pull-requests/{digits}")
+                            }
                             (true, "!") => format!("{web}/{repo}/-/merge_requests/{digits}"),
                             (true, _) => format!("{web}/{repo}/-/issues/{digits}"),
                             _ => format!("{web}/{repo}/issues/{digits}"),

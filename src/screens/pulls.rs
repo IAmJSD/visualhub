@@ -341,7 +341,7 @@ impl Hub {
             ),
             delete: None,
             extra: Vec::new(),
-            reactions: Some(format!("{inval}/reactions")),
+            reactions: (!crate::forge::is_bitbucket()).then(|| format!("{inval}/reactions")),
             invalidate: inval.clone(),
             quote_into: Some(field.clone()),
         };
@@ -462,6 +462,7 @@ impl Hub {
         let pr_path = format!("/repos/{repo}/pulls/{number}");
         let inval_issue = crate::forge::issue_api(repo, number, true);
         let gitlab = crate::forge::is_gitlab();
+        let bitbucket = crate::forge::is_bitbucket();
         let head_ref = pr.s("head.ref");
         let head_repo = pr.s("head.repo.full_name");
         let mut card = widgets::card();
@@ -590,6 +591,12 @@ impl Hub {
                 "This branch has conflicts that must be resolved",
                 "Resolve them on the command line or in GitLab's editor.",
             ),
+            "dirty" if bitbucket => (
+                "close",
+                widgets::red(),
+                "This branch has conflicts that must be resolved",
+                "Resolve them on the command line, then push.",
+            ),
             "draft" if gitlab => (
                 "pr-draft",
                 widgets::gray(),
@@ -648,12 +655,14 @@ impl Hub {
             m => m,
         };
         let method_label = match method.as_str() {
+            "rebase" if bitbucket => "Fast-forward",
             "squash" => "Squash and merge",
             "rebase" => "Rebase and merge",
             _ => "Create a merge commit",
         };
         let title_default = match method.as_str() {
             "squash" => format!("{} ({})", pr.s("title"), crate::forge::pr_ref(number)),
+            _ if bitbucket => format!("Merged in {} (pull request #{number})", pr.s("head.ref")),
             _ if gitlab => format!(
                 "Merge branch '{}' into '{}'",
                 pr.s("head.ref"),
@@ -680,7 +689,8 @@ impl Hub {
                 } else {
                     "Delete the head branch afterwards"
                 },
-                gitlab && pr.b("force_remove_source_branch"),
+                (gitlab && pr.b("force_remove_source_branch"))
+                    || (bitbucket && pr.b("close_source_branch")),
             ))
             .build_with({
                 let (pr_path, repo_path, method) =
@@ -742,7 +752,13 @@ impl Hub {
                 pick("squash"),
             ),
         ];
-        if !gitlab {
+        if bitbucket {
+            methods.push(MenuEntry::check(
+                "Fast-forward — the base branch moves up to the head, if it can",
+                method == "rebase",
+                pick("rebase"),
+            ));
+        } else if !gitlab {
             methods.push(MenuEntry::check(
                 "Rebase and merge — the commits are rebased onto the base branch",
                 method == "rebase",
@@ -790,7 +806,7 @@ impl Hub {
         } else if state == "dirty" {
             // Conflicts: no merging until they're settled, here (GitLab's
             // editor is on its site).
-            let resolve = if gitlab {
+            let resolve = if gitlab || bitbucket {
                 Act::Url(
                     Route::Conflicts {
                         repo: repo.to_string(),
@@ -841,41 +857,46 @@ impl Hub {
                     .gap_2()
                     .child(main)
                     .child(widgets::spacer())
-                    .child(widgets::btn(
-                        "update-branch",
-                        if gitlab {
-                            "Rebase source branch"
-                        } else {
-                            "Update branch"
-                        },
-                        Req::rest("PUT", format!("{pr_path}/update-branch"))
-                            .body(json!({ "expected_head_sha": sha }))
-                            .ok("Branch update queued")
-                            .inval(pr_path.clone())
-                            .act(),
-                    ))
-                    .child(widgets::btn(
-                        "auto-merge",
-                        match (gitlab, auto_merge_on) {
-                            (true, true) => "Cancel auto-merge",
-                            (true, false) => "Merge when pipeline succeeds",
-                            (false, true) => "Disable auto-merge",
-                            (false, false) => "Enable auto-merge",
-                        },
-                        auto,
-                    )),
+                    // Bitbucket can do neither through its API.
+                    .when(!bitbucket, |d| {
+                        d.child(widgets::btn(
+                            "update-branch",
+                            if gitlab {
+                                "Rebase source branch"
+                            } else {
+                                "Update branch"
+                            },
+                            Req::rest("PUT", format!("{pr_path}/update-branch"))
+                                .body(json!({ "expected_head_sha": sha }))
+                                .ok("Branch update queued")
+                                .inval(pr_path.clone())
+                                .act(),
+                        ))
+                        .child(widgets::btn(
+                            "auto-merge",
+                            match (gitlab, auto_merge_on) {
+                                (true, true) => "Cancel auto-merge",
+                                (true, false) => "Merge when pipeline succeeds",
+                                (false, true) => "Disable auto-merge",
+                                (false, false) => "Enable auto-merge",
+                            },
+                            auto,
+                        ))
+                    }),
             )
-            .child(
-                widgets::row()
-                    .gap_1()
-                    .child(widgets::dim(
-                        "You can also merge this with the command line.",
-                    ))
-                    .child(
-                        crate::ui::Link::new("merge-cli", "Copy the command")
-                            .on_click(crate::hub::on(Act::Copy(cli))),
-                    ),
-            );
+            .when(!bitbucket, |d| {
+                d.child(
+                    widgets::row()
+                        .gap_1()
+                        .child(widgets::dim(
+                            "You can also merge this with the command line.",
+                        ))
+                        .child(
+                            crate::ui::Link::new("merge-cli", "Copy the command")
+                                .on_click(crate::hub::on(Act::Copy(cli))),
+                        ),
+                )
+            });
 
         // A status: a filled circle with its mark, a title and a line.
         // `open` is what clicking does and the chevron that says so.
@@ -1223,7 +1244,10 @@ impl Hub {
                     "checkout",
                     "copy",
                     "Copy checkout command",
-                    Act::Copy(if crate::forge::is_gitlab() {
+                    Act::Copy(if crate::forge::is_bitbucket() {
+                        let branch = pr.s("head.ref");
+                        format!("git fetch origin {branch} && git switch {branch}")
+                    } else if crate::forge::is_gitlab() {
                         format!("glab mr checkout {number} --repo {repo}")
                     } else {
                         format!("gh pr checkout {number} --repo {repo}")
@@ -1729,7 +1753,7 @@ impl Hub {
                     )),
                     delete: Some(super::common::delete_comment(&url, &comments_path)),
                     extra: Vec::new(),
-                    reactions: (!crate::forge::is_gitlab())
+                    reactions: crate::forge::is_github()
                         .then(|| format!("{}/reactions", super::common::api_path(&url))),
                     invalidate: comments_path.clone(),
                     quote_into: Some(field.clone()),
@@ -1858,7 +1882,7 @@ impl FileTree {
 
     /// A folder with nothing but one folder in it reads as one row:
     /// `app/packages/status-page-edge`.
-    fn squash<'a>(mut label: String, mut node: &'a FileTree) -> (String, &'a FileTree) {
+    fn squash(mut label: String, mut node: &FileTree) -> (String, &FileTree) {
         while node.files.is_empty() && node.dirs.len() == 1 {
             let (name, only) = node.dirs.iter().next().unwrap();
             label = format!("{label}/{name}");

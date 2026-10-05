@@ -2,11 +2,11 @@
 
 # VisualHub
 
-A native GitHub and GitLab client written in Rust on
+A native GitHub, GitLab and Bitbucket client written in Rust on
 [GPUI](https://github.com/IAmJSD/gpui) (the IAmJSD fork). Its widgets are
 adapted from [Schist](https://github.com/Infrawrench/schist)'s widget kit.
 VisualHub covers what you do on github.com, except editing code, and the same
-on gitlab.com or your own GitLab.
+on gitlab.com or your own GitLab, and on Bitbucket Cloud.
 Files, diffs, logs and gists are read-only. Everything else can be done from
 the app.
 
@@ -72,6 +72,31 @@ GitLab's own:
 Pages GitHub has and GitLab doesn't (Codespaces, Discussions, Dependabot and
 the like) don't show on a GitLab account.
 
+### Bitbucket
+
+Sign in to Bitbucket Cloud (bitbucket.org) the same way, and switch to it from
+the top of the sidebar. A Bitbucket account gets the shared screens:
+repositories across your workspaces, files and READMEs, pull requests with
+their diffs, line comments, approvals, requests for changes, declining and
+merging (merge commit, squash or fast-forward), commits with their build
+statuses as checks, branches, tags, comparisons, workspaces as organizations,
+snippets, and search across your repositories' pull requests and names. Some
+pages are Bitbucket's own:
+
+| Area | What you can do |
+|---|---|
+| **Pipelines** | Pipelines with their state, trigger and duration: run one (a branch, a custom pipeline, variables), run it again, stop it. A pipeline's steps, and each step's log, live while it runs |
+| **Repository settings** | Description, website, visibility, forking and main branch; who has access (people and groups); branch restrictions; webhooks; deploy keys; Pipelines on or off and its variables; rename, delete |
+| **Workspaces** | Repositories and members, and a new repository in one |
+| **Account** | Emails, SSH and GPG keys |
+
+Bitbucket removed its issue tracker in 2026 (issues moved to Jira), so a
+Bitbucket account has no Issues, and `#12` means pull request 12. It has no
+stars, follows, notifications, releases, labels, reactions or activity feed
+either; those pages don't show, and the Home feed lists the open pull requests
+in your repositories instead. Bitbucket's API can't look people up by the
+name it shows, so VisualHub knows people by the nickname on their work.
+
 Some things GitHub only offers in the browser (billing, OAuth app approval,
 uploading avatars), as does GitLab (editing your profile). For those,
 VisualHub opens the right page on the site, and every screen has a button that
@@ -97,11 +122,17 @@ one you used last:
 2. `GH_TOKEN` or `GITHUB_TOKEN`, and the GitHub CLI (`gh auth token`)
 3. `GITLAB_TOKEN` (for `GITLAB_HOST`, or gitlab.com), and the GitLab CLI's
    logins (`glab config get token`)
+4. `BITBUCKET_TOKEN` (or `BITBUCKET_API_TOKEN`, with `BITBUCKET_EMAIL` if it's
+   set), and `BITBUCKET_ACCESS_TOKEN` for a workspace or repository access
+   token
 
 If none of those work, or to add another account, paste a personal access
 token. For GitHub the sign-in screen links to a classic-token page with every
 scope the app uses already selected; for GitLab, to a new token with the `api`
-scope, on whichever instance you name.
+scope, on whichever instance you name; for Bitbucket, to Atlassian's API
+tokens page. Make a token with Bitbucket scopes (account, workspace,
+repository, pull request and pipeline, read and write). VisualHub sends it as
+a Bearer token; if Bitbucket refuses it alone, paste it as `email:token`.
 
 ## Building
 
@@ -112,7 +143,7 @@ cargo run --release
 The build is self-contained: GPUI comes from the pinned fork revision, and
 nothing else needs to be checked out next to it.
 
-`VISUALHUB_OPEN=<a github.com or GitLab URL>` starts the app on that page, which is how
+`VISUALHUB_OPEN=<a github.com, GitLab or bitbucket.org URL>` starts the app on that page, which is how
 the screenshots above were taken.
 
 ### Packaging
@@ -163,8 +194,9 @@ all.
   GitHub's API paths; on a GitLab account the client sends them here, where
   each is matched to GitLab's API and the answer reshaped into GitHub's
   fields. The few GraphQL queries the screens send are answered the same way.
-  `src/forge.rs` holds what the screens draw differently: GitLab's words,
-  links and nested project paths.
+  `src/bitbucket/` does the same from Bitbucket Cloud's API 2.0.
+  `src/forge.rs` holds what the screens draw differently: each forge's words
+  and links, and GitLab's nested project paths.
 - `src/hub.rs`: the single view. Pages call `fetch(path)`, which returns the
   cached value or starts a request and redraws when it arrives. Every click is
   an `Act`. A write is a `Req` that lists the cache prefixes it makes stale, so
@@ -174,7 +206,7 @@ all.
   row mapping, not hand-built UI.
 - `src/markdown.rs`, `src/diff.rs`: GitHub-flavoured Markdown (links, tables,
   task lists, images) and unified diffs, built from GPUI elements.
-- `src/screens/*`: one module per area of GitHub; `src/screens/gitlab/` has
-  the pages only GitLab has.
+- `src/screens/*`: one module per area of GitHub; `src/screens/gitlab/` and
+  `src/screens/bitbucket/` have the pages only GitLab and Bitbucket have.
 - `assets/icons`: the app's own 16px line icons, generated from
   `tools/icons.txt` by `tools/icons.py`.

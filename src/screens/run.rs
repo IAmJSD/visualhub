@@ -385,6 +385,9 @@ impl Hub {
         if crate::forge::is_gitlab() {
             return self.gl_pipeline(repo, id, cx);
         }
+        if crate::forge::is_bitbucket() {
+            return self.bb_pipeline(repo, id, cx);
+        }
         let p = palette();
         let base = format!("/repos/{repo}/actions/runs/{id}");
         let run = ready!(self.fetch(&base, cx));

@@ -29,11 +29,8 @@ pub fn user(a: &Ask, rest: &[&str]) -> Result<Value> {
             if a.query.get("affiliation") == Some("owner") {
                 path.push_str("&owned=true");
             }
-            match a.query.get("type") {
-                Some(v @ ("public" | "private" | "internal")) => {
-                    path.push_str(&format!("&visibility={v}"))
-                }
-                _ => {}
+            if let Some(v @ ("public" | "private" | "internal")) = a.query.get("type") {
+                path.push_str(&format!("&visibility={v}"))
             }
             Ok(shape::projects(c, get(c, &path)?.list("")))
         }

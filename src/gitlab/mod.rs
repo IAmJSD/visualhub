@@ -12,11 +12,11 @@
 //! Pages that only GitLab has skip all this and ask for `/api/v4/...`
 //! directly.
 
-mod graphql;
+pub mod graphql;
 mod issues;
 mod people;
 mod repos;
-mod search;
+pub mod search;
 pub mod shape;
 
 use crate::api::{self, Client, Reply, Status};
@@ -81,7 +81,7 @@ pub struct Ask<'a> {
 }
 
 impl<'a> Ask<'a> {
-    fn new(c: &'a Client, method: &'a str, path: &str, body: Option<&'a Value>) -> Self {
+    pub fn new(c: &'a Client, method: &'a str, path: &str, body: Option<&'a Value>) -> Self {
         let (path, query) = path.split_once('?').unwrap_or((path, ""));
         Ask {
             c,

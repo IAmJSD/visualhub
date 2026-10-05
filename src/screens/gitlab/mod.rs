@@ -62,8 +62,8 @@ pub fn ci_word(status: &str) -> String {
 }
 
 impl Hub {
-    /// A page GitLab has no part of the app for: what it is, and a way to
-    /// it on the site where there is one.
+    /// A page GitLab (or Bitbucket) has no part of the app for: what it
+    /// is, and a way to it on the site where there is one.
     pub fn gl_elsewhere(&mut self, route: &Route, what: &str) -> AnyElement {
         widgets::page()
             .child(widgets::title(route.title()))
@@ -72,7 +72,8 @@ impl Hub {
                     .p_6()
                     .gap_3()
                     .child(widgets::dim(format!(
-                        "{what} isn't something GitLab has, or it's only on the site."
+                        "{what} isn't something {} has, or it's only on the site.",
+                        crate::forge::name()
                     )))
                     .child(gpui::div().child(widgets::btn(
                         "elsewhere-open",

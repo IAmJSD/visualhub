@@ -509,11 +509,24 @@ impl Hub {
     ) -> AnyElement {
         let view_key = format!("insights.view:{repo}");
         let gitlab = crate::forge::is_gitlab();
-        let view = self.choice(&view_key, if gitlab { "contributors" } else { "activity" });
+        let bitbucket = crate::forge::is_bitbucket();
+        let view = self.choice(
+            &view_key,
+            if gitlab || bitbucket {
+                "contributors"
+            } else {
+                "activity"
+            },
+        );
         let gitlab_names = [
             ("contributors", "Contributors"),
             ("forks", "Forks"),
             ("stargazers", "Stars"),
+        ];
+        let bitbucket_names = [
+            ("contributors", "Recent contributors"),
+            ("forks", "Forks"),
+            ("watchers", "Watchers"),
         ];
         let github_names = [
             ("activity", "Commit activity"),
@@ -525,7 +538,13 @@ impl Hub {
             ("stargazers", "Stargazers"),
             ("watchers", "Watchers"),
         ];
-        let names: &[(&str, &str)] = if gitlab { &gitlab_names } else { &github_names };
+        let names: &[(&str, &str)] = if bitbucket {
+            &bitbucket_names
+        } else if gitlab {
+            &gitlab_names
+        } else {
+            &github_names
+        };
         let chips = widgets::chips(
             names
                 .iter()
