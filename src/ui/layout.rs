@@ -210,6 +210,7 @@ pub struct Modal {
     dim_background: bool,
     canvas_controls: bool,
     backdrop: Option<gpui::Div>,
+    on_dismiss: Option<super::PressHandler>,
     /// Take the window's height, the body sharing out what the title
     /// and actions leave.
     fill: bool,
@@ -226,6 +227,7 @@ impl Modal {
             dim_background: true,
             canvas_controls: false,
             backdrop: None,
+            on_dismiss: None,
             fill: false,
             style: StyleRefinement::default(),
             children: Vec::new(),
@@ -257,6 +259,16 @@ impl Modal {
     /// hitbox is occluded by this modal and would never receive pointer events.
     pub fn backdrop(mut self, backdrop: gpui::Div) -> Self {
         self.backdrop = Some(backdrop);
+        self
+    }
+
+    /// A press on the backdrop, outside the card. Presses on the card
+    /// stop there, so they never dismiss it.
+    pub fn on_dismiss(
+        mut self,
+        handler: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_dismiss = Some(Box::new(handler));
         self
     }
 
@@ -319,8 +331,18 @@ impl RenderOnce for Modal {
                 .on_mouse_down(gpui::MouseButton::Right, |_, _, cx| cx.stop_propagation())
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation());
         }
-        self.backdrop
-            .unwrap_or_else(div)
+        let mut backdrop = self.backdrop.unwrap_or_else(div);
+        if let Some(on_dismiss) = self.on_dismiss {
+            // The card swallows its own presses (and, on touch, the lift
+            // that stands for one) before they bubble to the backdrop.
+            card = card
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .when(super::touch(), |card| {
+                    card.on_mouse_up(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                });
+            backdrop = super::on_press(backdrop, on_dismiss);
+        }
+        backdrop
             .absolute()
             .top_0()
             .left_0()

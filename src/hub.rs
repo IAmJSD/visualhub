@@ -818,6 +818,9 @@ pub struct Hub {
     /// registered by the render that drew the box.
     pub submits: HashMap<String, Act>,
     pub modal: Option<Modal>,
+    /// Whether the press under way began with a menu or picker open over
+    /// the dialog: that press only closes the menu, as Escape would.
+    pub backdrop_press_closes_popup: bool,
     /// A self-update downloading or installing, under its dialog.
     pub update_progress: Option<crate::update::Progress>,
     pub menu: Option<MenuState>,
@@ -901,6 +904,7 @@ impl Hub {
             choices: HashMap::new(),
             submits: HashMap::new(),
             modal: None,
+            backdrop_press_closes_popup: false,
             update_progress: None,
             menu: None,
             picker: None,
@@ -1729,6 +1733,14 @@ impl Hub {
             }
         }
         cx.notify();
+    }
+
+    /// A press on a dialog's backdrop: closes it as Escape does, unless
+    /// the press was closing a menu or picker opened from the dialog.
+    pub fn dismiss_modal(&mut self, cx: &mut Context<Self>) {
+        if !std::mem::take(&mut self.backdrop_press_closes_popup) {
+            self.close_modal(cx);
+        }
     }
 
     pub fn close_modal(&mut self, cx: &mut Context<Self>) {

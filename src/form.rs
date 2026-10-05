@@ -631,12 +631,29 @@ impl Hub {
             }))
     }
 
+    /// A dialog that a press on its backdrop closes. The backdrop sees
+    /// the press first (it is drawn before any menu or picker over it),
+    /// so it can tell a press that was only closing one of those.
+    fn dismissable(
+        &self,
+        title: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> crate::ui::Modal {
+        let backdrop = div().capture_any_mouse_down(cx.listener(|hub, _, _, _| {
+            hub.backdrop_press_closes_popup = hub.menu.is_some() || hub.picker.is_some();
+        }));
+        crate::ui::Modal::new(title)
+            .backdrop(backdrop)
+            .on_dismiss(cx.listener(|hub, _, _, cx| hub.dismiss_modal(cx)))
+    }
+
     pub fn render_modal(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = palette();
         match self.modal.as_ref()? {
             Modal::Form { spec, error, busy } => {
                 let (spec, error, busy) = (spec.clone(), error.clone(), *busy);
-                let mut modal = crate::ui::Modal::new(spec.title.clone())
+                let mut modal = self
+                    .dismissable(spec.title.clone(), cx)
                     .when(spec.fields.iter().any(|f| f.is_paragraph()), |m| m.fill())
                     .width(spec.width)
                     .text_size(px(13.0))
@@ -701,8 +718,9 @@ impl Hub {
                 ..
             } => {
                 let busy = *busy;
+                let title = title.clone();
                 Some(
-                    crate::ui::Modal::new(title.clone())
+                    self.dismissable(title, cx)
                         .width(440.0)
                         .text_size(px(13.0))
                         .p_4()
