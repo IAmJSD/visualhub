@@ -105,6 +105,8 @@ enum Frame {
     TableRow(bool),
     /// A cell, which holds images as well as its text.
     TableCell,
+    /// A `<details>` section: its summary, and whether it starts open.
+    Details(String, bool),
 }
 
 struct Builder {
@@ -606,6 +608,19 @@ impl Hub {
                     if html.trim().is_empty() {
                         continue;
                     }
+                    // `<details>` folds what follows it under its summary.
+                    let html = if html.contains("<details")
+                        || html.contains("<summary")
+                        || html.contains("</details")
+                    {
+                        let rest = self.details_tags(&mut b, &html);
+                        if rest.trim().is_empty() {
+                            continue;
+                        }
+                        rest
+                    } else {
+                        html
+                    };
                     // Bots (Danger, coverage reports) write their tables in
                     // HTML; drawn as Markdown's once all of one is in.
                     if b.html_table.is_some() || html.trim_start().starts_with("<table") {
@@ -662,6 +677,10 @@ impl Hub {
                 _ => {}
             }
         }
+        // A section never closed holds the rest of the text, open.
+        while matches!(b.stack.last(), Some((Frame::Details(..), _))) {
+            self.close_details(&mut b);
+        }
         if let Some(table) = b.html_table.take() {
             b.flush_paragraph();
             b.n += 1;
@@ -685,6 +704,120 @@ impl Hub {
             .text_color(rgb(p.text))
             .children(children)
             .into_any_element()
+    }
+
+    /// Opens, names and closes `<details>` sections for the tags in
+    /// `html`, giving back what's left of it.
+    fn details_tags(&mut self, b: &mut Builder, html: &str) -> String {
+        let mut rest = String::new();
+        let mut text = html;
+        loop {
+            let lower = text.to_ascii_lowercase();
+            let next = ["<details", "<summary", "</details"]
+                .iter()
+                .filter_map(|tag| lower.find(tag).map(|at| (at, *tag)))
+                .min();
+            let Some((at, tag)) = next else {
+                rest.push_str(text);
+                return rest;
+            };
+            rest.push_str(&text[..at]);
+            let end = lower[at..].find('>').map_or(text.len(), |e| at + e + 1);
+            match tag {
+                "<details" => {
+                    b.flush_paragraph();
+                    let open = lower[at..end].contains(" open");
+                    b.stack
+                        .push((Frame::Details("Details".into(), open), Vec::new()));
+                    text = &text[end..];
+                }
+                "<summary" => {
+                    let close = lower[end..].find("</summary").map(|c| end + c);
+                    let summary = strip_tags(&text[end..close.unwrap_or(end)]);
+                    if let Some((Frame::Details(name, _), _)) = b.stack.last_mut() {
+                        if !summary.trim().is_empty() {
+                            *name = summary.trim().to_string();
+                        }
+                    }
+                    let after = close
+                        .and_then(|c| lower[c..].find('>').map(|e| c + e + 1))
+                        .unwrap_or(end);
+                    text = &text[after..];
+                }
+                _ => {
+                    if matches!(b.stack.last(), Some((Frame::Details(..), _))) {
+                        self.close_details(b);
+                    }
+                    text = &text[end..];
+                }
+            }
+        }
+    }
+
+    /// The `<details>` section on top of the stack, drawn as its summary
+    /// with its contents beneath while it's open.
+    fn close_details(&mut self, b: &mut Builder) {
+        b.flush_paragraph();
+        let Some((Frame::Details(summary, open_at_first), children)) = b.stack.pop() else {
+            return;
+        };
+        let p = palette();
+        let n = b.n;
+        b.n += 1;
+        let key = format!("{}-details{n}", b.id);
+        // A press flips it from however it started.
+        let open = open_at_first != self.open.contains(&key);
+        let header = div()
+            .id(ElementId::Name(key.clone().into()))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .cursor_pointer()
+            .font_weight(FontWeight::SEMIBOLD)
+            .child(crate::ui::icon(
+                if open {
+                    "chevron-down"
+                } else {
+                    "chevron-right"
+                },
+                14.0,
+                p.text_dim,
+            ))
+            .child(summary)
+            .on_click(move |_, window, cx| {
+                let key = key.clone();
+                perform(
+                    Act::run(move |hub, _, cx| {
+                        if !hub.open.remove(&key) {
+                            hub.open.insert(key.clone());
+                        }
+                        cx.notify();
+                    }),
+                    window,
+                    cx,
+                );
+            });
+        b.push_el(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(header)
+                .when(open, |d| {
+                    d.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .pl_4()
+                            .border_l_2()
+                            .border_color(rgb(p.divider))
+                            .children(children),
+                    )
+                })
+                .into_any_element(),
+        );
     }
 
     /// An HTML table drawn as Markdown's are, each cell's contents read as
