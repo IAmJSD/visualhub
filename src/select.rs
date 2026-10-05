@@ -1,14 +1,14 @@
-//! Selecting and copying text in code: Markdown code blocks and the file
-//! viewer. gpui's text doesn't select on its own, so each line asks its
-//! laid-out text which character the pointer is over, and the selection
-//! lives here, one at a time, across the lines of one block.
+//! Selecting and copying text: Markdown's paragraphs and code blocks, and
+//! the file viewer. gpui's text doesn't select on its own, so each line
+//! asks its laid-out text which character the pointer is over, and the
+//! selection lives here, one at a time, across the lines of one block.
 //!
 //! Drag to select, double-click for a word, triple-click for a line;
 //! Cmd/Ctrl+C copies. Any other press clears it.
 
 use gpui::{
     div, Div, HighlightStyle, InteractiveElement as _, MouseButton, MouseDownEvent, MouseMoveEvent,
-    ParentElement as _, Styled as _, StyledText,
+    ParentElement as _, Styled as _, StyledText, TextLayout,
 };
 use std::cell::RefCell;
 use std::ops::Range;
@@ -162,25 +162,71 @@ pub fn line(
     };
     let runs = merge(syntax.unwrap_or(&[]), selected.filter(|_| !text.is_empty()));
     let styled = StyledText::new(shown).with_highlights(runs);
-    let layout = styled.layout().clone();
+    let lines = lines.clone();
+    selectable(
+        div().whitespace_nowrap(),
+        block,
+        Rc::new(move || lines.clone()),
+        line,
+        styled.layout().clone(),
+    )
+    .child(styled)
+}
+
+/// Paragraph `line` of `block`: wrapping text (a Markdown paragraph,
+/// heading or cell) that selects like a code line, styled by `runs`. A
+/// document's paragraphs are still being gathered as each is built, so
+/// the list is read when a press starts a selection. The caller puts the
+/// returned text (or a clickable wrapper of it) in the returned element.
+pub fn paragraph(
+    block: &str,
+    lines: &Rc<RefCell<Vec<String>>>,
+    line: usize,
+    runs: &[(Range<usize>, HighlightStyle)],
+) -> (Div, StyledText) {
+    let text = lines.borrow().get(line).cloned().unwrap_or_default();
+    let selected = range_in(block, line, text.len());
+    let styled = StyledText::new(text).with_highlights(merge(runs, selected));
+    let lines = lines.clone();
+    let el = selectable(
+        div(),
+        block,
+        Rc::new(move || Rc::new(lines.borrow().clone())),
+        line,
+        styled.layout().clone(),
+    );
+    (el, styled)
+}
+
+/// `el` holding line `line` of `block`, laid out as `layout`, made to
+/// start and drag a selection. `lines` gives the block's text.
+fn selectable(
+    el: Div,
+    block: &str,
+    lines: Rc<dyn Fn() -> Rc<Vec<String>>>,
+    line: usize,
+    layout: TextLayout,
+) -> Div {
     let hit = move |pos| match layout.index_for_position(pos) {
         Ok(i) | Err(i) => i,
     };
-    let (block_down, lines_down, hit_down) = (block.to_string(), lines.clone(), hit.clone());
+    let (block_down, hit_down) = (block.to_string(), hit.clone());
     let block_move = block.to_string();
-    div()
-        .whitespace_nowrap()
-        .cursor_text()
+    el.cursor_text()
         .on_mouse_down(
             MouseButton::Left,
             move |event: &MouseDownEvent, window, _| {
-                let at = hit_down(event.position).min(lines_down[line].len());
+                let lines_down = lines();
+                let Some(text) = lines_down.get(line) else {
+                    return;
+                };
+                let at = hit_down(event.position).min(text.len());
                 let (anchor, head) = match event.click_count {
                     2 => {
-                        let w = word(&lines_down[line], at);
+                        let w = word(text, at);
                         ((line, w.start), (line, w.end))
                     }
-                    n if n >= 3 => ((line, 0), (line, lines_down[line].len())),
+                    n if n >= 3 => ((line, 0), (line, text.len())),
                     _ => ((line, at), (line, at)),
                 };
                 SELECTION.with(|s| {
@@ -209,7 +255,10 @@ pub fn line(
                 let Some(s) = s.as_mut().filter(|s| s.dragging && s.block == block_move) else {
                     return false;
                 };
-                let at = hit(event.position).min(s.lines[line].len());
+                let Some(text) = s.lines.get(line) else {
+                    return false;
+                };
+                let at = hit(event.position).min(text.len());
                 let changed = s.head != (line, at);
                 s.head = (line, at);
                 changed
@@ -218,7 +267,6 @@ pub fn line(
                 window.refresh();
             }
         })
-        .child(styled)
 }
 
 #[cfg(test)]
@@ -250,5 +298,18 @@ mod tests {
         });
         assert_eq!(selected_text().as_deref(), Some("main() {\n    "));
         assert!(clear());
+    }
+
+    #[test]
+    fn paragraphs_highlight_over_their_styles() {
+        let bold = HighlightStyle {
+            font_weight: Some(gpui::FontWeight::BOLD),
+            ..Default::default()
+        };
+        let runs = merge(&[(0..4, bold)], Some(2..8));
+        let pieces: Vec<_> = runs.iter().map(|(r, _)| r.clone()).collect();
+        assert_eq!(pieces, vec![0..2, 2..4, 4..8]);
+        assert!(runs[1].1.font_weight.is_some() && runs[1].1.background_color.is_some());
+        assert!(runs[2].1.font_weight.is_none() && runs[2].1.background_color.is_some());
     }
 }

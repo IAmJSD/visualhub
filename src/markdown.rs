@@ -12,10 +12,11 @@ use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, AnyElement, Context, ElementId, FontStyle, FontWeight, HighlightStyle,
-    InteractiveElement as _, InteractiveText, IntoElement as _, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, StrikethroughStyle, Styled as _, StyledText, UnderlineStyle,
+    InteractiveElement as _, InteractiveText, IntoElement as _, ParentElement as _,
+    StatefulInteractiveElement as _, StrikethroughStyle, Styled as _, UnderlineStyle,
 };
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -124,6 +125,8 @@ struct Builder {
     gitlab_raw: Option<(String, String)>,
     raw_dir: String,
     me: String,
+    /// The document's paragraphs' text, one selectable line each.
+    prose: Rc<RefCell<Vec<String>>>,
 }
 
 impl Builder {
@@ -148,28 +151,32 @@ impl Builder {
         if inline.is_blank() && inline.links.is_empty() {
             return None;
         }
-        let text = SharedString::from(inline.text);
-        let styled = StyledText::new(text).with_highlights(inline.runs);
+        let line = {
+            let mut prose = self.prose.borrow_mut();
+            prose.push(inline.text);
+            prose.len() - 1
+        };
+        let block = format!("md:{}", self.id);
+        let (el, styled) = crate::select::paragraph(&block, &self.prose, line, &inline.runs);
         let id = self.next_id();
         if inline.links.is_empty() {
-            Some(div().child(styled).into_any_element())
+            Some(el.child(styled).into_any_element())
         } else {
             let (ranges, urls): (Vec<_>, Vec<_>) = inline.links.into_iter().unzip();
             let urls = Rc::new(urls);
             Some(
-                div()
-                    .child(InteractiveText::new(id, styled).on_click(
-                        ranges,
-                        move |ix, window, cx| {
-                            let url: String = urls[ix].clone();
-                            perform(
-                                Act::run(move |hub, _, cx| hub.open_link(&url, cx)),
-                                window,
-                                cx,
-                            );
-                        },
-                    ))
-                    .into_any_element(),
+                el.child(InteractiveText::new(id, styled).on_click(
+                    ranges,
+                    move |ix, window, cx| {
+                        let url: String = urls[ix].clone();
+                        perform(
+                            Act::run(move |hub, _, cx| hub.open_link(&url, cx)),
+                            window,
+                            cx,
+                        );
+                    },
+                ))
+                .into_any_element(),
             )
         }
     }
@@ -290,6 +297,7 @@ impl Hub {
                 _ => String::new(),
             },
             me: self.login(),
+            prose: Rc::default(),
         };
 
         for event in Parser::new_ext(source, options) {
