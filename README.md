@@ -20,7 +20,8 @@ the app.
 | ![Files changed](docs/screenshots/pr-files.png) Files changed, with a searchable file tree | ![Conflict editor](docs/screenshots/conflicts.png) Resolving merge conflicts in the app |
 | ![Actions run](docs/screenshots/actions-run.png) A workflow run with its graph and annotations | ![README](docs/screenshots/readme.png) A rendered README |
 | ![Profile](docs/screenshots/profile.png) A profile, with the contribution calendar and activity | ![New repository](docs/screenshots/new-repo.png) Creating a repository |
-| ![Pull requests](docs/screenshots/pulls.png) A repository's pull requests | ![Releases](docs/screenshots/releases.png) Releases |
+| ![Pull requests](docs/screenshots/pulls.png) A repository's pull requests, with how each one's checks went | ![Commits](docs/screenshots/commits.png) Commits, each with its checks |
+| ![Releases](docs/screenshots/releases.png) Releases | |
 
 ## What it does
 

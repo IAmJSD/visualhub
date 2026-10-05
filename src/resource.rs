@@ -9,6 +9,7 @@
 
 use crate::hub::{on, with_query, Act, Hub, Load, MenuEntry};
 use crate::json::{self, Json as _};
+use crate::screens::pulls::{Checks, ROLLUP};
 use crate::time;
 use crate::ui::{icon, palette, Button, IconButton};
 use crate::widgets::{self, rgb};
@@ -48,9 +49,11 @@ pub struct Row {
     pub commit: Option<CommitRef>,
     /// Those authors, once GraphQL has resolved them.
     pub authors: Vec<Value>,
-    /// How the commit's checks went (`SUCCESS`, `FAILURE`, `PENDING`),
-    /// once GraphQL has said.
-    pub checks: String,
+    /// A pull request whose head's checks should show beside it.
+    pub pull: Option<PullRef>,
+    /// How the commit's (or pull request's head's) checks went, once
+    /// GraphQL has said.
+    pub checks: Checks,
 }
 
 /// What GraphQL tells about a commit in a list: who made it, co-authors
@@ -58,8 +61,13 @@ pub struct Row {
 #[derive(Clone, Default)]
 pub struct CommitInfo {
     pub authors: Vec<Value>,
-    /// `statusCheckRollup.state`, or empty for a commit without checks.
-    pub checks: String,
+    pub checks: Checks,
+}
+
+/// A pull request a row is about.
+pub struct PullRef {
+    pub repo: String,
+    pub number: u64,
 }
 
 /// A commit a row is about, and what the meta line says after its
@@ -87,7 +95,8 @@ impl Row {
             inline: false,
             commit: None,
             authors: Vec::new(),
-            checks: String::new(),
+            pull: None,
+            checks: Checks::default(),
         }
     }
 
@@ -169,6 +178,16 @@ impl Row {
             repo: repo.into(),
             sha: sha.into(),
             after: after.into(),
+        });
+        self
+    }
+
+    /// Show the checks on the head of pull request `number` in `repo`,
+    /// once GraphQL has said.
+    pub fn pull(mut self, repo: impl Into<String>, number: u64) -> Self {
+        self.pull = Some(PullRef {
+            repo: repo.into(),
+            number,
         });
         self
     }
@@ -313,6 +332,7 @@ impl Hub {
         }
         let mut rows: Vec<Row> = items.iter().map(|item| (spec.row)(item)).collect();
         self.resolve_authors(&mut rows, cx);
+        self.resolve_pull_checks(&mut rows, cx);
         for (i, row) in rows.into_iter().enumerate() {
             card = card.child(self.render_row(&format!("{}#{i}", spec.id), row, cx));
         }
@@ -363,6 +383,75 @@ impl Hub {
         }
     }
 
+    /// How the checks went on the heads of pull requests in rows about
+    /// them, asking GraphQL for each repository's in batches.
+    pub fn resolve_pull_checks(&mut self, rows: &mut [Row], cx: &mut Context<Self>) {
+        let mut by_repo: Vec<(String, Vec<usize>)> = Vec::new();
+        for (i, row) in rows.iter().enumerate() {
+            let Some(pull) = &row.pull else { continue };
+            match by_repo.iter_mut().find(|(repo, _)| *repo == pull.repo) {
+                Some((_, list)) => list.push(i),
+                None => by_repo.push((pull.repo.clone(), vec![i])),
+            }
+        }
+        for (repo, indices) in by_repo {
+            let numbers: Vec<u64> = indices
+                .iter()
+                .filter_map(|&i| rows[i].pull.as_ref().map(|p| p.number))
+                .collect();
+            let found = self.pull_checks_batch(&repo, &numbers, cx);
+            for &i in &indices {
+                if let Some(checks) = rows[i].pull.as_ref().and_then(|p| found.get(&p.number)) {
+                    rows[i].checks = checks.clone();
+                }
+            }
+        }
+    }
+
+    /// The checks on the heads of pull requests `numbers` in `repo`, as
+    /// far as GraphQL has answered, asked in batches that follow the
+    /// list's order. They're kept with the repository's pull requests, so
+    /// they're asked again when those change.
+    pub fn pull_checks_batch(
+        &mut self,
+        repo: &str,
+        numbers: &[u64],
+        cx: &mut Context<Self>,
+    ) -> HashMap<u64, Checks> {
+        let mut found = HashMap::new();
+        let Some((owner, name)) = repo.split_once('/') else {
+            return found;
+        };
+        for chunk in numbers.chunks(PER_PAGE) {
+            let fields: String = chunk
+                .iter()
+                .enumerate()
+                .map(|(n, number)| {
+                    format!("p{n}: pullRequest(number: {number}) {{ commits(last: 1) {{ nodes {{ commit {{ {ROLLUP} }} }} }} }} ")
+                })
+                .collect();
+            let query = format!("query($o: String!, $n: String!) {{ repository(owner: $o, name: $n) {{ {fields}}} }}");
+            let vars = serde_json::json!({ "o": owner, "n": name });
+            let Some(data) = self
+                .fetch_gql(&format!("/repos/{repo}/pulls"), &query, vars, cx)
+                .ready()
+                .cloned()
+            else {
+                continue;
+            };
+            for (n, number) in chunk.iter().enumerate() {
+                let head = data
+                    .list(&format!("repository.p{n}.commits.nodes"))
+                    .first()
+                    .map(|c| Checks::from_rollup(c.at("commit.statusCheckRollup")))
+                    .unwrap_or_default();
+                self.keep_checks_live(&format!("/repos/{repo}/pulls"), &head, cx);
+                found.insert(*number, head);
+            }
+        }
+        found
+    }
+
     /// The accounts behind each of `shas` in `repo` (co-authors too) and
     /// how its checks went, as far as GraphQL has answered, asked in
     /// batches that follow the list's order so a longer list reuses the
@@ -383,7 +472,7 @@ impl Hub {
                 .enumerate()
                 .map(|(n, sha)| {
                     let sha = Value::String(sha.clone());
-                    format!("c{n}: object(oid: {sha}) {{ ... on Commit {{ authors(first: 10) {{ nodes {{ name avatarUrl user {{ login avatarUrl }} }} }} statusCheckRollup {{ state }} }} }} ")
+                    format!("c{n}: object(oid: {sha}) {{ ... on Commit {{ authors(first: 10) {{ nodes {{ name avatarUrl user {{ login avatarUrl }} }} }} {ROLLUP} }} }} ")
                 })
                 .collect();
             let query = format!("query($o: String!, $n: String!) {{ repository(owner: $o, name: $n) {{ {fields}}} }}");
@@ -403,7 +492,11 @@ impl Hub {
                         authors: crate::screens::repo::distinct_authors(
                             commit.list("authors.nodes"),
                         ),
-                        checks: commit.s("statusCheckRollup.state"),
+                        checks: {
+                            let checks = Checks::from_rollup(commit.at("statusCheckRollup"));
+                            self.keep_checks_live(&format!("/repos/{repo}/commits"), &checks, cx);
+                            checks
+                        },
                     },
                 );
             }
@@ -428,6 +521,29 @@ impl Hub {
         let meta = meta.or_else(|| {
             (!row.meta.is_empty()).then(|| widgets::dim(row.meta.clone()).into_any_element())
         });
+        // How the checks went ends the meta line, "· ✓ 5 / 5", as on
+        // github.com.
+        let mark = crate::screens::pulls::ci_mark_el(
+            ElementId::Name(format!("{id}-checks").into()),
+            &row.checks,
+            true,
+        );
+        let meta = match (meta, mark) {
+            (Some(meta), Some(mark)) => Some(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_1()
+                    .text_size(px(12.0))
+                    .child(meta)
+                    .child(widgets::dim("·"))
+                    .child(mark)
+                    .into_any_element(),
+            ),
+            (meta, mark) => meta.or(mark),
+        };
         let leading: Option<AnyElement> = if leading.is_some() {
             leading
         } else if let Some(url) = &row.avatar {
@@ -453,10 +569,6 @@ impl Hub {
                     .text_color(rgb(p.text))
                     .child(row.title.clone()),
             )
-            .children(crate::screens::pulls::ci_mark_el(
-                ElementId::Name(format!("{id}-checks").into()),
-                &row.checks,
-            ))
             .when(!row.suffix.is_empty(), |d| {
                 d.child(widgets::dim(row.suffix.clone()))
             })

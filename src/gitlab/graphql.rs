@@ -26,6 +26,9 @@ pub fn graphql(c: &Client, query: &str, vars: Value) -> Result<Value> {
     if query.contains(": object(oid:") {
         return commit_batch(c, &repo, query);
     }
+    if query.contains(": pullRequest(number:") {
+        return pull_checks(c, &repo, query);
+    }
     if query.contains("contributionsCollection") {
         return profile(c, &vars.s("l"));
     }
@@ -88,9 +91,10 @@ fn authors(c: &Client, commit: &Value) -> Value {
     json!({ "nodes": people.iter().map(|(name, email)| json!({ "name": name, "avatarUrl": faces.get(email).cloned().unwrap_or_default(), "user": Value::Null })).collect::<Vec<_>>() })
 }
 
-/// A commit, kept a while: it never changes, though its pipeline might.
+/// A commit, kept a little while: it never changes, though its pipeline
+/// might, and running checks are asked after every few seconds.
 fn commit(c: &Client, repo: &str, sha: &str) -> Result<Value> {
-    c.memo.get_or(&format!("commit:{repo}@{sha}"), MINUTE, || {
+    c.memo.get_or(&format!("commit:{repo}@{sha}"), SHORT, || {
         get(
             c,
             &format!("{}/repository/commits/{}", proj(repo), enc(sha)),
@@ -98,12 +102,88 @@ fn commit(c: &Client, repo: &str, sha: &str) -> Result<Value> {
     })
 }
 
-fn checks(commit: &Value) -> Value {
-    if commit.has("last_pipeline.status") {
-        json!({ "state": shape::rollup(&commit.s("last_pipeline.status")) })
-    } else {
-        Value::Null
+/// How long a pipeline's state is trusted.
+const SHORT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// A pipeline as GitHub's `statusCheckRollup`: its state, and its jobs
+/// counted as check runs, the passed ones (succeeded or skipped) as
+/// `SUCCESS`.
+fn rollup(c: &Client, repo: &str, pipeline: &Value) -> Value {
+    if !pipeline.has("status") {
+        return Value::Null;
     }
+    let id = pipeline.i("id");
+    let jobs = c
+        .memo
+        .get_or(&format!("pipeline-jobs:{repo}:{id}"), SHORT, || {
+            Ok(Value::Array(super::get_all(
+                c,
+                &format!("{}/pipelines/{id}/jobs", proj(repo)),
+                3,
+            )?))
+        })
+        .map(|v| v.list("").to_vec())
+        .unwrap_or_default();
+    let passed = jobs
+        .iter()
+        .filter(|j| matches!(j.s("status").as_str(), "success" | "skipped"))
+        .count();
+    json!({
+        "state": shape::rollup(&pipeline.s("status")),
+        "contexts": {
+            "checkRunCount": jobs.len(),
+            "checkRunCountsByState": [{ "state": "SUCCESS", "count": passed }],
+            "statusContextCount": 0,
+            "statusContextCountsByState": [],
+        },
+    })
+}
+
+fn checks(c: &Client, repo: &str, commit: &Value) -> Value {
+    rollup(c, repo, commit.at("last_pipeline"))
+}
+
+/// The checks on each merge request's head, by alias.
+fn pull_checks(c: &Client, repo: &str, query: &str) -> Result<Value> {
+    let numbers = numbered(query, ": pullRequest(number: ");
+    let found = parallel(&numbers, |(_, n)| {
+        get(c, &format!("{}/merge_requests/{n}", proj(repo)))
+            .map(|mr| rollup(c, repo, mr.at("head_pipeline")))
+            .unwrap_or(Value::Null)
+    });
+    let mut repository = Map::new();
+    for ((alias, _), rollup) in numbers.iter().zip(found) {
+        repository.insert(
+            alias.clone(),
+            json!({ "commits": { "nodes": [{ "commit": { "statusCheckRollup": rollup } }] } }),
+        );
+    }
+    Ok(json!({ "repository": repository }))
+}
+
+/// Every number after `marker` in `query`, with the alias before it:
+/// `p3: pullRequest(number: 12)` gives `("p3", 12)`.
+pub fn numbered(query: &str, marker: &str) -> Vec<(String, u64)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(found) = query[at..].find(marker) {
+        let start = at + found;
+        let alias = query[..start]
+            .trim_end()
+            .rsplit([' ', '{'])
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let digits: String = query[start + marker.len()..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if let Ok(n) = digits.parse() {
+            out.push((alias, n));
+        }
+        at = start + marker.len();
+    }
+    out
 }
 
 fn commit_head(c: &Client, repo: &str, rev: &str) -> Result<Value> {
@@ -125,7 +205,7 @@ fn commit_head(c: &Client, repo: &str, rev: &str) -> Result<Value> {
         "committedDate": v.s("committed_date"),
         "history": { "totalCount": total },
         "authors": authors(c, &v),
-        "statusCheckRollup": checks(&v),
+        "statusCheckRollup": checks(c, repo, &v),
     }))
 }
 
@@ -192,7 +272,7 @@ fn commit_batch(c: &Client, repo: &str, query: &str) -> Result<Value> {
         if let Some(v) = v {
             repository.insert(
                 alias.clone(),
-                json!({ "authors": authors(c, &v), "statusCheckRollup": checks(&v) }),
+                json!({ "authors": authors(c, &v), "statusCheckRollup": checks(c, repo, &v) }),
             );
         }
     }
@@ -361,6 +441,15 @@ mod tests {
         assert_eq!(undraft("Draft: [WIP] faster"), "faster");
         assert_eq!(civil(0), (1970, 1, 1));
         assert_eq!(civil(19_723), (2024, 1, 1));
+    }
+
+    #[test]
+    fn reads_numbered_batches() {
+        let q = "query { repository(owner: $o, name: $n) { p0: pullRequest(number: 205) { x } p1: pullRequest(number: 7) { x } } }";
+        assert_eq!(
+            numbered(q, ": pullRequest(number: "),
+            [("p0".to_string(), 205), ("p1".to_string(), 7)]
+        );
     }
 
     #[test]

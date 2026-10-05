@@ -441,9 +441,10 @@ impl Hub {
                         .child(div().p_3().child(widgets::dim("Nothing right now.")))
                         .into_any_element();
                 }
+                let mut rows: Vec<_> = items.iter().map(|item| (spec.row)(item)).collect();
+                self.resolve_pull_checks(&mut rows, cx);
                 let mut card = widgets::card();
-                for (i, item) in items.iter().enumerate() {
-                    let row = (spec.row)(item);
+                for (i, row) in rows.into_iter().enumerate() {
                     card = card.child(self.render_row(&format!("{}-{i}", spec.id), row, cx));
                 }
                 card.into_any_element()

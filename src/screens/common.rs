@@ -89,11 +89,18 @@ pub fn issue_row(item: &Value, show_repo: bool) -> Row {
         meta.push_str(&format!("  ·  {}", item.s("milestone.title")));
     }
     let comments = item.i("comments");
+    let route = issue_route(item);
     let mut row = Row::new(item.s("title"))
         .icon(icon_name, color)
         .labels(item.list("labels"))
         .meta(meta)
-        .open(Act::Go(issue_route(item)));
+        .open(Act::Go(route.clone()));
+    // A pull request shows how its head's checks went.
+    if let Route::Pull { repo, number, .. } = route {
+        if !repo.is_empty() {
+            row = row.pull(repo, number);
+        }
+    }
     if item.b("draft") {
         row = row.tag("Draft", widgets::gray());
     }

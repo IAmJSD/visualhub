@@ -9,7 +9,7 @@
 
 use super::repos::{resolve, statuses};
 use super::{call, get, missing, parallel, repo_api, shape, size, Client};
-use crate::gitlab::graphql::aliased;
+use crate::gitlab::graphql::{aliased, numbered};
 use crate::gitlab::MINUTE;
 use crate::json::{enc, Json as _};
 use anyhow::Result;
@@ -28,6 +28,9 @@ pub fn graphql(c: &Client, query: &str, vars: Value) -> Result<Value> {
     }
     if query.contains(": object(oid:") {
         return commit_batch(c, &repo, query);
+    }
+    if query.contains(": pullRequest(number:") {
+        return pull_checks(c, &repo, query);
     }
     if query.contains("contributionsCollection") {
         // Bitbucket keeps no calendar; the profile goes without one.
@@ -148,6 +151,24 @@ fn commit_batch(c: &Client, repo: &str, query: &str) -> Result<Value> {
         if let Some(v) = v {
             repository.insert(alias.clone(), v);
         }
+    }
+    Ok(json!({ "repository": repository }))
+}
+
+/// The checks on each pull request's head, by alias.
+fn pull_checks(c: &Client, repo: &str, query: &str) -> Result<Value> {
+    let numbers = numbered(query, ": pullRequest(number: ");
+    let found = parallel(&numbers, |(_, n)| {
+        get(c, &format!("{}/pullrequests/{n}", repo_api(repo)))
+            .map(|pr| checks(c, repo, &pr.s("source.commit.hash")))
+            .unwrap_or(Value::Null)
+    });
+    let mut repository = Map::new();
+    for ((alias, _), rollup) in numbers.iter().zip(found) {
+        repository.insert(
+            alias.clone(),
+            json!({ "commits": { "nodes": [{ "commit": { "statusCheckRollup": rollup } }] } }),
+        );
     }
     Ok(json!({ "repository": repository }))
 }

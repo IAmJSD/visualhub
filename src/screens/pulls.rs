@@ -167,6 +167,42 @@ pub fn status_icon(status: &str, conclusion: &str) -> (&'static str, u32) {
     }
 }
 
+/// What GraphQL is asked about a commit's checks: how they went overall,
+/// and how many there are and in what state.
+pub const ROLLUP: &str = "statusCheckRollup { state contexts { checkRunCount checkRunCountsByState { state count } statusContextCount statusContextCountsByState { state count } } }";
+
+/// How a commit's checks went, and how many of them passed: github.com's
+/// "✓ 5 / 5".
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct Checks {
+    /// `statusCheckRollup.state`, or empty for a commit without checks.
+    pub state: String,
+    pub passed: i64,
+    pub total: i64,
+}
+
+impl Checks {
+    /// From a `statusCheckRollup` asked for with [`ROLLUP`].
+    pub fn from_rollup(rollup: &Value) -> Self {
+        let count = |key: &str, passing: &[&str]| -> i64 {
+            rollup
+                .list(&format!("contexts.{key}"))
+                .iter()
+                .filter(|c| passing.contains(&c.s("state").as_str()))
+                .map(|c| c.i("count"))
+                .sum()
+        };
+        Checks {
+            state: rollup.s("state"),
+            // Skipped and neutral runs don't hold anything up, as on
+            // github.com.
+            passed: count("checkRunCountsByState", &["SUCCESS", "NEUTRAL", "SKIPPED"])
+                + count("statusContextCountsByState", &["SUCCESS"]),
+            total: rollup.i("contexts.checkRunCount") + rollup.i("contexts.statusContextCount"),
+        }
+    }
+}
+
 /// A commit's checks as one mark, the way github.com shows it beside a
 /// commit: from GraphQL's `statusCheckRollup.state`.
 pub fn ci_mark(state: &str) -> Option<(&'static str, u32, &'static str)> {
@@ -182,15 +218,35 @@ pub fn ci_mark(state: &str) -> Option<(&'static str, u32, &'static str)> {
     }
 }
 
-/// [`ci_mark`] drawn, with what it means on hover.
-pub fn ci_mark_el(id: impl Into<gpui::ElementId>, state: &str) -> Option<AnyElement> {
-    let (mark, color, tip) = ci_mark(state)?;
+/// [`ci_mark`] drawn, with what it means on hover, and with `counts` how
+/// many checks passed (`5 / 5`).
+pub fn ci_mark_el(
+    id: impl Into<gpui::ElementId>,
+    checks: &Checks,
+    counts: bool,
+) -> Option<AnyElement> {
+    let (mark, color, tip) = ci_mark(&checks.state)?;
+    let tip = if checks.total > 0 {
+        format!("{tip}: {} of {} passed", checks.passed, checks.total)
+    } else {
+        tip.to_string()
+    };
     Some(
         div()
             .id(id.into())
+            .flex()
+            .flex_row()
             .flex_none()
+            .items_center()
+            .gap_1()
             .tooltip(crate::ui::tip(tip, None))
             .child(icon(mark, 14.0, color))
+            .when(counts && checks.total > 0, |d| {
+                d.child(widgets::dim(format!(
+                    "{} / {}",
+                    checks.passed, checks.total
+                )))
+            })
             .into_any_element(),
     )
 }
@@ -1628,6 +1684,7 @@ impl Hub {
             .map(|c| commit_row(repo, c))
             .collect();
         self.resolve_authors(&mut rows, cx);
+        self.resolve_pull_checks(&mut rows, cx);
         for (i, row) in rows.into_iter().enumerate() {
             col = col.child(self.render_row(&format!("cmp-c{i}"), row, cx));
         }
@@ -1720,7 +1777,7 @@ impl Hub {
         let head = self.commit_head(repo, sha, cx);
         let checks = head
             .as_ref()
-            .map(|h| h.s("statusCheckRollup.state"))
+            .map(|h| Checks::from_rollup(h.at("statusCheckRollup")))
             .unwrap_or_default();
         let authors = match head {
             Some(head) => self.commit_authors("commit", head.list("authors.nodes"), cx),
@@ -1804,7 +1861,7 @@ impl Hub {
                                 "committed {}",
                                 time::ago(&c.s("commit.author.date"))
                             )))
-                            .children(ci_mark_el("commit-checks", &checks))
+                            .children(ci_mark_el("commit-checks", &checks, true))
                             .when(c.b("commit.verification.verified"), |d| {
                                 d.child(widgets::tag("Verified", widgets::green()))
                             })
@@ -1959,4 +2016,36 @@ fn tree_order(tree: &FileTree) -> Vec<usize> {
             Entry::Dir { .. } => None,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Checks;
+    use serde_json::json;
+
+    #[test]
+    fn checks_count_what_passed() {
+        let rollup = json!({
+            "state": "FAILURE",
+            "contexts": {
+                "checkRunCount": 5,
+                "checkRunCountsByState": [
+                    { "state": "SUCCESS", "count": 2 },
+                    { "state": "SKIPPED", "count": 1 },
+                    { "state": "FAILURE", "count": 2 },
+                ],
+                "statusContextCount": 1,
+                "statusContextCountsByState": [{ "state": "SUCCESS", "count": 1 }],
+            },
+        });
+        let checks = Checks::from_rollup(&rollup);
+        assert_eq!(
+            (checks.state.as_str(), checks.passed, checks.total),
+            ("FAILURE", 4, 6)
+        );
+        assert_eq!(
+            Checks::from_rollup(&serde_json::Value::Null),
+            Checks::default()
+        );
+    }
 }

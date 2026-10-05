@@ -848,6 +848,8 @@ pub struct Hub {
     /// When everything shown was last asked for again, by hand or on
     /// coming back to the window.
     refreshed: std::time::Instant,
+    /// Whether the window is in front, where background refreshes happen.
+    window_active: bool,
 }
 
 impl Hub {
@@ -858,8 +860,20 @@ impl Hub {
         cx.observe_window_appearance(window, |_, _, cx| cx.notify())
             .detach();
         cx.observe_window_activation(window, |hub, window, cx| {
-            if window.is_window_active() {
+            hub.window_active = window.is_window_active();
+            if hub.window_active {
                 hub.came_back(cx);
+            }
+        })
+        .detach();
+        // Every so often, what's showing is asked again behind the scenes,
+        // so pages keep up with the forge without a reload.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_secs(30))
+                .await;
+            if this.update(cx, |hub, cx| hub.tick(cx)).is_err() {
+                break;
             }
         })
         .detach();
@@ -906,6 +920,7 @@ impl Hub {
             polls: HashSet::new(),
             open: HashSet::new(),
             refreshed: std::time::Instant::now(),
+            window_active: true,
         };
         hub.discover(cx);
         hub.check_for_update_at_launch(cx);
@@ -1413,6 +1428,19 @@ impl Hub {
         .detach();
     }
 
+    /// While `checks` are still running, ask for them again every few
+    /// seconds: `scope` is what their GraphQL is cached under.
+    pub fn keep_checks_live(
+        &mut self,
+        scope: &str,
+        checks: &crate::screens::pulls::Checks,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(checks.state.as_str(), "PENDING" | "EXPECTED") {
+            self.poll(&[format!("{scope}#gql")], 10, cx);
+        }
+    }
+
     /// Fetch what's cached under `prefixes` again next time it shows,
     /// showing the old answer meanwhile.
     fn mark_stale(&mut self, prefixes: &[String]) {
@@ -1470,15 +1498,35 @@ impl Hub {
         self.generation.retain(|key, _| !key.starts_with(prefix));
     }
 
-    /// Everything, fetched again.
     /// Back in the window after a while away: what was made elsewhere
     /// in the meantime (an issue opened on github.com, a push) shows up.
     /// Everything cached is asked again as it's shown, the old answer
     /// staying up until the new one lands.
     fn came_back(&mut self, cx: &mut Context<Self>) {
-        if self.refreshed.elapsed() < Duration::from_secs(30)
-            || !matches!(self.auth, Auth::SignedIn)
-        {
+        if self.refreshed.elapsed() < Duration::from_secs(30) {
+            return;
+        }
+        self.refresh_quietly(cx);
+    }
+
+    /// The background refresh: once a minute while the window is in
+    /// front. Bitbucket allows far fewer requests an hour, so it waits
+    /// longer.
+    fn tick(&mut self, cx: &mut Context<Self>) {
+        let every = if crate::forge::is_bitbucket() {
+            180
+        } else {
+            60
+        };
+        if self.window_active && self.refreshed.elapsed() >= Duration::from_secs(every - 5) {
+            self.refresh_quietly(cx);
+        }
+    }
+
+    /// Everything cached asked again as it's shown, the old answer
+    /// staying up until the new one lands, with nothing to say so.
+    fn refresh_quietly(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.auth, Auth::SignedIn) {
             return;
         }
         self.refreshed = std::time::Instant::now();
@@ -1492,6 +1540,7 @@ impl Hub {
         cx.notify();
     }
 
+    /// Everything, fetched again.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.refreshed = std::time::Instant::now();
         self.cache.clear();

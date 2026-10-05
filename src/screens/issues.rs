@@ -777,6 +777,7 @@ impl Hub {
                     .children(crate::screens::pulls::ci_mark_el(
                         ElementId::Name(format!("{id}-checks").into()),
                         &info.checks,
+                        false,
                     ))
                     .child(
                         widgets::btn(

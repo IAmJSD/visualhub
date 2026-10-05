@@ -20,8 +20,9 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// A commit with its authors, its checks and the length of its history.
-const COMMIT_HEAD: &str = "query($o: String!, $n: String!, $r: String!) { repository(owner: $o, name: $n) { object(expression: $r) { ... on Commit { oid messageHeadline committedDate history(first: 1) { totalCount } authors(first: 10) { nodes { name avatarUrl user { login avatarUrl } } } statusCheckRollup { state } } } } }";
+/// A commit with its authors, its checks and the length of its history;
+/// `STATUS_CHECK_ROLLUP` stands for [`super::pulls::ROLLUP`].
+const COMMIT_HEAD: &str = "query($o: String!, $n: String!, $r: String!) { repository(owner: $o, name: $n) { object(expression: $r) { ... on Commit { oid messageHeadline committedDate history(first: 1) { totalCount } authors(first: 10) { nodes { name avatarUrl user { login avatarUrl } } } STATUS_CHECK_ROLLUP } } } }";
 
 /// Commit authors (GraphQL `authors.nodes`) with repeats dropped.
 pub fn distinct_authors(authors: &[Value]) -> Vec<Value> {
@@ -926,7 +927,8 @@ impl Hub {
                 )
                 .children(super::pulls::ci_mark_el(
                     "latest-checks",
-                    &c.s("statusCheckRollup.state"),
+                    &super::pulls::Checks::from_rollup(c.at("statusCheckRollup")),
+                    false,
                 ))
                 .child(
                     widgets::btn(
@@ -1138,10 +1140,19 @@ impl Hub {
     pub fn commit_head(&mut self, repo: &str, rev: &str, cx: &mut Context<Self>) -> Option<Value> {
         let (owner, name) = repo.split_once('/')?;
         let vars = json!({ "o": owner, "n": name, "r": rev });
-        let data = self.fetch_gql(&format!("/repos/{repo}/commits"), COMMIT_HEAD, vars, cx);
-        data.ready()
+        let data = self.fetch_gql(
+            &format!("/repos/{repo}/commits"),
+            &COMMIT_HEAD.replace("STATUS_CHECK_ROLLUP", super::pulls::ROLLUP),
+            vars,
+            cx,
+        );
+        let head = data
+            .ready()
             .map(|v| v.at("repository.object").clone())
-            .filter(|c| c.has("oid"))
+            .filter(|c| c.has("oid"))?;
+        let checks = super::pulls::Checks::from_rollup(head.at("statusCheckRollup"));
+        self.keep_checks_live(&format!("/repos/{repo}/commits"), &checks, cx);
+        Some(head)
     }
 
     /// The last commit to touch each of `paths` at `git_ref`, by path.

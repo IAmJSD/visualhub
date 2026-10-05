@@ -443,11 +443,16 @@ pub fn check_run(s: &Value, i: usize) -> Value {
     })
 }
 
-/// Build statuses as GraphQL's `statusCheckRollup.state`.
+/// Build statuses as GraphQL's `statusCheckRollup`: how they went, and
+/// how many passed, as check runs.
 pub fn rollup(statuses: &[Value]) -> Value {
     if statuses.is_empty() {
         return Value::Null;
     }
+    let passed = statuses
+        .iter()
+        .filter(|s| s.s("state") == "SUCCESSFUL")
+        .count();
     let states: Vec<String> = statuses.iter().map(|s| s.s("state")).collect();
     let state = if states.iter().any(|s| s == "FAILED" || s == "STOPPED") {
         "FAILURE"
@@ -456,7 +461,15 @@ pub fn rollup(statuses: &[Value]) -> Value {
     } else {
         "PENDING"
     };
-    json!({ "state": state })
+    json!({
+        "state": state,
+        "contexts": {
+            "checkRunCount": statuses.len(),
+            "checkRunCountsByState": [{ "state": "SUCCESS", "count": passed }],
+            "statusContextCount": 0,
+            "statusContextCountsByState": [],
+        },
+    })
 }
 
 /// A snippet as a gist; `contents` are its files' text, by name, when
@@ -556,12 +569,12 @@ mod tests {
             author_parts("Ada L <ada@example.com>"),
             ("Ada L".to_string(), "ada@example.com".to_string())
         );
-        assert_eq!(
-            rollup(&[
-                json!({ "state": "SUCCESSFUL" }),
-                json!({ "state": "INPROGRESS" })
-            ]),
-            json!({ "state": "PENDING" })
-        );
+        let mixed = rollup(&[
+            json!({ "state": "SUCCESSFUL" }),
+            json!({ "state": "INPROGRESS" }),
+        ]);
+        assert_eq!(mixed.s("state"), "PENDING");
+        let checks = crate::screens::pulls::Checks::from_rollup(&mixed);
+        assert_eq!((checks.passed, checks.total), (1, 2));
     }
 }
