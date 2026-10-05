@@ -1347,7 +1347,7 @@ impl Hub {
         };
         let header = widgets::row()
             .child(widgets::dim(
-                "Click any line to leave a review comment on it.",
+                "Click a line to leave a review comment on it, or shift-click two lines to comment on the lines between.",
             ))
             .child(widgets::spacer())
             .child(widgets::primary(

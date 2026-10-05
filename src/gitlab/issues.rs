@@ -537,7 +537,18 @@ fn review_comments(c: &Client, repo: &str, n: i64) -> Result<Value> {
                 ("LEFT", position.i("old_line"))
             };
             let id = note.i("id");
+            // A comment on several lines: where its range starts.
+            let start = position.at("line_range.start");
+            let (start_side, start_line) = if start.is_null() {
+                (Value::Null, Value::Null)
+            } else if start.has("new_line") {
+                (json!("RIGHT"), json!(start.i("new_line")))
+            } else {
+                (json!("LEFT"), json!(start.i("old_line")))
+            };
             out.push(json!({
+                "start_line": start_line,
+                "start_side": start_side,
                 "id": id,
                 "body": note.s("body"),
                 "user": shape::user(c, note.at("author")),
@@ -585,13 +596,28 @@ fn line_comment(a: &Ask, repo: &str, n: i64) -> Result<Value> {
         "old_path": if diff.is_null() { path.clone() } else { diff.s("old_path") },
     });
     let lines = crate::diff::parse(&diff.s("diff"));
-    let here = lines.iter().find(|l| {
-        if left {
-            l.old == Some(line) && l.new.is_none()
-        } else {
-            l.new == Some(line)
+    let find = |left: bool, line: u32| {
+        lines.iter().find(move |l| {
+            if left {
+                l.old == Some(line) && l.new.is_none()
+            } else {
+                l.new == Some(line)
+            }
+        })
+    };
+    let here = find(left, line);
+    // A comment on several lines names its first and last by GitLab's
+    // line codes; the note itself still sits on the last.
+    if let Some(start) = a.field("start_line").as_i64() {
+        let start_left = a.field("start_side").as_str() == Some("LEFT");
+        let file = position.s("new_path");
+        if let (Some(first), Some(last)) = (find(start_left, start as u32), here) {
+            position["line_range"] = json!({
+                "start": line_point(&file, first),
+                "end": line_point(&file, last),
+            });
         }
-    });
+    }
     match here {
         Some(l) => {
             if let Some(old) = l.old {
@@ -610,6 +636,19 @@ fn line_comment(a: &Ask, repo: &str, n: i64) -> Result<Value> {
         &format!("{p}/merge_requests/{n}/discussions"),
         Some(&json!({ "body": a.field("body"), "position": position })),
     )
+}
+
+/// One end of a comment's line range, as GitLab places it: by the line's
+/// code (the path's SHA-1 and the line's place on both sides), whether
+/// it was added, and its numbers.
+fn line_point(path: &str, line: &crate::diff::Line) -> Value {
+    let (old, new) = line.pos;
+    json!({
+        "line_code": format!("{}_{old}_{new}", sha1_smol::Sha1::from(path).digest()),
+        "type": if line.kind == crate::diff::Kind::Add { "new" } else { "old" },
+        "old_line": line.old,
+        "new_line": line.new,
+    })
 }
 
 /// Approvals, and what reviewers have said, as GitHub's reviews.
@@ -713,6 +752,29 @@ fn merge(a: &Ask, repo: &str, n: i64) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    use crate::json::Json as _;
+
+    #[test]
+    fn range_ends_carry_line_codes() {
+        let lines = crate::diff::parse("@@ -4,2 +4,3 @@\n a\n+b\n-c\n");
+        let added = super::line_point("src/a.rs", &lines[2]);
+        assert_eq!(
+            added.s("line_code"),
+            "c46b6f3386ba91fc8fcb5f960fd24012ff3c1460_5_5"
+        );
+        assert_eq!(added.s("type"), "new");
+        assert!(added.at("old_line").is_null());
+        let removed = super::line_point("src/a.rs", &lines[3]);
+        assert_eq!(
+            removed.s("line_code"),
+            "c46b6f3386ba91fc8fcb5f960fd24012ff3c1460_5_6"
+        );
+        assert_eq!(
+            (removed.s("type"), removed.i("old_line")),
+            ("old".into(), 5)
+        );
+    }
+
     #[test]
     fn kinds_name_their_paths() {
         assert_eq!(super::Kind::Issue.part(), "issues");
