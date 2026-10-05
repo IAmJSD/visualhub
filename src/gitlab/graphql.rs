@@ -147,18 +147,51 @@ fn checks(c: &Client, repo: &str, commit: &Value) -> Value {
 fn pull_checks(c: &Client, repo: &str, query: &str) -> Result<Value> {
     let numbers = numbered(query, ": pullRequest(number: ");
     let found = parallel(&numbers, |(_, n)| {
-        get(c, &format!("{}/merge_requests/{n}", proj(repo)))
-            .map(|mr| rollup(c, repo, mr.at("head_pipeline")))
-            .unwrap_or(Value::Null)
+        let path = format!("{}/merge_requests/{n}", proj(repo));
+        let Ok(mr) = get(c, &path) else {
+            return (Value::Null, Value::Null);
+        };
+        let approvals = if query.contains("reviewDecision") {
+            get(c, &format!("{path}/approvals")).unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        };
+        (
+            rollup(c, repo, mr.at("head_pipeline")),
+            review_decision(&mr, &approvals),
+        )
     });
     let mut repository = Map::new();
-    for ((alias, _), rollup) in numbers.iter().zip(found) {
+    for ((alias, _), (rollup, review)) in numbers.iter().zip(found) {
         repository.insert(
             alias.clone(),
-            json!({ "commits": { "nodes": [{ "commit": { "statusCheckRollup": rollup } }] } }),
+            json!({ "reviewDecision": review, "commits": { "nodes": [{ "commit": { "statusCheckRollup": rollup } }] } }),
         );
     }
     Ok(json!({ "repository": repository }))
+}
+
+/// Where a merge request's review stands, as GitHub's `reviewDecision`.
+/// GitLab calls a merge request approved once its rules are met, which
+/// they are when it has none, so it only counts here once someone has.
+fn review_decision(mr: &Value, approvals: &Value) -> Value {
+    if mr.s("state") != "opened" {
+        return Value::Null;
+    }
+    if mr.s("detailed_merge_status") == "requested_changes" {
+        return json!("CHANGES_REQUESTED");
+    }
+    if approvals.is_null() {
+        return Value::Null;
+    }
+    let approved_by = !approvals.list("approved_by").is_empty();
+    if approvals.b("approved") && approved_by {
+        json!("APPROVED")
+    } else if !approvals.b("approved") {
+        json!("REVIEW_REQUIRED")
+    } else {
+        Value::Null
+    }
 }
 
 /// Every number after `marker` in `query`, with the alias before it:
@@ -423,6 +456,26 @@ fn mutation(c: &Client, query: &str, vars: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn approvals_read_as_review_decisions() {
+        let open = json!({ "state": "opened", "detailed_merge_status": "mergeable" });
+        let by_ada =
+            json!({ "approved": true, "approved_by": [{ "user": { "username": "ada" } }] });
+        let no_rules = json!({ "approved": true, "approved_by": [] });
+        let short =
+            json!({ "approved": false, "approved_by": [{ "user": { "username": "ada" } }] });
+        assert_eq!(review_decision(&open, &by_ada), json!("APPROVED"));
+        assert_eq!(review_decision(&open, &no_rules), Value::Null);
+        assert_eq!(review_decision(&open, &short), json!("REVIEW_REQUIRED"));
+        let changes = json!({ "state": "opened", "detailed_merge_status": "requested_changes" });
+        assert_eq!(
+            review_decision(&changes, &by_ada),
+            json!("CHANGES_REQUESTED")
+        );
+        let merged = json!({ "state": "merged" });
+        assert_eq!(review_decision(&merged, &by_ada), Value::Null);
+    }
 
     #[test]
     fn reads_aliases_and_ids() {

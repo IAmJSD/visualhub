@@ -54,6 +54,10 @@ pub struct Row {
     /// How the commit's (or pull request's head's) checks went, once
     /// GraphQL has said.
     pub checks: Checks,
+    /// Where a pull request's review stands, as GraphQL's
+    /// `reviewDecision`: `APPROVED`, `CHANGES_REQUESTED`,
+    /// `REVIEW_REQUIRED`, or empty.
+    pub review: String,
 }
 
 /// What GraphQL tells about a commit in a list: who made it, co-authors
@@ -97,6 +101,7 @@ impl Row {
             authors: Vec::new(),
             pull: None,
             checks: Checks::default(),
+            review: String::new(),
         }
     }
 
@@ -401,15 +406,18 @@ impl Hub {
                 .collect();
             let found = self.pull_checks_batch(&repo, &numbers, cx);
             for &i in &indices {
-                if let Some(checks) = rows[i].pull.as_ref().and_then(|p| found.get(&p.number)) {
+                if let Some((checks, review)) =
+                    rows[i].pull.as_ref().and_then(|p| found.get(&p.number))
+                {
                     rows[i].checks = checks.clone();
+                    rows[i].review = review.clone();
                 }
             }
         }
     }
 
-    /// The checks on the heads of pull requests `numbers` in `repo`, as
-    /// far as GraphQL has answered, asked in batches that follow the
+    /// The checks on the heads of pull requests `numbers` in `repo`, and
+    /// where their reviews stand, as far as GraphQL has answered, asked in batches that follow the
     /// list's order. They're kept with the repository's pull requests, so
     /// they're asked again when those change.
     pub fn pull_checks_batch(
@@ -417,7 +425,7 @@ impl Hub {
         repo: &str,
         numbers: &[u64],
         cx: &mut Context<Self>,
-    ) -> HashMap<u64, Checks> {
+    ) -> HashMap<u64, (Checks, String)> {
         let mut found = HashMap::new();
         let Some((owner, name)) = repo.split_once('/') else {
             return found;
@@ -427,7 +435,7 @@ impl Hub {
                 .iter()
                 .enumerate()
                 .map(|(n, number)| {
-                    format!("p{n}: pullRequest(number: {number}) {{ commits(last: 1) {{ nodes {{ commit {{ {ROLLUP} }} }} }} }} ")
+                    format!("p{n}: pullRequest(number: {number}) {{ reviewDecision commits(last: 1) {{ nodes {{ commit {{ {ROLLUP} }} }} }} }} ")
                 })
                 .collect();
             let query = format!("query($o: String!, $n: String!) {{ repository(owner: $o, name: $n) {{ {fields}}} }}");
@@ -446,7 +454,8 @@ impl Hub {
                     .map(|c| Checks::from_rollup(c.at("commit.statusCheckRollup")))
                     .unwrap_or_default();
                 self.keep_checks_live(&format!("/repos/{repo}/pulls"), &head, cx);
-                found.insert(*number, head);
+                let review = data.s(&format!("repository.p{n}.reviewDecision"));
+                found.insert(*number, (head, review));
             }
         }
         found
@@ -528,6 +537,30 @@ impl Hub {
             &row.checks,
             true,
         );
+        let review = match row.review.as_str() {
+            "APPROVED" => Some(("Approved", widgets::green())),
+            "CHANGES_REQUESTED" => Some(("Changes requested", widgets::red())),
+            "REVIEW_REQUIRED" => Some(("Review required", widgets::yellow())),
+            _ => None,
+        };
+        let mark = match (mark, review) {
+            (mark, None) => mark,
+            (mark, Some((text, color))) => {
+                let review = div().text_color(rgb(color)).child(text);
+                Some(match mark {
+                    Some(mark) => div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .child(mark)
+                        .child(widgets::dim("·"))
+                        .child(review)
+                        .into_any_element(),
+                    None => review.into_any_element(),
+                })
+            }
+        };
         let meta = match (meta, mark) {
             (Some(meta), Some(mark)) => Some(
                 div()
