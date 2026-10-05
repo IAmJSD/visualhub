@@ -821,6 +821,9 @@ pub struct Hub {
     /// Whether the press under way began with a menu or picker open over
     /// the dialog: that press only closes the menu, as Escape would.
     pub backdrop_press_closes_popup: bool,
+    /// The open form's boxes as it opened, to tell whether anything has
+    /// been typed that a stray press outside it would throw away.
+    form_opened_with: Vec<(String, String)>,
     /// A self-update downloading or installing, under its dialog.
     pub update_progress: Option<crate::update::Progress>,
     pub menu: Option<MenuState>,
@@ -905,6 +908,7 @@ impl Hub {
             submits: HashMap::new(),
             modal: None,
             backdrop_press_closes_popup: false,
+            form_opened_with: Vec::new(),
             update_progress: None,
             menu: None,
             picker: None,
@@ -1678,6 +1682,7 @@ impl Hub {
     pub fn open_form(&mut self, spec: Rc<FormSpec>) {
         self.blur_fields();
         crate::form::reset(self, &spec);
+        self.form_opened_with = self.form_texts();
         self.modal = Some(Modal::Form {
             spec,
             error: None,
@@ -1736,11 +1741,29 @@ impl Hub {
     }
 
     /// A press on a dialog's backdrop: closes it as Escape does, unless
-    /// the press was closing a menu or picker opened from the dialog.
+    /// the press was closing a menu or picker opened from the dialog, or
+    /// the form has been typed in (Escape or Cancel still close it).
     pub fn dismiss_modal(&mut self, cx: &mut Context<Self>) {
-        if !std::mem::take(&mut self.backdrop_press_closes_popup) {
+        if std::mem::take(&mut self.backdrop_press_closes_popup) {
+            return;
+        }
+        let edited = matches!(self.modal, Some(Modal::Form { .. }))
+            && self.form_texts() != self.form_opened_with;
+        if !edited {
             self.close_modal(cx);
         }
+    }
+
+    /// The open form's text boxes and what they hold, in a stable order.
+    fn form_texts(&self) -> Vec<(String, String)> {
+        let mut texts: Vec<(String, String)> = self
+            .fields
+            .iter()
+            .filter(|(id, _)| id.starts_with("form."))
+            .map(|(id, f)| (id.clone(), f.text.clone()))
+            .collect();
+        texts.sort();
+        texts
     }
 
     pub fn close_modal(&mut self, cx: &mut Context<Self>) {
