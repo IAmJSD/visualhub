@@ -145,7 +145,11 @@ impl Client {
             Forge::GitHub if url.starts_with(&*self.api) => {
                 builder.header("Authorization", format!("Bearer {}", self.token))
             }
-            Forge::GitLab if url.starts_with(&*self.web) => builder.header("PRIVATE-TOKEN", &*self.token),
+            // Bearer, not PRIVATE-TOKEN: GitLab takes access tokens either
+            // way, but OAuth tokens (the GitLab CLI's web sign-in) only so.
+            Forge::GitLab if url.starts_with(&*self.web) => {
+                builder.header("Authorization", format!("Bearer {}", self.token))
+            }
             _ => builder,
         };
         let mut response = match body {
@@ -277,7 +281,7 @@ impl Client {
     pub fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>> {
         let mut request = self.agent.get(url);
         if self.is_gitlab() && url.starts_with(&*self.web) && !self.token.is_empty() {
-            request = request.header("PRIVATE-TOKEN", &*self.token);
+            request = request.header("Authorization", format!("Bearer {}", self.token));
         }
         let mut response = request.call()?;
         if response.status().as_u16() >= 400 {
