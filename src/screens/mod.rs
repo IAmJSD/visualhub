@@ -20,3 +20,4 @@ pub mod repos;
 pub mod run;
 pub mod search;
 pub mod settings;
+pub mod update;

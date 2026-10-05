@@ -661,6 +661,10 @@ impl Hub {
                         .into_any_element(),
                 )
             }
+            Modal::Update { update } => {
+                let update = update.clone();
+                Some(self.update_dialog(&update, cx))
+            }
             Modal::Confirm {
                 title,
                 message,

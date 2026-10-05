@@ -1,5 +1,5 @@
 //! Your account: profile, emails, keys, social accounts, blocked users,
-//! interaction limits, installed apps, and the session.
+//! interaction limits, installed apps, the session, and updates.
 
 use super::common::user_row;
 use crate::form::{Field, FormSpec};
@@ -13,7 +13,7 @@ use gpui::{div, AnyElement, Context, IntoElement as _, ParentElement as _, Style
 use crate::ui::palette;
 use serde_json::json;
 
-const SECTIONS: [(&str, &str); 10] = [
+const SECTIONS: [(&str, &str); 11] = [
     ("profile", "Public profile"),
     ("emails", "Emails"),
     ("ssh", "SSH keys"),
@@ -24,11 +24,12 @@ const SECTIONS: [(&str, &str); 10] = [
     ("limits", "Interaction limits"),
     ("apps", "Applications"),
     ("session", "Session"),
+    ("updates", "Updates"),
 ];
 
 /// GitLab's account sections: no social accounts, blocks, interaction
 /// limits or apps to list, and its own access tokens.
-const GITLAB_SECTIONS: [(&str, &str); 7] = [
+const GITLAB_SECTIONS: [(&str, &str); 8] = [
     ("profile", "Profile"),
     ("emails", "Emails"),
     ("ssh", "SSH keys"),
@@ -36,6 +37,7 @@ const GITLAB_SECTIONS: [(&str, &str); 7] = [
     ("gpg", "GPG keys"),
     ("tokens", "Access tokens"),
     ("session", "Session"),
+    ("updates", "Updates"),
 ];
 
 impl Hub {
@@ -45,6 +47,41 @@ impl Hub {
         let web = crate::forge::web();
         let body = match section.as_str() {
             "tokens" if gitlab => self.gl_tokens(cx),
+            "updates" => {
+                let at_launch = crate::update::check_at_launch();
+                widgets::col()
+                    .gap_3()
+                    .child(
+                        widgets::card()
+                            .p_4()
+                            .gap_2()
+                            .child(widgets::h3(format!("VisualHub {}", crate::update::current_version())))
+                            .child(widgets::dim(if crate::update::self_installable() {
+                                "When there's a newer release, VisualHub can download it and restart into it."
+                            } else {
+                                "This copy is updated the way it was installed; VisualHub links to each new release."
+                            }))
+                            .child(
+                                widgets::row()
+                                    .child(widgets::primary("check-updates", "Check for updates", Act::run(|hub, _, cx| hub.check_for_update(cx))))
+                                    .child(widgets::btn("all-releases", "All releases", Act::Url(crate::update::RELEASES_PAGE.into()))),
+                            ),
+                    )
+                    .child(widgets::card().child(widgets::setting_row(
+                        "Check for updates at launch",
+                        "At most once a day. It asks GitHub for the latest release and sends nothing else.",
+                        widgets::switch(
+                            "check-at-launch",
+                            at_launch,
+                            Act::run(move |_, _, cx| {
+                                crate::update::set_check_at_launch(!at_launch);
+                                cx.notify();
+                            }),
+                        ),
+                        true,
+                    )))
+                    .into_any_element()
+            }
             "emails" => {
                 let add = FormSpec::new("Add email address")
                     .field(Field::text("email", "Email").required())

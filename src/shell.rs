@@ -70,6 +70,7 @@ impl Render for Hub {
             .track_focus(&self.focus)
             .key_context("VisualHub")
             .on_action(cx.listener(|hub, _: &crate::macos_menu::Refresh, _, cx| hub.refresh(cx)))
+            .on_action(cx.listener(|hub, _: &crate::macos_menu::CheckForUpdates, _, cx| hub.check_for_update(cx)))
             .on_action(cx.listener(|hub, _: &crate::macos_menu::Search, _, cx| {
                 hub.focus_field("jump");
                 cx.notify();

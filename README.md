@@ -139,6 +139,18 @@ Pushing a `v*` tag runs all of these in CI (`.github/workflows/release.yml`):
 macOS (signed and notarized), Linux on x86_64 and arm64, and Windows, and
 attaches everything to a GitHub release.
 
+### Updating
+
+VisualHub checks that release for a newer version from Settings ▸ Updates (or
+Check for Updates… in the macOS app menu), and once a day at launch unless
+that's turned off there. On macOS it downloads `VisualHub.zip`, refuses it
+unless it's signed by the same team as the running copy, swaps it in beside the
+current bundle and relaunches. On Windows it runs `VisualHub-VERSION-setup.exe`
+silently once the app has quit, then restarts it. Linux copies belong to their
+package manager or AppImage, so there it only links to the release. The asset
+names are matched in `src/update.rs`, so rename them in both places or not at
+all.
+
 ## How it's built
 
 - `src/ui/`: the widget kit (buttons, text fields, chips, menus, dialogs,

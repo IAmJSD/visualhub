@@ -405,7 +405,7 @@ fn explain(status: u16, body: &str) -> String {
 // Where accounts come from, and what is remembered between runs.
 
 /// Where VisualHub keeps what it remembers between runs.
-fn config_dir() -> Option<PathBuf> {
+pub fn config_dir() -> Option<PathBuf> {
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)
     } else if cfg!(target_os = "macos") {

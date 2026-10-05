@@ -25,6 +25,7 @@ mod screens;
 mod shell;
 mod time;
 mod ui;
+mod update;
 mod widgets;
 
 use gpui::{

@@ -577,6 +577,10 @@ pub enum Modal {
         busy: bool,
         error: Option<String>,
     },
+    /// A newer release, offered by the update check.
+    Update {
+        update: crate::update::Update,
+    },
 }
 
 pub struct MenuState {
@@ -696,6 +700,8 @@ pub struct Hub {
     /// registered by the render that drew the box.
     pub submits: HashMap<String, Act>,
     pub modal: Option<Modal>,
+    /// A self-update downloading or installing, under its dialog.
+    pub update_progress: Option<crate::update::Progress>,
     pub menu: Option<MenuState>,
     pub picker: Option<crate::picker::PickerState>,
     pub toasts: Vec<Toast>,
@@ -763,6 +769,7 @@ impl Hub {
             choices: HashMap::new(),
             submits: HashMap::new(),
             modal: None,
+            update_progress: None,
             menu: None,
             picker: None,
             toasts: Vec::new(),
@@ -783,6 +790,7 @@ impl Hub {
             refreshed: std::time::Instant::now(),
         };
         hub.discover(cx);
+        hub.check_for_update_at_launch(cx);
         hub
     }
 
@@ -1448,7 +1456,7 @@ impl Hub {
 
     pub fn submit_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let form = match &self.modal {
-            Some(Modal::Form { busy: true, .. }) | Some(Modal::Confirm { busy: true, .. }) | None => return,
+            Some(Modal::Form { busy: true, .. }) | Some(Modal::Confirm { busy: true, .. }) | Some(Modal::Update { .. }) | None => return,
             Some(Modal::Form { spec, .. }) => Some(spec.clone()),
             Some(Modal::Confirm { .. }) => None,
         };
@@ -1494,7 +1502,11 @@ impl Hub {
     }
 
     pub fn close_modal(&mut self, cx: &mut Context<Self>) {
-        self.modal = None;
+        // Dismissing the update dialog while its download runs must not
+        // leave an update to land on its own.
+        if matches!(self.modal.take(), Some(Modal::Update { .. })) {
+            self.update_progress = None;
+        }
         self.blur_fields();
         cx.notify();
     }
@@ -1605,7 +1617,7 @@ impl Hub {
                 if crate::select::clear() || self.autoscroll.take().is_some() {
                 } else if self.menu.take().is_some() {
                 } else if self.modal.is_some() {
-                    self.modal = None;
+                    self.close_modal(cx);
                 } else {
                     self.scope_fix = None;
                 }

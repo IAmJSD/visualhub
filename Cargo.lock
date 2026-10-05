@@ -6631,6 +6631,7 @@ dependencies = [
  "log",
  "pulldown-cmark",
  "serde_json",
+ "sha2 0.10.9",
  "syntect",
  "two-face",
  "ureq",

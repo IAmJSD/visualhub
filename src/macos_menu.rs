@@ -14,7 +14,8 @@ actions!(
         CopySelection,
         CutSelection,
         Paste,
-        SelectAll
+        SelectAll,
+        CheckForUpdates
     ]
 );
 
@@ -37,6 +38,8 @@ pub fn install(cx: &mut App) {
         Menu {
             name: "VisualHub".into(),
             items: vec![
+                MenuItem::action("Check for Updates…", CheckForUpdates),
+                MenuItem::separator(),
                 MenuItem::action("Hide VisualHub", HideApp),
                 MenuItem::action("Hide Others", HideOthers),
                 MenuItem::action("Show All", ShowAll),
