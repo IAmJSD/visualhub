@@ -116,6 +116,8 @@ struct Builder {
     /// Inside an HTML comment, which an HTML block hands over a line at a
     /// time.
     in_comment: bool,
+    /// An HTML table on its way in, a line at a time like a comment.
+    html_table: Option<String>,
     link_start: Vec<(usize, String)>,
     heading: Option<HeadingLevel>,
     code: Option<(String, String)>,
@@ -258,6 +260,7 @@ impl Hub {
             inline: None,
             flags: Flags::default(),
             in_comment: false,
+            html_table: None,
             link_start: Vec::new(),
             heading: None,
             code: None,
@@ -603,6 +606,21 @@ impl Hub {
                     if html.trim().is_empty() {
                         continue;
                     }
+                    // Bots (Danger, coverage reports) write their tables in
+                    // HTML; drawn as Markdown's once all of one is in.
+                    if b.html_table.is_some() || html.trim_start().starts_with("<table") {
+                        let table = b.html_table.get_or_insert_with(String::new);
+                        table.push_str(&html);
+                        if table.contains("</table") {
+                            let table = b.html_table.take().unwrap_or_default();
+                            b.flush_paragraph();
+                            b.n += 1;
+                            let id = format!("{}-html{}", b.id, b.n);
+                            let el = self.html_table(&id, &table, cx);
+                            b.push_el(el);
+                        }
+                        continue;
+                    }
                     if let Some(tag) = img_tag(&html) {
                         b.flush_paragraph();
                         // A <picture> may offer a dark-mode version.
@@ -644,6 +662,13 @@ impl Hub {
                 _ => {}
             }
         }
+        if let Some(table) = b.html_table.take() {
+            b.flush_paragraph();
+            b.n += 1;
+            let id = format!("{}-html{}", b.id, b.n);
+            let el = self.html_table(&id, &table, cx);
+            b.push_el(el);
+        }
         b.flush_paragraph();
         let children = b
             .stack
@@ -661,6 +686,158 @@ impl Hub {
             .children(children)
             .into_any_element()
     }
+
+    /// An HTML table drawn as Markdown's are, each cell's contents read as
+    /// Markdown, and widths given in percent kept.
+    fn html_table(&mut self, id: &str, html: &str, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette();
+        let table = html_rows(html);
+        // A width set on one row's cell holds for its whole column.
+        let mut widths: Vec<Option<f32>> = Vec::new();
+        for row in &table {
+            for (c, cell) in row.iter().enumerate() {
+                if widths.len() <= c {
+                    widths.resize(c + 1, None);
+                }
+                widths[c] = widths[c].or(cell.width);
+            }
+        }
+        let mut rows = Vec::new();
+        for (r, row) in table.into_iter().enumerate() {
+            let mut cells = Vec::new();
+            for (c, cell) in row.into_iter().enumerate() {
+                let body = cell_markdown(&cell.html);
+                let content = (!body.trim().is_empty())
+                    .then(|| self.markdown(&format!("{id}-{r}-{c}"), &body, cx));
+                let mut el = div()
+                    .min_w(px(24.0))
+                    .px_2()
+                    .py_1()
+                    .border_r_1()
+                    .border_color(rgb(p.divider))
+                    .when_head(cell.head)
+                    .children(content);
+                el.style().flex_grow = Some(cell.width.or(widths[c]).unwrap_or(100.0));
+                el.style().flex_basis = Some(px(0.0).into());
+                cells.push(el.into_any_element());
+            }
+            rows.push(
+                div()
+                    .flex()
+                    .flex_row()
+                    .border_b_1()
+                    .border_color(rgb(p.divider))
+                    .children(cells)
+                    .into_any_element(),
+            );
+        }
+        div()
+            .flex()
+            .flex_col()
+            .border_1()
+            .border_color(rgb(p.edge))
+            .rounded_sm()
+            .text_size(px(12.0))
+            .children(rows)
+            .into_any_element()
+    }
+}
+
+/// One cell of an HTML table: whether it heads its column, its width in
+/// percent if it gives one, and what's inside it.
+struct HtmlCell {
+    head: bool,
+    width: Option<f32>,
+    html: String,
+}
+
+/// An HTML table's rows and their cells.
+fn html_rows(html: &str) -> Vec<Vec<HtmlCell>> {
+    let lower = html.to_ascii_lowercase();
+    let mut rows = Vec::new();
+    let mut at = 0;
+    while let Some(start) = lower[at..].find("<tr").map(|i| at + i) {
+        let end = lower[start..]
+            .find("</tr")
+            .map(|i| start + i)
+            .unwrap_or(lower.len());
+        let mut cells = Vec::new();
+        let mut c = start + 3;
+        loop {
+            let next = ["<td", "<th"]
+                .iter()
+                .filter_map(|tag| lower[c..end].find(tag).map(|i| c + i))
+                .min();
+            let Some(open) = next else { break };
+            let Some(body) = lower[open..end].find('>').map(|i| open + i + 1) else {
+                break;
+            };
+            let head = lower[open..].starts_with("<th");
+            let close = lower[body..end]
+                .find(if head { "</th" } else { "</td" })
+                .map(|i| body + i)
+                .unwrap_or(end);
+            let width = attr(&html[open..body], if head { "<th" } else { "<td" }, "width")
+                .and_then(|w| w.strip_suffix('%').and_then(|w| w.trim().parse().ok()));
+            cells.push(HtmlCell {
+                head,
+                width,
+                html: html[body..close].to_string(),
+            });
+            c = close.max(body);
+        }
+        if !cells.is_empty() {
+            rows.push(cells);
+        }
+        at = end.max(start + 3);
+    }
+    rows
+}
+
+/// A cell's HTML as Markdown: the inline tags bots use, the rest dropped.
+fn cell_markdown(html: &str) -> String {
+    let mut text = html.to_string();
+    for (tags, mark) in [
+        (["<code>", "</code>"], "`"),
+        (["<strong>", "</strong>"], "**"),
+        (["<b>", "</b>"], "**"),
+        (["<em>", "</em>"], "_"),
+        (["<i>", "</i>"], "_"),
+    ] {
+        for tag in tags {
+            text = text.replace(tag, mark);
+        }
+    }
+    // Links keep their targets.
+    let mut out = String::new();
+    let mut rest = text.as_str();
+    while let Some(open) = rest.find("<a ") {
+        let Some(gt) = rest[open..].find('>').map(|i| open + i) else {
+            break;
+        };
+        let Some(close) = rest[gt..].find("</a>").map(|i| gt + i) else {
+            break;
+        };
+        out.push_str(&rest[..open]);
+        let label = &rest[gt + 1..close];
+        match attr(&rest[open..=gt], "<a", "href") {
+            Some(href) => out.push_str(&format!("[{label}]({href})")),
+            None => out.push_str(label),
+        }
+        rest = &rest[close + 4..];
+    }
+    out.push_str(rest);
+    let out = out
+        .replace("<br>", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n");
+    strip_tags(&out)
+        .lines()
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 /// `:shortcode:` emoji as the emoji, as GitHub and GitLab show them,
@@ -1156,6 +1333,23 @@ mod tests {
         assert_eq!(
             shortcodes("id:tada: http://a:8080/"),
             "id:tada: http://a:8080/"
+        );
+    }
+
+    #[test]
+    fn html_tables_read_as_cells() {
+        let rows = html_rows(
+            "<table><thead><tr><th width=\"5%\"></th><th width=\"95%\" data-kind=\"Warning\">\n 1 Warning\n</th></tr></thead>\
+             <tbody><tr><td>:warning:</td><td data-sticky=\"false\">Please run <code>e2e</code>.</td></tr></tbody></table>",
+        );
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0][0].head && rows[0][1].head);
+        assert_eq!(rows[0][1].width, Some(95.0));
+        assert_eq!(cell_markdown(&rows[0][1].html), "1 Warning");
+        assert_eq!(cell_markdown(&rows[1][1].html), "Please run `e2e`.");
+        assert_eq!(
+            cell_markdown("see <a href=\"https://x.y/z\">the job</a><br>next"),
+            "see [the job](https://x.y/z)\nnext"
         );
     }
 
