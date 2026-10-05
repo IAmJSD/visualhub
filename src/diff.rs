@@ -1,6 +1,7 @@
 //! Unified diffs, read-only: a commit's or a pull request's changed files
 //! with line numbers, and -- on a pull request -- review comments threaded
-//! under the lines they are about, and a click on any line to start one.
+//! under the lines they are about, and a click on any line to start one
+//! (or a drag across several).
 
 use crate::form::{Field, FormSpec};
 use crate::hub::{on, Act, Hub, Load};
@@ -10,7 +11,8 @@ use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, StatefulInteractiveElement as _, Styled as _,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _,
 };
 use serde_json::{json, Value};
 
@@ -530,6 +532,42 @@ impl Hub {
             .get(&anchor_key)
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|&a| a < lines.len());
+        // A drag across lines in progress: the line it started on and the
+        // one it is over now.
+        let drag_key = format!("{id}:drag");
+        let drag = self
+            .choices
+            .get(&drag_key)
+            .and_then(|v| {
+                let (from, to) = v.split_once(',')?;
+                Some((from.parse::<usize>().ok()?, to.parse::<usize>().ok()?))
+            })
+            .filter(|&(from, to)| from < lines.len() && to < lines.len());
+        // The lines a comment is being written on, lit behind its dialog
+        // while that dialog is open.
+        let commenting_key = format!("{id}:commenting");
+        let commenting = self
+            .choices
+            .get(&commenting_key)
+            .and_then(|v| {
+                let (from, to) = v.split_once(',')?;
+                Some((from.parse::<usize>().ok()?, to.parse::<usize>().ok()?))
+            })
+            .filter(|&(from, to)| from <= to && to < lines.len())
+            .filter(|&(from, to)| {
+                let title = comment_title(
+                    &name,
+                    (from != to).then(|| point(&lines[from]).1),
+                    point(&lines[to]).1,
+                );
+                matches!(&self.modal, Some(crate::hub::Modal::Form { spec, .. }) if spec.title == title)
+            });
+        let dragged = |i: usize| {
+            drag.is_some_and(|(a, b)| a.min(b) <= i && i <= a.max(b))
+                || commenting.is_some_and(|(a, b)| a <= i && i <= b)
+        };
+        // On a touch screen a drag scrolls, so lines only take taps there.
+        let draggable = review.is_some() && !crate::ui::touch();
         let mut body = div()
             .id(ElementId::Name(format!("{id}-body").into()))
             .flex()
@@ -537,6 +575,56 @@ impl Hub {
             .font_family(widgets::MONO)
             .text_size(px(12.0))
             .line_height(px(20.0));
+        if let (Some(target), true) = (review, draggable) {
+            // Letting go ends a drag wherever the pointer is: across more
+            // than one line, it comments on them.
+            let points: Vec<(&'static str, u32)> = lines.iter().map(point).collect();
+            let (target, path, key) = (target.clone(), name.clone(), drag_key.clone());
+            let anchor_key = anchor_key.clone();
+            let commenting_key = commenting_key.clone();
+            let finish = move |window: &mut gpui::Window, cx: &mut gpui::App| {
+                let (target, path, key) = (target.clone(), path.clone(), key.clone());
+                let (points, anchor_key) = (points.clone(), anchor_key.clone());
+                let commenting_key = commenting_key.clone();
+                crate::hub::perform(
+                    Act::run(move |hub, window, cx| {
+                        let Some(v) = hub.choices.remove(&key) else {
+                            return;
+                        };
+                        cx.notify();
+                        let Some((from, to)) = v.split_once(',').and_then(|(a, b)| {
+                            Some((a.parse::<usize>().ok()?, b.parse::<usize>().ok()?))
+                        }) else {
+                            return;
+                        };
+                        let (s, e) = (from.min(to), from.max(to));
+                        if s == e || e >= points.len() {
+                            // A press and release on one line is a click.
+                            return;
+                        }
+                        hub.choices.remove(&anchor_key);
+                        hub.choices
+                            .insert(commenting_key.clone(), format!("{s},{e}"));
+                        hub.perform(
+                            line_comment_form(&target, &path, Some(points[s]), points[e]),
+                            window,
+                            cx,
+                        );
+                    }),
+                    window,
+                    cx,
+                );
+            };
+            let finish = std::rc::Rc::new(finish);
+            let finish_out = finish.clone();
+            body = body
+                .on_mouse_up(MouseButton::Left, move |_: &MouseUpEvent, window, cx| {
+                    finish(window, cx)
+                })
+                .on_mouse_up_out(MouseButton::Left, move |_: &MouseUpEvent, window, cx| {
+                    finish_out(window, cx)
+                });
+        }
         for (r, row_of) in shown.iter().enumerate() {
             let (line, index) = match row_of {
                 Shown::Diff(i) => (&lines[*i], Some(*i)),
@@ -606,23 +694,73 @@ impl Hub {
                         .filter(|&a| a != i && hunk_of[a] == hunk_of[i])
                         .map(|a| {
                             let (s, e) = if a < i { (a, i) } else { (i, a) };
-                            line_comment_form(
+                            let form = line_comment_form(
                                 target,
                                 &name,
                                 Some(point(&lines[s])),
                                 point(&lines[e]),
-                            )
+                            );
+                            (form, format!("{s},{e}"))
                         });
                     let key = anchor_key.clone();
+                    let commenting_key = commenting_key.clone();
+                    if draggable {
+                        // A press starts a drag; moving onto another line of
+                        // the same hunk stretches it there.
+                        let (down_key, move_key) = (drag_key.clone(), drag_key.clone());
+                        let (from, hunk) = (drag.map(|(a, _)| a), hunk_of[i]);
+                        let same_hunk = from.is_some_and(|a| hunk_of[a] == hunk);
+                        let over = drag.map(|(_, b)| b);
+                        row = row
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                move |e: &MouseDownEvent, window, cx| {
+                                    if e.modifiers.shift {
+                                        return;
+                                    }
+                                    let key = down_key.clone();
+                                    crate::hub::perform(
+                                        Act::run(move |hub, _, cx| {
+                                            hub.choices.insert(key.clone(), format!("{i},{i}"));
+                                            cx.notify();
+                                        }),
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            )
+                            .on_mouse_move(move |e: &MouseMoveEvent, window, cx| {
+                                if e.pressed_button != Some(MouseButton::Left)
+                                    || !same_hunk
+                                    || over == Some(i)
+                                {
+                                    return;
+                                }
+                                let (key, from) = (move_key.clone(), from.unwrap_or(i));
+                                crate::hub::perform(
+                                    Act::run(move |hub, _, cx| {
+                                        if hub.choices.contains_key(&key) {
+                                            hub.choices.insert(key.clone(), format!("{from},{i}"));
+                                            cx.notify();
+                                        }
+                                    }),
+                                    window,
+                                    cx,
+                                );
+                            });
+                    }
                     row = row
                         .cursor_pointer()
-                        .when(anchor == Some(i), |d| d.bg(rgb(p.selection_bg)))
+                        .when(anchor == Some(i) || dragged(i), |d| {
+                            d.bg(rgb(p.selection_bg))
+                        })
                         .hover(|s| s.bg(rgb(p.hover)))
                         .on_click(on(Act::run(move |hub, window, cx| {
                             let shift = window.modifiers().shift;
                             match &range {
-                                Some(range) if shift => {
+                                Some((range, lit)) if shift => {
                                     hub.choices.remove(&key);
+                                    hub.choices.insert(commenting_key.clone(), lit.clone());
                                     hub.perform(range.clone(), window, cx);
                                 }
                                 _ => {
@@ -630,6 +768,8 @@ impl Hub {
                                     if shift {
                                         cx.notify();
                                     } else {
+                                        hub.choices
+                                            .insert(commenting_key.clone(), format!("{i},{i}"));
                                         hub.perform(single.clone(), window, cx);
                                     }
                                 }
@@ -767,6 +907,14 @@ impl Hub {
     }
 }
 
+/// The title of the dialog commenting on `path` from line `from` to `line`.
+fn comment_title(path: &str, from: Option<u32>, line: u32) -> String {
+    match from {
+        Some(from) => format!("Comment on {path}:{from}–{line}"),
+        None => format!("Comment on {path}:{line}"),
+    }
+}
+
 /// The dialog a click on a diff line opens: a comment on the line at
 /// `end`, or on the lines from `start` to it.
 fn line_comment_form(
@@ -779,11 +927,7 @@ fn line_comment_form(
     let path = path.to_string();
     let (side, line) = (end.0.to_string(), end.1);
     let start = start.map(|(side, line)| (side.to_string(), line));
-    let title = match &start {
-        Some((_, from)) => format!("Comment on {path}:{from}–{line}"),
-        None => format!("Comment on {path}:{line}"),
-    };
-    FormSpec::new(title)
+    FormSpec::new(comment_title(&path, start.as_ref().map(|s| s.1), line))
         .submit("Add single comment")
         .field(Field::multiline("body", "Comment").required())
         .rest("POST", format!("/repos/{repo}/pulls/{number}/comments"))
