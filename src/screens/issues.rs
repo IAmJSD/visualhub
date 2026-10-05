@@ -1092,7 +1092,10 @@ impl Hub {
             // GitLab's system notes ("added ~bug label", "approved this
             // merge request") say what happened in their own words.
             "system_note" => {
-                let text = crate::json::first_line(&event.s("body"));
+                // Some arrive as HTML (a changed title's diff), some as Markdown.
+                let text = link_labels(&crate::markdown::strip_tags(&crate::json::first_line(
+                    &event.s("body"),
+                )));
                 let icon_name = if text.starts_with("approved") {
                     "check-circle"
                 } else if text.contains("commit") {
@@ -1672,4 +1675,45 @@ pub fn slug(title: &str) -> String {
         }
     }
     out.trim_matches('-').chars().take(40).collect()
+}
+
+/// Markdown links (`[9002946](https://…)`) as their labels, for a line
+/// shown as plain text.
+fn link_labels(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let after = &rest[open + 1..];
+        let link = after.find("](").and_then(|close| {
+            let target = &after[close + 2..];
+            target.find(')').map(|end| (close, close + 2 + end + 1))
+        });
+        match link {
+            Some((close, end)) => {
+                out.push_str(&rest[..open]);
+                out.push_str(&after[..close]);
+                rest = &after[end..];
+            }
+            None => {
+                out.push_str(&rest[..open + 1]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn links_read_as_their_labels() {
+        assert_eq!(
+            link_labels("started session [9002946](https://gitlab.com/a/-/b/9002946) triggered by @ashrafkhamis"),
+            "started session 9002946 triggered by @ashrafkhamis"
+        );
+        assert_eq!(link_labels("added ~[bug] label"), "added ~[bug] label");
+    }
 }
