@@ -45,8 +45,15 @@ impl PickItem {
 
     /// A tick box: `add` when ticked, `remove` when unticked.
     pub fn toggle(label: impl Into<String>, checked: bool, add: Act, remove: Act) -> Self {
-        let (act, undo) = if checked { (remove, add) } else { (add, remove) };
-        PickItem { undo: Some(undo), ..PickItem::new(label, checked, act) }
+        let (act, undo) = if checked {
+            (remove, add)
+        } else {
+            (add, remove)
+        };
+        PickItem {
+            undo: Some(undo),
+            ..PickItem::new(label, checked, act)
+        }
     }
 
     pub fn avatar(mut self, url: impl Into<String>) -> Self {
@@ -124,7 +131,9 @@ impl Hub {
 
     /// The items the filter lets through, by index.
     fn picker_matches(&self) -> Vec<usize> {
-        let Some(state) = &self.picker else { return Vec::new() };
+        let Some(state) = &self.picker else {
+            return Vec::new();
+        };
         let query = self.field_text(FILTER).trim().to_lowercase();
         state
             .picker
@@ -132,15 +141,21 @@ impl Hub {
             .iter()
             .enumerate()
             .filter(|(_, item)| {
-                query.is_empty() || item.label.to_lowercase().contains(&query) || item.detail.to_lowercase().contains(&query)
+                query.is_empty()
+                    || item.label.to_lowercase().contains(&query)
+                    || item.detail.to_lowercase().contains(&query)
             })
             .map(|(i, _)| i)
             .collect()
     }
 
     fn pick(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(state) = &mut self.picker else { return };
-        let Some(item) = state.picker.items.get(index) else { return };
+        let Some(state) = &mut self.picker else {
+            return;
+        };
+        let Some(item) = state.picker.items.get(index) else {
+            return;
+        };
         // Clicked again after a change: undo it.
         let act = match (&item.undo, state.checked[index] != item.checked) {
             (Some(undo), true) => undo.clone(),
@@ -174,18 +189,34 @@ impl Hub {
         let matches = self.picker_matches();
         let filter = self.input(FILTER, &picker.placeholder, cx).w_full();
 
-        let mut list = div().id("picker-list").flex().flex_col().max_h(px(320.0)).overflow_y_scroll().py_1();
+        let mut list = div()
+            .id("picker-list")
+            .flex()
+            .flex_col()
+            .max_h(px(320.0))
+            .overflow_y_scroll()
+            .py_1();
         if picker.loading {
             list = list.child(widgets::loading());
         } else if matches.is_empty() {
-            list = list.child(div().px_3().py_2().child(widgets::faint("Nothing matches.")));
+            list = list.child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .child(widgets::faint("Nothing matches.")),
+            );
         }
         for i in matches {
             let item = &picker.items[i];
             let leading: AnyElement = if let Some(url) = &item.avatar {
                 self.avatar(url, 20.0, cx)
             } else if let Some(color) = &item.color {
-                div().size(px(12.0)).mx(px(4.0)).rounded_full().bg(rgb(widgets::parse_hex(color))).into_any_element()
+                div()
+                    .size(px(12.0))
+                    .mx(px(4.0))
+                    .rounded_full()
+                    .bg(rgb(widgets::parse_hex(color)))
+                    .into_any_element()
             } else {
                 div().into_any_element()
             };
@@ -215,9 +246,24 @@ impl Hub {
                         widgets::col()
                             .flex_1()
                             .min_w_0()
-                            .child(div().font_weight(FontWeight::SEMIBOLD).text_ellipsis().overflow_hidden().whitespace_nowrap().child(item.label.clone()))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_ellipsis()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .child(item.label.clone()),
+                            )
                             .when(!item.detail.is_empty(), |d| {
-                                d.child(div().text_size(px(12.0)).text_color(rgb(p.text_dim)).text_ellipsis().overflow_hidden().whitespace_nowrap().child(item.detail.clone()))
+                                d.child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(rgb(p.text_dim))
+                                        .text_ellipsis()
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .child(item.detail.clone()),
+                                )
                             }),
                     ),
             );
@@ -236,12 +282,24 @@ impl Hub {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(picker.title.clone()),
             )
-            .child(div().px_2().pb_2().border_b_1().border_color(rgb(p.divider)).child(filter))
+            .child(
+                div()
+                    .px_2()
+                    .pb_2()
+                    .border_b_1()
+                    .border_color(rgb(p.divider))
+                    .child(filter),
+            )
             .child(list);
         Some(
-            deferred(anchored().position(at).snap_to_window_with_margin(px(8.0)).child(popover))
-                .with_priority(2)
-                .into_any_element(),
+            deferred(
+                anchored()
+                    .position(at)
+                    .snap_to_window_with_margin(px(8.0))
+                    .child(popover),
+            )
+            .with_priority(2)
+            .into_any_element(),
         )
     }
 }

@@ -42,10 +42,15 @@ fn counts(c: &Client, repo: &str) -> Result<Value> {
     let stats = get(c, &format!("{p}/issues_statistics"))?;
     let states = ["opened", "closed", "merged"];
     let totals = parallel(&states, |state| {
-        c.raw("GET", &format!("{p}/merge_requests?state={state}&per_page=1"), None, None)
-            .ok()
-            .and_then(|r| r.total)
-            .unwrap_or(0)
+        c.raw(
+            "GET",
+            &format!("{p}/merge_requests?state={state}&per_page=1"),
+            None,
+            None,
+        )
+        .ok()
+        .and_then(|r| r.total)
+        .unwrap_or(0)
     });
     let count = |n: u64| json!({ "totalCount": n });
     Ok(json!({ "repository": {
@@ -64,9 +69,18 @@ fn counts(c: &Client, repo: &str) -> Result<Value> {
 fn authors(c: &Client, commit: &Value) -> Value {
     let mut people = vec![(commit.s("author_name"), commit.s("author_email"))];
     for line in commit.s("message").lines() {
-        let Some(rest) = line.trim().strip_prefix("Co-authored-by:").or_else(|| line.trim().strip_prefix("Co-Authored-By:")) else { continue };
+        let Some(rest) = line
+            .trim()
+            .strip_prefix("Co-authored-by:")
+            .or_else(|| line.trim().strip_prefix("Co-Authored-By:"))
+        else {
+            continue;
+        };
         if let Some((name, email)) = rest.trim().split_once('<') {
-            people.push((name.trim().to_string(), email.trim_end_matches('>').trim().to_string()));
+            people.push((
+                name.trim().to_string(),
+                email.trim_end_matches('>').trim().to_string(),
+            ));
         }
     }
     let emails: Vec<String> = people.iter().map(|(_, e)| e.clone()).collect();
@@ -76,7 +90,12 @@ fn authors(c: &Client, commit: &Value) -> Value {
 
 /// A commit, kept a while: it never changes, though its pipeline might.
 fn commit(c: &Client, repo: &str, sha: &str) -> Result<Value> {
-    c.memo.get_or(&format!("commit:{repo}@{sha}"), MINUTE, || get(c, &format!("{}/repository/commits/{}", proj(repo), enc(sha))))
+    c.memo.get_or(&format!("commit:{repo}@{sha}"), MINUTE, || {
+        get(
+            c,
+            &format!("{}/repository/commits/{}", proj(repo), enc(sha)),
+        )
+    })
 }
 
 fn checks(commit: &Value) -> Value {
@@ -90,8 +109,16 @@ fn checks(commit: &Value) -> Value {
 fn commit_head(c: &Client, repo: &str, rev: &str) -> Result<Value> {
     let v = commit(c, repo, rev)?;
     // GitLab counts the default branch's commits only.
-    let project = c.memo.get_or(&format!("project-stats:{repo}"), MINUTE, || get(c, &format!("{}?statistics=true", proj(repo))))?;
-    let total = if rev == project.s("default_branch") || rev.is_empty() { project.i("statistics.commit_count") } else { 0 };
+    let project = c
+        .memo
+        .get_or(&format!("project-stats:{repo}"), MINUTE, || {
+            get(c, &format!("{}?statistics=true", proj(repo)))
+        })?;
+    let total = if rev == project.s("default_branch") || rev.is_empty() {
+        project.i("statistics.commit_count")
+    } else {
+        0
+    };
     Ok(json!({
         "oid": v.s("id"),
         "messageHeadline": v.s("title"),
@@ -109,9 +136,16 @@ fn aliased(query: &str, marker: &str) -> Vec<(String, String)> {
     let mut at = 0;
     while let Some(found) = query[at..].find(marker) {
         let start = at + found;
-        let alias = query[..start].trim_end().trim_end_matches(':').rsplit([' ', '{']).next().unwrap_or("").to_string();
+        let alias = query[..start]
+            .trim_end()
+            .trim_end_matches(':')
+            .rsplit([' ', '{'])
+            .next()
+            .unwrap_or("")
+            .to_string();
         let literal = &query[start + marker.len()..];
-        let mut stream = serde_json::Deserializer::from_str(literal.trim_start()).into_iter::<String>();
+        let mut stream =
+            serde_json::Deserializer::from_str(literal.trim_start()).into_iter::<String>();
         if let Some(Ok(value)) = stream.next() {
             out.push((alias, value));
         }
@@ -125,14 +159,23 @@ fn last_commits(c: &Client, repo: &str, git_ref: &str, query: &str) -> Result<Va
     let paths = aliased(query, "history(first: 1, path: ");
     let p = proj(repo);
     let found = parallel(&paths, |(_, path)| {
-        get(c, &format!("{p}/repository/commits?ref_name={}&path={}&per_page=1", enc(git_ref), enc(path)))
-            .ok()
-            .and_then(|list| list.list("").first().cloned())
+        get(
+            c,
+            &format!(
+                "{p}/repository/commits?ref_name={}&path={}&per_page=1",
+                enc(git_ref),
+                enc(path)
+            ),
+        )
+        .ok()
+        .and_then(|list| list.list("").first().cloned())
     });
     let mut object = Map::new();
     for ((alias, _), commit) in paths.iter().zip(found) {
         let nodes = match commit {
-            Some(v) => json!([{ "oid": v.s("id"), "messageHeadline": v.s("title"), "committedDate": v.s("committed_date") }]),
+            Some(v) => {
+                json!([{ "oid": v.s("id"), "messageHeadline": v.s("title"), "committedDate": v.s("committed_date") }])
+            }
             None => json!([]),
         };
         object.insert(alias.clone(), json!({ "nodes": nodes }));
@@ -147,7 +190,10 @@ fn commit_batch(c: &Client, repo: &str, query: &str) -> Result<Value> {
     let mut repository = Map::new();
     for ((alias, _), v) in shas.iter().zip(found) {
         if let Some(v) = v {
-            repository.insert(alias.clone(), json!({ "authors": authors(c, &v), "statusCheckRollup": checks(&v) }));
+            repository.insert(
+                alias.clone(),
+                json!({ "authors": authors(c, &v), "statusCheckRollup": checks(&v) }),
+            );
         }
     }
     Ok(json!({ "repository": repository }))
@@ -169,7 +215,13 @@ fn civil(days: i64) -> (i64, i64, i64) {
 /// A profile's contribution calendar, from the one GitLab draws on
 /// profiles: a year of weeks, Sunday first, shaded as GitHub shades.
 fn profile(c: &Client, login: &str) -> Result<Value> {
-    let counts = c.raw_json("GET", &format!("{}/users/{}/calendar.json", c.web, enc(login)), None).unwrap_or(Value::Null);
+    let counts = c
+        .raw_json(
+            "GET",
+            &format!("{}/users/{}/calendar.json", c.web, enc(login)),
+            None,
+        )
+        .unwrap_or(Value::Null);
     let today = crate::time::now().div_euclid(86_400);
     // Back to the Sunday 52 weeks before this week's.
     let start = today - (today + 4).rem_euclid(7) - 52 * 7;
@@ -230,21 +282,41 @@ fn undraft(title: &str) -> String {
 
 fn mutation(c: &Client, query: &str, vars: &Value) -> Result<Value> {
     let mr = || node(&vars.s("id"), "mr", '!').ok_or_else(|| missing("merge request by that id"));
-    let issue = |key: &str| node(&vars.s(key), "issue", '#').ok_or_else(|| missing("issue by that id"));
+    let issue =
+        |key: &str| node(&vars.s(key), "issue", '#').ok_or_else(|| missing("issue by that id"));
     if query.contains("disablePullRequestAutoMerge") {
         let (repo, n) = mr()?;
-        return call(c, "POST", &format!("{}/merge_requests/{n}/cancel_merge_when_pipeline_succeeds", proj(&repo)), None);
+        return call(
+            c,
+            "POST",
+            &format!(
+                "{}/merge_requests/{n}/cancel_merge_when_pipeline_succeeds",
+                proj(&repo)
+            ),
+            None,
+        );
     }
     if query.contains("enablePullRequestAutoMerge") {
         let (repo, n) = mr()?;
         let body = json!({ "merge_when_pipeline_succeeds": true, "auto_merge": true, "squash": vars.s("m") == "SQUASH" });
-        return call(c, "PUT", &format!("{}/merge_requests/{n}/merge", proj(&repo)), Some(&body));
+        return call(
+            c,
+            "PUT",
+            &format!("{}/merge_requests/{n}/merge", proj(&repo)),
+            Some(&body),
+        );
     }
-    if query.contains("markPullRequestReadyForReview") || query.contains("convertPullRequestToDraft") {
+    if query.contains("markPullRequestReadyForReview")
+        || query.contains("convertPullRequestToDraft")
+    {
         let (repo, n) = mr()?;
         let path = format!("{}/merge_requests/{n}", proj(&repo));
         let title = undraft(&get(c, &path)?.s("title"));
-        let title = if query.contains("convertPullRequestToDraft") { format!("Draft: {title}") } else { title };
+        let title = if query.contains("convertPullRequestToDraft") {
+            format!("Draft: {title}")
+        } else {
+            title
+        };
         return call(c, "PUT", &path, Some(&json!({ "title": title })));
     }
     if query.contains("deleteIssue") {
@@ -255,8 +327,15 @@ fn mutation(c: &Client, query: &str, vars: &Value) -> Result<Value> {
         let (repo, n) = issue("i")?;
         let target = vars.s("r").trim_start_matches("gl:project:").to_string();
         let to = get(c, &proj(&target))?.i("id");
-        let moved = call(c, "POST", &format!("{}/issues/{n}/move", proj(&repo)), Some(&json!({ "to_project_id": to })))?;
-        return Ok(json!({ "transferIssue": { "issue": { "number": moved.i("iid"), "url": moved.s("web_url") } } }));
+        let moved = call(
+            c,
+            "POST",
+            &format!("{}/issues/{n}/move", proj(&repo)),
+            Some(&json!({ "to_project_id": to })),
+        )?;
+        return Ok(
+            json!({ "transferIssue": { "issue": { "number": moved.i("iid"), "url": moved.s("web_url") } } }),
+        );
     }
     Err(missing("GraphQL query like that one"))
 }
@@ -268,8 +347,17 @@ mod tests {
     #[test]
     fn reads_aliases_and_ids() {
         let q = r#"query { repository(owner: $o, name: $n) { object(expression: $r) { ... on Commit { e0: history(first: 1, path: "src/a b.rs") { nodes { oid } } e1: history(first: 1, path: "README.md") { nodes { oid } } } } } }"#;
-        assert_eq!(aliased(q, "history(first: 1, path: "), [("e0".to_string(), "src/a b.rs".to_string()), ("e1".to_string(), "README.md".to_string())]);
-        assert_eq!(node("gl:mr:a/b/c!12", "mr", '!'), Some(("a/b/c".to_string(), 12)));
+        assert_eq!(
+            aliased(q, "history(first: 1, path: "),
+            [
+                ("e0".to_string(), "src/a b.rs".to_string()),
+                ("e1".to_string(), "README.md".to_string())
+            ]
+        );
+        assert_eq!(
+            node("gl:mr:a/b/c!12", "mr", '!'),
+            Some(("a/b/c".to_string(), 12))
+        );
         assert_eq!(undraft("Draft: [WIP] faster"), "faster");
         assert_eq!(civil(0), (1970, 1, 1));
         assert_eq!(civil(19_723), (2024, 1, 1));
@@ -278,6 +366,12 @@ mod tests {
     #[test]
     fn reads_commit_batches() {
         let q = r#"query($o: String!, $n: String!) { repository(owner: $o, name: $n) { c0: object(oid: "abc") { ... on Commit { authors(first: 10) { nodes { name } } } } c1: object(oid: "def") { ... on Commit { x } } } }"#;
-        assert_eq!(aliased(q, ": object(oid: "), [("c0".to_string(), "abc".to_string()), ("c1".to_string(), "def".to_string())]);
+        assert_eq!(
+            aliased(q, ": object(oid: "),
+            [
+                ("c0".to_string(), "abc".to_string()),
+                ("c1".to_string(), "def".to_string())
+            ]
+        );
     }
 }

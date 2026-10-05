@@ -22,11 +22,17 @@ use std::time::Duration;
 
 /// Every scope the app uses, with what it's for.
 pub const SCOPES: &[(&str, &str)] = &[
-    ("repo", "Repositories, issues, pull requests and notifications"),
+    (
+        "repo",
+        "Repositories, issues, pull requests and notifications",
+    ),
     ("workflow", "Editing Actions workflows"),
     ("admin:org", "Organizations and teams"),
     ("gist", "Gists"),
-    ("user", "Profile, emails, blocked users and interaction limits"),
+    (
+        "user",
+        "Profile, emails, blocked users and interaction limits",
+    ),
     ("delete_repo", "Deleting repositories"),
     ("admin:public_key", "SSH keys"),
     ("admin:ssh_signing_key", "SSH signing keys"),
@@ -51,21 +57,31 @@ fn covered_by(scope: &str) -> &'static [&'static str] {
 /// An empty list means a fine-grained token, which reports none and can't
 /// be checked this way.
 pub fn missing(have: &str) -> Vec<&'static str> {
-    let have: Vec<&str> = have.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+    let have: Vec<&str> = have
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
     if have.is_empty() {
         return Vec::new();
     }
     SCOPES
         .iter()
         .map(|(scope, _)| *scope)
-        .filter(|scope| !have.contains(scope) && !covered_by(scope).iter().any(|c| have.contains(c)))
+        .filter(|scope| {
+            !have.contains(scope) && !covered_by(scope).iter().any(|c| have.contains(c))
+        })
         .collect()
 }
 
 /// A new-token page on GitHub with every scope ticked.
 pub fn new_token_url() -> String {
     let scopes: Vec<&str> = SCOPES.iter().map(|(s, _)| *s).collect();
-    format!("{}/settings/tokens/new?description=VisualHub&scopes={}", api::WEB, scopes.join(","))
+    format!(
+        "{}/settings/tokens/new?description=VisualHub&scopes={}",
+        api::WEB,
+        scopes.join(",")
+    )
 }
 
 pub enum Step {
@@ -136,10 +152,19 @@ impl Hub {
     /// Run `gh auth refresh` for the missing scopes, streaming its output
     /// into the pane until it exits.
     fn run_gh_refresh(&mut self, cx: &mut Context<Self>) {
-        let Some(fix) = &mut self.scope_fix else { return };
+        let Some(fix) = &mut self.scope_fix else {
+            return;
+        };
         let mut command = Command::new(crate::cli::gh());
         command
-            .args(["auth", "refresh", "--hostname", "github.com", "--scopes", &fix.missing.join(",")])
+            .args([
+                "auth",
+                "refresh",
+                "--hostname",
+                "github.com",
+                "--scopes",
+                &fix.missing.join(","),
+            ])
             // No terminal, so gh prints the code and URL rather than
             // waiting on Enter, then polls until the browser approves.
             .stdin(Stdio::null())
@@ -153,12 +178,18 @@ impl Hub {
         {
             let mut output = fix.output.lock().unwrap();
             output.clear();
-            output.push(format!("$ gh auth refresh -h github.com -s {}", fix.missing.join(",")));
+            output.push(format!(
+                "$ gh auth refresh -h github.com -s {}",
+                fix.missing.join(",")
+            ));
         }
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(e) => {
-                fix.output.lock().unwrap().push(format!("Couldn't start gh: {e}"));
+                fix.output
+                    .lock()
+                    .unwrap()
+                    .push(format!("Couldn't start gh: {e}"));
                 fix.step = Step::Finished { ok: false };
                 cx.notify();
                 return;
@@ -184,7 +215,9 @@ impl Hub {
 
         cx.spawn(async move |this, cx| {
             let ok = loop {
-                cx.background_executor().timer(Duration::from_millis(150)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(150))
+                    .await;
                 let status = match child.lock().unwrap().as_mut() {
                     Some(c) => c.try_wait(),
                     None => return,
@@ -201,10 +234,14 @@ impl Hub {
                 }
             };
             // Let the readers drain the last lines.
-            cx.background_executor().timer(Duration::from_millis(100)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
             this.update(cx, |hub, cx| {
                 // Closed while it ran: nothing to report.
-                let Some(fix) = &mut hub.scope_fix else { return };
+                let Some(fix) = &mut hub.scope_fix else {
+                    return;
+                };
                 if !Arc::ptr_eq(&fix.child, &child) {
                     return;
                 }
@@ -225,8 +262,13 @@ impl Hub {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let token = api::gh_cli_token().ok_or_else(|| anyhow::anyhow!("gh has no token"))?;
-                    let client = Client::new(&crate::forge::Account::new(crate::forge::Forge::GitHub, "github.com", &token));
+                    let token =
+                        api::gh_cli_token().ok_or_else(|| anyhow::anyhow!("gh has no token"))?;
+                    let client = Client::new(&crate::forge::Account::new(
+                        crate::forge::Forge::GitHub,
+                        "github.com",
+                        &token,
+                    ));
                     let reply = client.raw("GET", "/user", None, None)?;
                     if reply.status != 200 {
                         anyhow::bail!("GitHub refused the new token ({}).", reply.status);
@@ -266,11 +308,22 @@ impl Hub {
 
         let mut list = widgets::col().gap_1();
         for scope in &fix.missing {
-            let what = SCOPES.iter().find(|(s, _)| s == scope).map(|(_, w)| *w).unwrap_or("");
+            let what = SCOPES
+                .iter()
+                .find(|(s, _)| s == scope)
+                .map(|(_, w)| *w)
+                .unwrap_or("");
             list = list.child(
                 widgets::row()
                     .gap_2()
-                    .child(div().font_family(widgets::MONO).text_size(px(12.0)).w(px(170.0)).flex_none().child(scope.to_string()))
+                    .child(
+                        div()
+                            .font_family(widgets::MONO)
+                            .text_size(px(12.0))
+                            .w(px(170.0))
+                            .flex_none()
+                            .child(scope.to_string()),
+                    )
                     .child(widgets::dim(what)),
             );
         }
@@ -315,7 +368,11 @@ impl Hub {
                                         .child(code),
                                 )
                                 .child(div().flex_1())
-                                .child(widgets::primary("copy-open", "Copy code and open GitHub", copy_open)),
+                                .child(widgets::primary(
+                                    "copy-open",
+                                    "Copy code and open GitHub",
+                                    copy_open,
+                                )),
                         )
                     });
                 }
@@ -334,10 +391,18 @@ impl Hub {
                     .font_family(widgets::MONO)
                     .text_size(px(12.0));
                 for line in lines {
-                    term = term.child(div().child(if line.is_empty() { " ".to_string() } else { line }));
+                    term = term.child(div().child(if line.is_empty() {
+                        " ".to_string()
+                    } else {
+                        line
+                    }));
                 }
                 if matches!(fix.step, Step::Running) {
-                    term = term.child(div().text_color(rgb(p.text_dim)).child("Waiting for GitHub…"));
+                    term = term.child(
+                        div()
+                            .text_color(rgb(p.text_dim))
+                            .child("Waiting for GitHub…"),
+                    );
                 }
                 modal = modal.child(term);
                 if let Step::Finished { ok: false } = fix.step {
@@ -353,7 +418,9 @@ impl Hub {
         let running = matches!(fix.step, Step::Running);
         let close_label = if running { "Cancel" } else { "Not now" };
         modal = modal
-            .action(div().flex_1().when(running, |d| d.child(crate::ui::Spinner::new("scope-busy").size(16.0))))
+            .action(div().flex_1().when(running, |d| {
+                d.child(crate::ui::Spinner::new("scope-busy").size(16.0))
+            }))
             .action(
                 Button::new("scope-close", close_label)
                     .h(px(28.0))
@@ -361,7 +428,11 @@ impl Hub {
             );
         if from_cli {
             if !running {
-                let label = if matches!(fix.step, Step::Ask) { "Grant access with gh" } else { "Try again" };
+                let label = if matches!(fix.step, Step::Ask) {
+                    "Grant access with gh"
+                } else {
+                    "Try again"
+                };
                 modal = modal.action(
                     Button::new("scope-run", label)
                         .primary()
@@ -371,7 +442,11 @@ impl Hub {
             }
         } else {
             modal = modal
-                .action(widgets::btn("scope-new-token", "Create a token", Act::Url(new_token_url())))
+                .action(widgets::btn(
+                    "scope-new-token",
+                    "Create a token",
+                    Act::Url(new_token_url()),
+                ))
                 .action(widgets::primary(
                     "scope-sign-out",
                     "Sign out to paste it",
@@ -397,7 +472,11 @@ pub fn settings_note(hub: &Hub) -> Option<AnyElement> {
     Some(
         widgets::row()
             .gap_2()
-            .child(widgets::icon_text("alert", format!("Missing scopes: {}", missing.join(", ")), widgets::yellow()))
+            .child(widgets::icon_text(
+                "alert",
+                format!("Missing scopes: {}", missing.join(", ")),
+                widgets::yellow(),
+            ))
             .child(widgets::btn(
                 "scope-fix",
                 "Fix…",

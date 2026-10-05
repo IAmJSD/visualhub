@@ -163,7 +163,9 @@ impl Client {
             None if matches!(method, "PUT" | "POST" | "PATCH") => {
                 // GitHub wants a Content-Length on bodiless writes
                 // (PUT /user/starred/...); an empty body gives it one.
-                let request = builder.header("Content-Length", "0").body(Vec::<u8>::new())?;
+                let request = builder
+                    .header("Content-Length", "0")
+                    .body(Vec::<u8>::new())?;
                 self.agent.run(request)
             }
             None => self.agent.run(builder.body(())?),
@@ -336,7 +338,10 @@ fn missing_scope(reply: &Reply) -> Option<String> {
         return None;
     }
     let list = |s: &str| -> Vec<String> {
-        s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
+        s.split(',')
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .collect()
     };
     let have = list(reply.scopes.as_deref()?);
     let accepted = list(reply.accepted.as_deref()?);
@@ -351,18 +356,31 @@ fn missing_scope(reply: &Reply) -> Option<String> {
 /// GitHub's error body as one readable line.
 fn explain(status: u16, body: &str) -> String {
     let parsed: Option<Value> = serde_json::from_str(body).ok();
-    let mut message = match parsed.as_ref().and_then(|v| v.get("message").or_else(|| v.get("error"))) {
+    let mut message = match parsed
+        .as_ref()
+        .and_then(|v| v.get("message").or_else(|| v.get("error")))
+    {
         Some(Value::String(m)) => m.clone(),
         // GitLab's validation errors: `{"message": {"name": ["has already been taken"]}}`.
         Some(Value::Object(fields)) => fields
             .iter()
             .map(|(field, why)| match why {
-                Value::Array(list) => format!("{field} {}", list.iter().filter_map(|w| w.as_str()).collect::<Vec<_>>().join(", ")),
+                Value::Array(list) => format!(
+                    "{field} {}",
+                    list.iter()
+                        .filter_map(|w| w.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
                 other => format!("{field} {}", other.as_str().unwrap_or("")),
             })
             .collect::<Vec<_>>()
             .join("; "),
-        Some(Value::Array(list)) => list.iter().filter_map(|m| m.as_str()).collect::<Vec<_>>().join("; "),
+        Some(Value::Array(list)) => list
+            .iter()
+            .filter_map(|m| m.as_str())
+            .collect::<Vec<_>>()
+            .join("; "),
         _ => String::new(),
     };
     if let Some(errors) = parsed
@@ -423,15 +441,26 @@ pub fn config_dir() -> Option<PathBuf> {
 fn account_file(prefix: &str, account: &Account, login: &str) -> String {
     match account.forge {
         Forge::GitHub => format!("{prefix}-{login}"),
-        Forge::GitLab => format!("{prefix}-{}-{login}", account.host_name().replace([':', '/'], "_")),
+        Forge::GitLab => format!(
+            "{prefix}-{}-{login}",
+            account.host_name().replace([':', '/'], "_")
+        ),
     }
 }
 
 /// The repositories this account opened lately, newest first.
 pub fn load_recent(account: &Account, login: &str) -> Vec<String> {
     config_dir()
-        .and_then(|dir| std::fs::read_to_string(dir.join(account_file("recent", account, login))).ok())
-        .map(|text| text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
+        .and_then(|dir| {
+            std::fs::read_to_string(dir.join(account_file("recent", account, login))).ok()
+        })
+        .map(|text| {
+            text.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -439,7 +468,10 @@ pub fn load_recent(account: &Account, login: &str) -> Vec<String> {
 pub fn save_recent(account: &Account, login: &str, repos: &[String]) {
     let Some(dir) = config_dir() else { return };
     if std::fs::create_dir_all(&dir).is_ok() {
-        let _ = std::fs::write(dir.join(account_file("recent", account, login)), repos.join("\n"));
+        let _ = std::fs::write(
+            dir.join(account_file("recent", account, login)),
+            repos.join("\n"),
+        );
     }
 }
 
@@ -462,7 +494,10 @@ pub fn save_merge_methods(choices: &std::collections::HashMap<String, String>) {
     let Some(dir) = config_dir() else { return };
     let mut lines: Vec<String> = choices
         .iter()
-        .filter_map(|(k, v)| k.strip_prefix("merge.method:").map(|repo| format!("{repo}\t{v}")))
+        .filter_map(|(k, v)| {
+            k.strip_prefix("merge.method:")
+                .map(|repo| format!("{repo}\t{v}"))
+        })
         .collect();
     lines.sort();
     if std::fs::create_dir_all(&dir).is_ok() {
@@ -474,7 +509,9 @@ pub fn save_merge_methods(choices: &std::collections::HashMap<String, String>) {
 /// A sign-in from before there were several accounts left a `token`
 /// file with a GitHub token in it, which counts as the first.
 pub fn saved_accounts() -> Vec<Account> {
-    let Some(dir) = config_dir() else { return Vec::new() };
+    let Some(dir) = config_dir() else {
+        return Vec::new();
+    };
     let mut accounts: Vec<Account> = std::fs::read_to_string(dir.join("accounts"))
         .unwrap_or_default()
         .lines()
@@ -553,18 +590,31 @@ pub fn discover_accounts() -> Vec<(Account, &'static str)> {
     }
     for var in ["GH_TOKEN", "GITHUB_TOKEN"] {
         if let Ok(token) = std::env::var(var) {
-            add(Account::new(Forge::GitHub, "github.com", &token), "environment");
+            add(
+                Account::new(Forge::GitHub, "github.com", &token),
+                "environment",
+            );
         }
     }
     if let Some(token) = gh_cli_token() {
-        add(Account::new(Forge::GitHub, "github.com", &token), "GitHub CLI");
+        add(
+            Account::new(Forge::GitHub, "github.com", &token),
+            "GitHub CLI",
+        );
     }
     let env_host = ["GITLAB_HOST", "GL_HOST", "CI_SERVER_HOST"]
         .iter()
         .find_map(|v| std::env::var(v).ok().filter(|h| !h.trim().is_empty()));
     for var in ["GITLAB_TOKEN", "GL_TOKEN"] {
         if let Ok(token) = std::env::var(var) {
-            add(Account::new(Forge::GitLab, env_host.as_deref().unwrap_or("gitlab.com"), &token), "environment");
+            add(
+                Account::new(
+                    Forge::GitLab,
+                    env_host.as_deref().unwrap_or("gitlab.com"),
+                    &token,
+                ),
+                "environment",
+            );
         }
     }
     let mut hosts = glab_hosts();
@@ -606,7 +656,10 @@ pub fn gh_cli_token() -> Option<String> {
 }
 
 fn glab_cli_token(host: &str) -> Option<String> {
-    cli_output(crate::cli::glab(), &["config", "get", "token", "--host", host])
+    cli_output(
+        crate::cli::glab(),
+        &["config", "get", "token", "--host", host],
+    )
 }
 
 /// The hosts the GitLab CLI is signed in to, from its config file's
@@ -626,7 +679,10 @@ fn glab_hosts() -> Vec<String> {
     if let Some(appdata) = std::env::var_os("APPDATA") {
         dirs.push(PathBuf::from(appdata).join("glab-cli"));
     }
-    let Some(text) = dirs.iter().find_map(|d| std::fs::read_to_string(d.join("config.yml")).ok()) else {
+    let Some(text) = dirs
+        .iter()
+        .find_map(|d| std::fs::read_to_string(d.join("config.yml")).ok())
+    else {
         return Vec::new();
     };
     glab_config_hosts(&text)
@@ -681,6 +737,9 @@ mod tests {
     #[test]
     fn reads_glab_hosts() {
         let yaml = "git_protocol: ssh\nhosts:\n    gitlab.com:\n        token: x\n        api_protocol: https\n    git.example.com:\n        token: y\ndisplay_hyperlinks: false\n";
-        assert_eq!(super::glab_config_hosts(yaml), ["gitlab.com", "git.example.com"]);
+        assert_eq!(
+            super::glab_config_hosts(yaml),
+            ["gitlab.com", "git.example.com"]
+        );
     }
 }

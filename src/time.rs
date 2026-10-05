@@ -16,8 +16,14 @@ pub fn parse(iso: &str) -> Option<i64> {
     let rest = &iso[19..];
     let rest = rest.trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
     if let Some(sign @ ('+' | '-')) = rest.chars().next() {
-        let oh = rest.get(1..3).and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
-        let om = rest.get(4..6).and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+        let oh = rest
+            .get(1..3)
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+        let om = rest
+            .get(4..6)
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
         let off = oh * 3600 + om * 60;
         secs -= if sign == '+' { off } else { -off };
     }

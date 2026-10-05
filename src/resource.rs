@@ -9,16 +9,16 @@
 
 use crate::hub::{on, with_query, Act, Hub, Load, MenuEntry};
 use crate::json::{self, Json as _};
+use crate::time;
+use crate::ui::{icon, palette, Button, IconButton};
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _,
-    SharedString, Styled as _,
+    div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
 };
-use crate::time;
-use std::collections::HashMap;
-use crate::ui::{icon, palette, Button, IconButton};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 pub const PER_PAGE: usize = 30;
@@ -107,10 +107,7 @@ impl Row {
     /// The item's GitHub labels (`[{name, color}]`).
     pub fn labels(mut self, labels: &[Value]) -> Self {
         use crate::json::Json as _;
-        self.labels = labels
-            .iter()
-            .map(|l| (l.s("name"), l.s("color")))
-            .collect();
+        self.labels = labels.iter().map(|l| (l.s("name"), l.s("color"))).collect();
         self
     }
 
@@ -162,7 +159,12 @@ impl Row {
 
     /// Lead with the authors of `sha` in `repo` once they're known, then
     /// `after`; `meta` is what shows until then.
-    pub fn commit(mut self, repo: impl Into<String>, sha: impl Into<String>, after: impl Into<String>) -> Self {
+    pub fn commit(
+        mut self,
+        repo: impl Into<String>,
+        sha: impl Into<String>,
+        after: impl Into<String>,
+    ) -> Self {
         self.commit = Some(CommitRef {
             repo: repo.into(),
             sha: sha.into(),
@@ -301,7 +303,9 @@ impl Hub {
         };
         let mut card = widgets::card();
         if items.is_empty() && !loading {
-            return card.child(widgets::empty(spec.empty.clone())).into_any_element();
+            return card
+                .child(widgets::empty(spec.empty.clone()))
+                .into_any_element();
         }
         if spec.people {
             return self.people_grid(spec, &items, loading, more, cx);
@@ -344,7 +348,10 @@ impl Hub {
             }
         }
         for (repo, indices) in by_repo {
-            let shas: Vec<String> = indices.iter().filter_map(|&i| rows[i].commit.as_ref().map(|c| c.sha.clone())).collect();
+            let shas: Vec<String> = indices
+                .iter()
+                .filter_map(|&i| rows[i].commit.as_ref().map(|c| c.sha.clone()))
+                .collect();
             let found = self.commit_batch(&repo, &shas, cx);
             for &i in &indices {
                 if let Some(info) = rows[i].commit.as_ref().and_then(|c| found.get(&c.sha)) {
@@ -359,9 +366,16 @@ impl Hub {
     /// how its checks went, as far as GraphQL has answered, asked in
     /// batches that follow the list's order so a longer list reuses the
     /// batches already in.
-    pub fn commit_batch(&mut self, repo: &str, shas: &[String], cx: &mut Context<Self>) -> HashMap<String, CommitInfo> {
+    pub fn commit_batch(
+        &mut self,
+        repo: &str,
+        shas: &[String],
+        cx: &mut Context<Self>,
+    ) -> HashMap<String, CommitInfo> {
         let mut found = HashMap::new();
-        let Some((owner, name)) = repo.split_once('/') else { return found };
+        let Some((owner, name)) = repo.split_once('/') else {
+            return found;
+        };
         for chunk in shas.chunks(PER_PAGE) {
             let fields: String = chunk
                 .iter()
@@ -373,13 +387,21 @@ impl Hub {
                 .collect();
             let query = format!("query($o: String!, $n: String!) {{ repository(owner: $o, name: $n) {{ {fields}}} }}");
             let vars = serde_json::json!({ "o": owner, "n": name });
-            let Some(data) = self.fetch_gql(&format!("/repos/{repo}/commits"), &query, vars, cx).ready().cloned() else { continue };
+            let Some(data) = self
+                .fetch_gql(&format!("/repos/{repo}/commits"), &query, vars, cx)
+                .ready()
+                .cloned()
+            else {
+                continue;
+            };
             for (n, sha) in chunk.iter().enumerate() {
                 let commit = data.at(&format!("repository.c{n}"));
                 found.insert(
                     sha.clone(),
                     CommitInfo {
-                        authors: crate::screens::repo::distinct_authors(commit.list("authors.nodes")),
+                        authors: crate::screens::repo::distinct_authors(
+                            commit.list("authors.nodes"),
+                        ),
                         checks: commit.s("statusCheckRollup.state"),
                     },
                 );
@@ -402,7 +424,9 @@ impl Hub {
             ),
             _ => (None, None),
         };
-        let meta = meta.or_else(|| (!row.meta.is_empty()).then(|| widgets::dim(row.meta.clone()).into_any_element()));
+        let meta = meta.or_else(|| {
+            (!row.meta.is_empty()).then(|| widgets::dim(row.meta.clone()).into_any_element())
+        });
         let leading: Option<AnyElement> = if leading.is_some() {
             leading
         } else if let Some(url) = &row.avatar {
@@ -428,7 +452,10 @@ impl Hub {
                     .text_color(rgb(p.text))
                     .child(row.title.clone()),
             )
-            .children(crate::screens::pulls::ci_mark_el(ElementId::Name(format!("{id}-checks").into()), &row.checks))
+            .children(crate::screens::pulls::ci_mark_el(
+                ElementId::Name(format!("{id}-checks").into()),
+                &row.checks,
+            ))
             .when(!row.suffix.is_empty(), |d| {
                 d.child(widgets::dim(row.suffix.clone()))
             })
@@ -495,8 +522,11 @@ impl Hub {
             );
         }
         let clickable = !matches!(row.open, Act::None);
-        let mut el = widgets::list_row(ElementId::Name(SharedString::from(id.to_string())), row.open)
-            .items_center();
+        let mut el = widgets::list_row(
+            ElementId::Name(SharedString::from(id.to_string())),
+            row.open,
+        )
+        .items_center();
         if !clickable {
             el = el.cursor_default();
         }
@@ -509,7 +539,14 @@ impl Hub {
     /// Users as GitHub's profile cards, three across: avatar, login and
     /// name, where they are or work or when they joined, Follow, and any
     /// actions the list gives them.
-    fn people_grid(&mut self, spec: &ListSpec, items: &[Value], loading: bool, more: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn people_grid(
+        &mut self,
+        spec: &ListSpec,
+        items: &[Value],
+        loading: bool,
+        more: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette();
         let me = self.login();
         let mut grid = div().grid().grid_cols(3).gap_x_8();
@@ -526,7 +563,10 @@ impl Hub {
                 } else if !u.s("company").is_empty() {
                     Some(("org", u.s("company")))
                 } else if !u.s("created_at").is_empty() {
-                    Some(("clock", format!("Joined on {}", time::date(&u.s("created_at")))))
+                    Some((
+                        "clock",
+                        format!("Joined on {}", time::date(&u.s("created_at"))),
+                    ))
                 } else {
                     None
                 }
@@ -534,36 +574,56 @@ impl Hub {
             let name = profile.as_ref().map(|u| u.s("name")).unwrap_or_default();
             // What the list says about them beyond their name: "120
             // commits", a role.
-            let note = if row.meta != name && row.meta != user.s("name") { row.meta.clone() } else { String::new() };
+            let note = if row.meta != name && row.meta != user.s("name") {
+                row.meta.clone()
+            } else {
+                String::new()
+            };
 
             let mut buttons = div().flex().flex_row().flex_wrap().gap_2();
             if is_user && login != me {
-                let following = self.fetch_check(&format!("/user/following/{login}"), cx).ready().map(|v| v.b(""));
+                let following = self
+                    .fetch_check(&format!("/user/following/{login}"), cx)
+                    .ready()
+                    .map(|v| v.b(""));
                 if let Some(following) = following {
                     let path = format!("/user/following/{login}");
-                    let act = crate::hub::Req::rest(if following { "DELETE" } else { "PUT" }, path.clone())
-                        .ok(if following { format!("Unfollowed {login}") } else { format!("Following {login}") })
-                        .inval(path)
-                        .inval(format!("/users/{login}"))
-                        .act();
+                    let act = crate::hub::Req::rest(
+                        if following { "DELETE" } else { "PUT" },
+                        path.clone(),
+                    )
+                    .ok(if following {
+                        format!("Unfollowed {login}")
+                    } else {
+                        format!("Following {login}")
+                    })
+                    .inval(path)
+                    .inval(format!("/users/{login}"))
+                    .act();
                     buttons = buttons.child(
-                        Button::new(ElementId::Name(format!("{}#{i}-follow", spec.id).into()), if following { "Unfollow" } else { "Follow" })
-                            .h(px(28.0))
-                            .px_3()
-                            .text_size(px(12.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .consume_press()
-                            .on_click(on(act)),
+                        Button::new(
+                            ElementId::Name(format!("{}#{i}-follow", spec.id).into()),
+                            if following { "Unfollow" } else { "Follow" },
+                        )
+                        .h(px(28.0))
+                        .px_3()
+                        .text_size(px(12.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .consume_press()
+                        .on_click(on(act)),
                     );
                 }
             }
             for (j, action) in row.actions.into_iter().enumerate() {
-                let mut button = Button::new(ElementId::Name(format!("{}#{i}-act-{j}", spec.id).into()), action.label)
-                    .h(px(28.0))
-                    .px_3()
-                    .text_size(px(12.0))
-                    .consume_press()
-                    .on_click(on(action.act));
+                let mut button = Button::new(
+                    ElementId::Name(format!("{}#{i}-act-{j}", spec.id).into()),
+                    action.label,
+                )
+                .h(px(28.0))
+                .px_3()
+                .text_size(px(12.0))
+                .consume_press()
+                .on_click(on(action.act));
                 if action.danger {
                     button = button.colors(crate::ui::ButtonColors {
                         bg: Some(p.button_bg),
@@ -602,15 +662,29 @@ impl Hub {
                                     .flex_wrap()
                                     .items_baseline()
                                     .gap_x_2()
-                                    .child(div().text_size(px(15.0)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(p.accent_hover)).child(login.clone()))
-                                    .when(!name.is_empty(), |d| d.child(widgets::dim(name.clone()))),
+                                    .child(
+                                        div()
+                                            .text_size(px(15.0))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(rgb(p.accent_hover))
+                                            .child(login.clone()),
+                                    )
+                                    .when(!name.is_empty(), |d| {
+                                        d.child(widgets::dim(name.clone()))
+                                    }),
                             )
                             .when_some(detail, |d, (icon_name, text)| {
                                 d.child(
                                     widgets::row()
                                         .gap_1p5()
                                         .child(icon(icon_name, 13.0, p.text_dim))
-                                        .child(div().text_ellipsis().overflow_hidden().whitespace_nowrap().child(text)),
+                                        .child(
+                                            div()
+                                                .text_ellipsis()
+                                                .overflow_hidden()
+                                                .whitespace_nowrap()
+                                                .child(text),
+                                        ),
                                 )
                             })
                             .when(!note.is_empty(), |d| d.child(widgets::dim(note.clone())))

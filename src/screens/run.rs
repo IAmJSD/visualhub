@@ -5,7 +5,7 @@
 
 use super::pulls::status_icon;
 use crate::form::{Field, FormSpec};
-use crate::hub::{on, Act, Hub, Load, MenuEntry, Req, Route, RepoTab};
+use crate::hub::{on, Act, Hub, Load, MenuEntry, RepoTab, Req, Route};
 use crate::json::{self, Json as _};
 use crate::ready;
 use crate::resource::{ListSpec, Row};
@@ -14,8 +14,8 @@ use crate::ui::{icon, palette, IconButton};
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, AnyElement, Context, Div, ElementId, FontWeight, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, StatefulInteractiveElement as _, Styled as _,
+    div, px, AnyElement, Context, Div, ElementId, FontWeight, InteractiveElement as _,
+    IntoElement as _, ParentElement as _, StatefulInteractiveElement as _, Styled as _,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -55,7 +55,11 @@ fn file_jobs(yaml: &str) -> Vec<FileJob> {
         if indent == ji {
             in_needs_list = false;
             if let Some(key) = text.strip_suffix(':') {
-                jobs.push(FileJob { key: unquote(key), name: String::new(), needs: Vec::new() });
+                jobs.push(FileJob {
+                    key: unquote(key),
+                    name: String::new(),
+                    needs: Vec::new(),
+                });
             }
             continue;
         }
@@ -78,7 +82,12 @@ fn file_jobs(yaml: &str) -> Vec<FileJob> {
             if needs.is_empty() {
                 in_needs_list = true;
             } else {
-                job.needs = needs.trim_matches(['[', ']']).split(',').map(unquote).filter(|s| !s.is_empty()).collect();
+                job.needs = needs
+                    .trim_matches(['[', ']'])
+                    .split(',')
+                    .map(unquote)
+                    .filter(|s| !s.is_empty())
+                    .collect();
             }
         }
     }
@@ -94,13 +103,22 @@ fn file_job_for<'a>(api_name: &str, jobs: &'a [FileJob]) -> Option<&'a FileJob> 
         [name.as_str(), j.key.as_str()]
             .iter()
             .filter(|n| !n.is_empty())
-            .any(|n| api_name == *n || api_name.starts_with(&format!("{n} (")) || (j.name.contains("${{") && api_name.starts_with(*n)))
+            .any(|n| {
+                api_name == *n
+                    || api_name.starts_with(&format!("{n} ("))
+                    || (j.name.contains("${{") && api_name.starts_with(*n))
+            })
     })
 }
 
 /// How deep in the `needs:` chain each job sits; the graph's columns.
 fn stages(jobs: &[FileJob]) -> HashMap<String, usize> {
-    fn depth(key: &str, jobs: &[FileJob], memo: &mut HashMap<String, usize>, seen: &mut Vec<String>) -> usize {
+    fn depth(
+        key: &str,
+        jobs: &[FileJob],
+        memo: &mut HashMap<String, usize>,
+        seen: &mut Vec<String>,
+    ) -> usize {
         if let Some(d) = memo.get(key) {
             return *d;
         }
@@ -111,7 +129,13 @@ fn stages(jobs: &[FileJob]) -> HashMap<String, usize> {
         let d = jobs
             .iter()
             .find(|j| j.key == key)
-            .map(|j| j.needs.iter().map(|n| depth(n, jobs, memo, seen) + 1).max().unwrap_or(0))
+            .map(|j| {
+                j.needs
+                    .iter()
+                    .map(|n| depth(n, jobs, memo, seen) + 1)
+                    .max()
+                    .unwrap_or(0)
+            })
             .unwrap_or(0);
         memo.insert(key.to_string(), d);
         d
@@ -154,7 +178,9 @@ impl Hub {
                 .px_3()
                 .rounded_md()
                 .cursor_pointer()
-                .when(active, |d| d.bg(rgb(p.selection_bg)).font_weight(FontWeight::SEMIBOLD))
+                .when(active, |d| {
+                    d.bg(rgb(p.selection_bg)).font_weight(FontWeight::SEMIBOLD)
+                })
                 .when(!active, |d| d.hover(|s| s.bg(rgb(p.hover))))
                 .on_click(on(act))
         };
@@ -163,30 +189,68 @@ impl Hub {
             .w(px(260.0))
             .flex_none()
             .child(
-                item("run-summary".into(), true, Act::Go(Route::Run { repo: repo.to_string(), id: run_id }))
-                    .child(icon("home", 14.0, p.text_dim))
-                    .child("Summary"),
+                item(
+                    "run-summary".into(),
+                    true,
+                    Act::Go(Route::Run {
+                        repo: repo.to_string(),
+                        id: run_id,
+                    }),
+                )
+                .child(icon("home", 14.0, p.text_dim))
+                .child("Summary"),
             )
-            .child(div().pt_3().pb_1().px_3().text_size(px(12.0)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(p.text_dim)).child("Jobs"));
+            .child(
+                div()
+                    .pt_3()
+                    .pb_1()
+                    .px_3()
+                    .text_size(px(12.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(p.text_dim))
+                    .child("Jobs"),
+            );
         for job in jobs {
             let (mark, color) = status_icon(&job.s("status"), &job.s("conclusion"));
             let id = job.i("id") as u64;
             col = col.child(
                 item(format!("run-job-{id}"), false, Act::Url(job.s("html_url")))
                     .child(icon(mark, 14.0, color))
-                    .child(div().flex_1().min_w_0().text_ellipsis().overflow_hidden().whitespace_nowrap().child(job.s("name"))),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_ellipsis()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(job.s("name")),
+                    ),
             );
         }
-        col.child(div().pt_3().pb_1().px_3().text_size(px(12.0)).font_weight(FontWeight::SEMIBOLD).text_color(rgb(p.text_dim)).child("Run details"))
-            .child(
-                item(
-                    "run-workflow-file".into(),
-                    false,
-                    Act::Go(Route::Tree { repo: repo.to_string(), git_ref: run.s("head_sha"), path: run.s("path"), file: true }),
-                )
-                .child(icon("file", 14.0, p.text_dim))
-                .child("Workflow file"),
+        col.child(
+            div()
+                .pt_3()
+                .pb_1()
+                .px_3()
+                .text_size(px(12.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(p.text_dim))
+                .child("Run details"),
+        )
+        .child(
+            item(
+                "run-workflow-file".into(),
+                false,
+                Act::Go(Route::Tree {
+                    repo: repo.to_string(),
+                    git_ref: run.s("head_sha"),
+                    path: run.s("path"),
+                    file: true,
+                }),
             )
+            .child(icon("file", 14.0, p.text_dim))
+            .child("Workflow file"),
+        )
     }
 
     /// The run's title, number, and what can be done to it.
@@ -198,36 +262,81 @@ impl Hub {
         let (mark, color) = status_icon(&run.s("status"), &run.s("conclusion"));
         let running = run.s("status") != "completed";
         let action: AnyElement = if running {
-            widgets::btn("cancel-run", "Cancel workflow", Req::rest("POST", format!("{base}/cancel")).ok("Cancelling").inval(inval.clone()).act())
-                .h(px(32.0))
-                .px_3()
-                .into_any_element()
+            widgets::btn(
+                "cancel-run",
+                "Cancel workflow",
+                Req::rest("POST", format!("{base}/cancel"))
+                    .ok("Cancelling")
+                    .inval(inval.clone())
+                    .act(),
+            )
+            .h(px(32.0))
+            .px_3()
+            .into_any_element()
         } else {
             widgets::dropdown_btn(
                 "rerun-menu",
                 None,
                 "Re-run jobs",
                 Act::menu(vec![
-                    MenuEntry::item("Re-run failed jobs", Req::rest("POST", format!("{base}/rerun-failed-jobs")).ok("Re-run requested").inval(inval.clone()).act()),
-                    MenuEntry::item("Re-run all jobs", Req::rest("POST", format!("{base}/rerun")).ok("Re-run requested").inval(inval.clone()).act()),
+                    MenuEntry::item(
+                        "Re-run failed jobs",
+                        Req::rest("POST", format!("{base}/rerun-failed-jobs"))
+                            .ok("Re-run requested")
+                            .inval(inval.clone())
+                            .act(),
+                    ),
+                    MenuEntry::item(
+                        "Re-run all jobs",
+                        Req::rest("POST", format!("{base}/rerun"))
+                            .ok("Re-run requested")
+                            .inval(inval.clone())
+                            .act(),
+                    ),
                 ]),
             )
             .into_any_element()
         };
         let repo_back = repo.to_string();
         let more = Act::menu(vec![
-            MenuEntry::item("View workflow file", Act::Go(Route::Tree { repo: repo.to_string(), git_ref: run.s("head_sha"), path: run.s("path"), file: true })),
+            MenuEntry::item(
+                "View workflow file",
+                Act::Go(Route::Tree {
+                    repo: repo.to_string(),
+                    git_ref: run.s("head_sha"),
+                    path: run.s("path"),
+                    file: true,
+                }),
+            ),
             MenuEntry::item("Open on GitHub", Act::Url(run.s("html_url"))),
-            MenuEntry::item("Force cancel", Req::rest("POST", format!("{base}/force-cancel")).ok("Force-cancelling").inval(inval.clone()).act()),
+            MenuEntry::item(
+                "Force cancel",
+                Req::rest("POST", format!("{base}/force-cancel"))
+                    .ok("Force-cancelling")
+                    .inval(inval.clone())
+                    .act(),
+            ),
             MenuEntry::Sep,
             MenuEntry::item(
                 "Delete workflow run",
                 Req::rest("DELETE", base.clone())
                     .ok("Run deleted")
                     .inval(inval.clone())
-                    .then(move |hub, _, cx| hub.go(Route::Repo { repo: repo_back.clone(), tab: RepoTab::Actions }, cx))
+                    .then(move |hub, _, cx| {
+                        hub.go(
+                            Route::Repo {
+                                repo: repo_back.clone(),
+                                tab: RepoTab::Actions,
+                            },
+                            cx,
+                        )
+                    })
                     .act()
-                    .confirm("Delete this run?", "Its logs and artifacts are deleted too.", "Delete"),
+                    .confirm(
+                        "Delete this run?",
+                        "Its logs and artifacts are deleted too.",
+                        "Delete",
+                    ),
             ),
         ]);
         widgets::col()
@@ -235,7 +344,10 @@ impl Hub {
             .child(
                 crate::ui::Link::new("run-back", format!("← {}", run.s("name")))
                     .text_size(px(12.0))
-                    .on_click(on(Act::Go(Route::Repo { repo: repo.to_string(), tab: RepoTab::Actions }))),
+                    .on_click(on(Act::Go(Route::Repo {
+                        repo: repo.to_string(),
+                        tab: RepoTab::Actions,
+                    }))),
             )
             .child(
                 widgets::row()
@@ -251,10 +363,20 @@ impl Hub {
                             .flex_1()
                             .min_w_0()
                             .child(widgets::title(run.s("display_title")))
-                            .child(div().text_size(px(20.0)).text_color(rgb(p.text_dim)).child(format!("#{}", run.i("run_number")))),
+                            .child(
+                                div()
+                                    .text_size(px(20.0))
+                                    .text_color(rgb(p.text_dim))
+                                    .child(format!("#{}", run.i("run_number"))),
+                            ),
                     )
                     .child(action)
-                    .child(IconButton::new("run-more", "kebab").size(32.0).icon_size(16.0).on_click(on(more))),
+                    .child(
+                        IconButton::new("run-more", "kebab")
+                            .size(32.0)
+                            .icon_size(16.0)
+                            .on_click(on(more)),
+                    ),
             )
             .into_any_element()
     }
@@ -269,15 +391,19 @@ impl Hub {
         if run.s("status") != "completed" {
             self.poll(std::slice::from_ref(&base), 5, cx);
         }
-        let jobs: Vec<Value> = match self.fetch(&format!("{base}/jobs?filter=latest&per_page=100"), cx) {
-            Load::Ready(list) => list.list("jobs").to_vec(),
-            _ => Vec::new(),
-        };
+        let jobs: Vec<Value> =
+            match self.fetch(&format!("{base}/jobs?filter=latest&per_page=100"), cx) {
+                Load::Ready(list) => list.list("jobs").to_vec(),
+                _ => Vec::new(),
+            };
         let header = self.run_header(repo, &run);
         let sidebar = self.run_sidebar(repo, &run, &jobs);
 
         // Summary: how it started, how it went, how long, what it made.
-        let artifacts_count = self.fetch(&format!("{base}/artifacts"), cx).ready().map(|v| v.i("total_count"));
+        let artifacts_count = self
+            .fetch(&format!("{base}/artifacts"), cx)
+            .ready()
+            .map(|v| v.i("total_count"));
         let actor_avatar = self.avatar(&run.s("triggering_actor.avatar_url"), 20.0, cx);
         let block = |label: &str, body: AnyElement| {
             widgets::col()
@@ -289,7 +415,11 @@ impl Hub {
         let trigger = widgets::row()
             .gap_2()
             .child(actor_avatar)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(run.s("triggering_actor.login")))
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(run.s("triggering_actor.login")),
+            )
             .child(widgets::dim(match run.s("event").as_str() {
                 "push" => "pushed".to_string(),
                 "pull_request" => "opened or updated a pull request".to_string(),
@@ -297,7 +427,14 @@ impl Hub {
                 "workflow_dispatch" => "ran this manually".to_string(),
                 other => other.replace('_', " "),
             }))
-            .child(crate::ui::Link::new("run-sha", sha.chars().take(7).collect::<String>()).on_click(on(Act::Go(Route::Commit { repo: repo.to_string(), sha: sha.clone() }))))
+            .child(
+                crate::ui::Link::new("run-sha", sha.chars().take(7).collect::<String>()).on_click(
+                    on(Act::Go(Route::Commit {
+                        repo: repo.to_string(),
+                        sha: sha.clone(),
+                    })),
+                ),
+            )
             .child(widgets::tag(run.s("head_branch"), widgets::gray()));
         let (smark, scolor) = status_icon(&run.s("status"), &run.s("conclusion"));
         let summary = widgets::card().child(
@@ -306,13 +443,40 @@ impl Hub {
                 .gap_8()
                 .flex_wrap()
                 .items_start()
-                .child(block(&format!("Triggered via {} {}", run.s("event").replace('_', " "), time::ago(&run.s("created_at"))), trigger.into_any_element()))
+                .child(block(
+                    &format!(
+                        "Triggered via {} {}",
+                        run.s("event").replace('_', " "),
+                        time::ago(&run.s("created_at"))
+                    ),
+                    trigger.into_any_element(),
+                ))
                 .child(block(
                     "Status",
-                    widgets::row().gap_1p5().child(icon(smark, 14.0, scolor)).child(div().font_weight(FontWeight::SEMIBOLD).child(verdict(&run.s("status"), &run.s("conclusion")))).into_any_element(),
+                    widgets::row()
+                        .gap_1p5()
+                        .child(icon(smark, 14.0, scolor))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(verdict(&run.s("status"), &run.s("conclusion"))),
+                        )
+                        .into_any_element(),
                 ))
-                .child(block("Total duration", div().font_weight(FontWeight::SEMIBOLD).child(time::span(&run.s("run_started_at"), &run.s("updated_at"))).into_any_element()))
-                .child(block("Artifacts", div().font_weight(FontWeight::SEMIBOLD).child(artifacts_count.map_or("–".to_string(), |n| n.to_string())).into_any_element())),
+                .child(block(
+                    "Total duration",
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(time::span(&run.s("run_started_at"), &run.s("updated_at")))
+                        .into_any_element(),
+                ))
+                .child(block(
+                    "Artifacts",
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(artifacts_count.map_or("–".to_string(), |n| n.to_string()))
+                        .into_any_element(),
+                )),
         );
 
         let approvals = self.run_approvals(&base, cx);
@@ -324,13 +488,19 @@ impl Hub {
             Row::new(a.s("name"))
                 .icon("package", widgets::gray())
                 .right(json::bytes(a.i("size_in_bytes")))
-                .action("Download on GitHub", Act::Url(format!("{}/{repo_s}/actions/runs/{id}", crate::api::WEB)))
+                .action(
+                    "Download on GitHub",
+                    Act::Url(format!("{}/{repo_s}/actions/runs/{id}", crate::api::WEB)),
+                )
                 .danger(
                     "Delete",
-                    Req::rest("DELETE", format!("/repos/{repo_s}/actions/artifacts/{}", a.i("id")))
-                        .ok("Artifact deleted")
-                        .inval(format!("/repos/{repo_s}/actions"))
-                        .act(),
+                    Req::rest(
+                        "DELETE",
+                        format!("/repos/{repo_s}/actions/artifacts/{}", a.i("id")),
+                    )
+                    .ok("Artifact deleted")
+                    .inval(format!("/repos/{repo_s}/actions"))
+                    .act(),
                 )
                 .inline()
         })
@@ -369,7 +539,10 @@ impl Hub {
     /// Deployments waiting on a reviewer.
     fn run_approvals(&mut self, base: &str, cx: &mut Context<Self>) -> Div {
         let mut approvals = widgets::col().gap_2();
-        if let Some(list) = self.fetch(&format!("{base}/pending_deployments"), cx).ready() {
+        if let Some(list) = self
+            .fetch(&format!("{base}/pending_deployments"), cx)
+            .ready()
+        {
             for (i, d) in list.list("").iter().enumerate() {
                 let env_id = d.i("environment.id");
                 let env = d.s("environment.name");
@@ -389,9 +562,21 @@ impl Hub {
                         widgets::row()
                             .p_3()
                             .child(icon("alert", 16.0, widgets::yellow()))
-                            .child(div().flex_1().child(format!("Waiting for review to deploy to {env}")))
-                            .child(widgets::go_btn(ElementId::Name(format!("approve-{i}").into()), "Approve", review("approved")))
-                            .child(widgets::danger(ElementId::Name(format!("reject-{i}").into()), "Reject", review("rejected"))),
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .child(format!("Waiting for review to deploy to {env}")),
+                            )
+                            .child(widgets::go_btn(
+                                ElementId::Name(format!("approve-{i}").into()),
+                                "Approve",
+                                review("approved"),
+                            ))
+                            .child(widgets::danger(
+                                ElementId::Name(format!("reject-{i}").into()),
+                                "Reject",
+                                review("rejected"),
+                            )),
                     ),
                 );
             }
@@ -401,11 +586,21 @@ impl Hub {
 
     /// The workflow as GitHub draws it: jobs in columns by what they
     /// need, a matrix's legs grouped, a connector between columns.
-    fn run_graph(&mut self, repo: &str, run: &Value, jobs: &[Value], cx: &mut Context<Self>) -> AnyElement {
+    fn run_graph(
+        &mut self,
+        repo: &str,
+        run: &Value,
+        jobs: &[Value],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette();
         let path = run.s("path");
         let file = self
-            .fetch_text(&format!("/repos/{repo}/contents/{path}?ref={}", run.s("head_sha")), "application/vnd.github.raw", cx)
+            .fetch_text(
+                &format!("/repos/{repo}/contents/{path}?ref={}", run.s("head_sha")),
+                "application/vnd.github.raw",
+                cx,
+            )
             .ready()
             .map(|v| v.s(""))
             .unwrap_or_default();
@@ -417,7 +612,15 @@ impl Hub {
         for job in jobs {
             let fj = file_job_for(&job.s("name"), &file_jobs);
             let key = fj.map(|j| j.key.clone()).unwrap_or_else(|| job.s("name"));
-            let title = fj.map(|j| if j.name.is_empty() || j.name.contains("${{") { j.key.clone() } else { j.name.clone() }).unwrap_or_else(|| job.s("name"));
+            let title = fj
+                .map(|j| {
+                    if j.name.is_empty() || j.name.contains("${{") {
+                        j.key.clone()
+                    } else {
+                        j.name.clone()
+                    }
+                })
+                .unwrap_or_else(|| job.s("name"));
             let stage = fj.and_then(|j| depth.get(&j.key).copied()).unwrap_or(0);
             match groups.iter_mut().find(|g| g.1 == key) {
                 Some(g) => g.3.push(job),
@@ -439,12 +642,25 @@ impl Hub {
                 .h(px(36.0))
                 .px_3()
                 .cursor_pointer()
-                .when(!inner, |d| d.rounded_md().border_1().border_color(rgb(p.edge)).bg(rgb(p.panel_bg)))
+                .when(!inner, |d| {
+                    d.rounded_md()
+                        .border_1()
+                        .border_color(rgb(p.edge))
+                        .bg(rgb(p.panel_bg))
+                })
                 .when(inner, |d| d.rounded_sm())
                 .hover(|s| s.bg(rgb(p.hover)))
                 .on_click(on(Act::Url(job.s("html_url"))))
                 .child(icon(mark, 14.0, color))
-                .child(div().flex_1().min_w_0().text_ellipsis().overflow_hidden().whitespace_nowrap().child(job.s("name")))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_ellipsis()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .child(job.s("name")),
+                )
                 .child(widgets::faint(took))
         };
 
@@ -458,7 +674,10 @@ impl Hub {
                 if members.len() == 1 {
                     column = column.child(node(members[0], false));
                 } else {
-                    let done = members.iter().filter(|j| j.s("status") == "completed").count();
+                    let done = members
+                        .iter()
+                        .filter(|j| j.s("status") == "completed")
+                        .count();
                     let mut group = widgets::col()
                         .gap_0p5()
                         .p_2()
@@ -470,8 +689,16 @@ impl Hub {
                             widgets::row()
                                 .px_1()
                                 .pb_1()
-                                .child(div().flex_1().font_weight(FontWeight::SEMIBOLD).child(title.clone()))
-                                .child(widgets::faint(format!("{done}/{} jobs completed", members.len()))),
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(title.clone()),
+                                )
+                                .child(widgets::faint(format!(
+                                    "{done}/{} jobs completed",
+                                    members.len()
+                                ))),
                         );
                     for job in members {
                         group = group.child(node(job, true));
@@ -495,35 +722,65 @@ impl Hub {
                     .overflow_x_scroll()
                     .track_scroll(&self.scroller("run-graph"))
                     .bg(rgb(p.deep_bg))
-                    .child(if jobs.is_empty() { widgets::loading() } else { lanes.into_any_element() }),
+                    .child(if jobs.is_empty() {
+                        widgets::loading()
+                    } else {
+                        lanes.into_any_element()
+                    }),
             )
             .into_any_element()
     }
 
     /// Errors and warnings the jobs left, as GitHub lists them under the
     /// graph.
-    fn run_annotations(&mut self, repo: &str, jobs: &[Value], cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn run_annotations(
+        &mut self,
+        repo: &str,
+        jobs: &[Value],
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let p = palette();
         let mut found: Vec<(String, Value)> = Vec::new();
         for job in jobs.iter().take(40) {
-            if let Some(list) = self.fetch(&format!("/repos/{repo}/check-runs/{}/annotations", job.i("id")), cx).ready() {
+            if let Some(list) = self
+                .fetch(
+                    &format!("/repos/{repo}/check-runs/{}/annotations", job.i("id")),
+                    cx,
+                )
+                .ready()
+            {
                 found.extend(list.list("").iter().map(|a| (job.s("name"), a.clone())));
             }
         }
         if found.is_empty() {
             return None;
         }
-        let errors = found.iter().filter(|(_, a)| a.s("annotation_level") == "failure").count();
-        let warnings = found.iter().filter(|(_, a)| a.s("annotation_level") == "warning").count();
+        let errors = found
+            .iter()
+            .filter(|(_, a)| a.s("annotation_level") == "failure")
+            .count();
+        let warnings = found
+            .iter()
+            .filter(|(_, a)| a.s("annotation_level") == "warning")
+            .count();
         let notices = found.len() - errors - warnings;
         let plural = |n: usize, what: &str| format!("{n} {what}{}", if n == 1 { "" } else { "s" });
         let mut card = widgets::card().child(
             widgets::card_header()
                 .child(div().font_weight(FontWeight::SEMIBOLD).child("Annotations"))
                 .child(widgets::dim(if notices > 0 {
-                    format!("{}, {} and {}", plural(errors, "error"), plural(warnings, "warning"), plural(notices, "notice"))
+                    format!(
+                        "{}, {} and {}",
+                        plural(errors, "error"),
+                        plural(warnings, "warning"),
+                        plural(notices, "notice")
+                    )
                 } else {
-                    format!("{} and {}", plural(errors, "error"), plural(warnings, "warning"))
+                    format!(
+                        "{} and {}",
+                        plural(errors, "error"),
+                        plural(warnings, "warning")
+                    )
                 })),
         );
         for (job, a) in &found {
@@ -532,7 +789,11 @@ impl Hub {
                 "warning" => ("alert", widgets::yellow()),
                 _ => ("dot", widgets::gray()),
             };
-            let place = if a.s("path").is_empty() || a.s("path") == ".github" { String::new() } else { format!("{}#L{}", a.s("path"), a.i("start_line")) };
+            let place = if a.s("path").is_empty() || a.s("path") == ".github" {
+                String::new()
+            } else {
+                format!("{}#L{}", a.s("path"), a.i("start_line"))
+            };
             card = card.child(
                 widgets::row()
                     .items_start()
@@ -547,9 +808,17 @@ impl Hub {
                             .flex_1()
                             .min_w_0()
                             .gap_0p5()
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child(if a.s("title").is_empty() { job.clone() } else { format!("{job}: {}", a.s("title")) }))
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(
+                                if a.s("title").is_empty() {
+                                    job.clone()
+                                } else {
+                                    format!("{job}: {}", a.s("title"))
+                                },
+                            ))
                             .child(div().child(json::clip(&a.s("message"), 400)))
-                            .when(!place.is_empty(), |d| d.child(widgets::faint(place.clone()))),
+                            .when(!place.is_empty(), |d| {
+                                d.child(widgets::faint(place.clone()))
+                            }),
                     ),
             );
         }
@@ -566,13 +835,22 @@ mod tests {
     #[test]
     fn reads_jobs_and_needs() {
         let jobs = file_jobs(YAML);
-        assert_eq!(jobs.iter().map(|j| j.key.as_str()).collect::<Vec<_>>(), ["build", "test", "deploy"]);
+        assert_eq!(
+            jobs.iter().map(|j| j.key.as_str()).collect::<Vec<_>>(),
+            ["build", "test", "deploy"]
+        );
         assert_eq!(jobs[1].name, "Test suite");
         assert_eq!(jobs[1].needs, ["build"]);
         assert_eq!(jobs[2].needs, ["build", "test"]);
         let depth = stages(&jobs);
         assert_eq!((depth["build"], depth["test"], depth["deploy"]), (0, 1, 2));
-        assert_eq!(file_job_for("Test suite (a)", &jobs).map(|j| j.key.as_str()), Some("test"));
-        assert_eq!(file_job_for("build", &jobs).map(|j| j.key.as_str()), Some("build"));
+        assert_eq!(
+            file_job_for("Test suite (a)", &jobs).map(|j| j.key.as_str()),
+            Some("test")
+        );
+        assert_eq!(
+            file_job_for("build", &jobs).map(|j| j.key.as_str()),
+            Some("build")
+        );
     }
 }

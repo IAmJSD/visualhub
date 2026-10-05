@@ -33,14 +33,28 @@ impl Hub {
                 let project = r.i("project_id");
                 Row::new(r.s("path"))
                     .icon("package", widgets::gray())
-                    .meta(format!("{} tags  ·  created {}", r.i("tags_count"), time::ago(&r.s("created_at"))))
+                    .meta(format!(
+                        "{} tags  ·  created {}",
+                        r.i("tags_count"),
+                        time::ago(&r.s("created_at"))
+                    ))
                     .danger(
                         "Delete",
-                        Req::rest("DELETE", format!("/api/v4/projects/{project}/registry/repositories/{}", r.i("id")))
-                            .ok("Container repository deleted")
-                            .inval(inval.clone())
-                            .act()
-                            .confirm("Delete this container repository?", "All of its tags are deleted.", "Delete"),
+                        Req::rest(
+                            "DELETE",
+                            format!(
+                                "/api/v4/projects/{project}/registry/repositories/{}",
+                                r.i("id")
+                            ),
+                        )
+                        .ok("Container repository deleted")
+                        .inval(inval.clone())
+                        .act()
+                        .confirm(
+                            "Delete this container repository?",
+                            "All of its tags are deleted.",
+                            "Delete",
+                        ),
                     )
             })
             .empty("No container images.");
@@ -61,18 +75,31 @@ impl Hub {
                         p.s("version"),
                         p.s("package_type"),
                         time::ago(&p.s("created_at")),
-                        if p.has("project_path") { format!("  ·  {}", p.s("project_path")) } else { String::new() }
+                        if p.has("project_path") {
+                            format!("  ·  {}", p.s("project_path"))
+                        } else {
+                            String::new()
+                        }
                     ));
                 if !page.is_empty() {
-                    row = row.open(Act::Url(format!("{web}{page}"))).action(crate::forge::open_on(), Act::Url(format!("{web}{page}")));
+                    row = row
+                        .open(Act::Url(format!("{web}{page}")))
+                        .action(crate::forge::open_on(), Act::Url(format!("{web}{page}")));
                 }
                 row.danger(
                     "Delete",
-                    Req::rest("DELETE", format!("/api/v4/projects/{project}/packages/{}", p.i("id")))
-                        .ok("Package deleted")
-                        .inval(inval.clone())
-                        .act()
-                        .confirm(format!("Delete {} {}?", p.s("name"), p.s("version")), "Its files are deleted.", "Delete"),
+                    Req::rest(
+                        "DELETE",
+                        format!("/api/v4/projects/{project}/packages/{}", p.i("id")),
+                    )
+                    .ok("Package deleted")
+                    .inval(inval.clone())
+                    .act()
+                    .confirm(
+                        format!("Delete {} {}?", p.s("name"), p.s("version")),
+                        "Its files are deleted.",
+                        "Delete",
+                    ),
                 )
             })
             .empty("No packages of this kind.");
@@ -80,7 +107,12 @@ impl Hub {
         };
         widgets::col()
             .gap_3()
-            .child(widgets::chips(TYPES.iter().map(|(v, l)| (l.to_string(), kind == *v, Act::choose(&type_key, *v))).collect()))
+            .child(widgets::chips(
+                TYPES
+                    .iter()
+                    .map(|(v, l)| (l.to_string(), kind == *v, Act::choose(&type_key, *v)))
+                    .collect(),
+            ))
             .child(list)
             .into_any_element()
     }

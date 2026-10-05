@@ -24,7 +24,13 @@ pub fn group_api(group: &str) -> String {
 }
 
 /// GitLab's access levels, for role pickers.
-pub const ROLES: [(&str, &str); 5] = [("10", "Guest"), ("20", "Reporter"), ("30", "Developer"), ("40", "Maintainer"), ("50", "Owner")];
+pub const ROLES: [(&str, &str); 5] = [
+    ("10", "Guest"),
+    ("20", "Reporter"),
+    ("30", "Developer"),
+    ("40", "Maintainer"),
+    ("50", "Owner"),
+];
 
 /// An access level's name.
 pub fn role(level: i64) -> &'static str {
@@ -65,8 +71,14 @@ impl Hub {
                 widgets::card()
                     .p_6()
                     .gap_3()
-                    .child(widgets::dim(format!("{what} isn't something GitLab has, or it's only on the site.")))
-                    .child(gpui::div().child(widgets::btn("elsewhere-open", crate::forge::open_on(), Act::Url(route.web_url())))),
+                    .child(widgets::dim(format!(
+                        "{what} isn't something GitLab has, or it's only on the site."
+                    )))
+                    .child(gpui::div().child(widgets::btn(
+                        "elsewhere-open",
+                        crate::forge::open_on(),
+                        Act::Url(route.web_url()),
+                    ))),
             )
             .into_any_element()
     }

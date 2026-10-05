@@ -9,13 +9,13 @@
 use crate::hub::{Act, Hub, Modal, Req, Then};
 use crate::json::Json as _;
 use crate::picker::{PickItem, Picker};
+use crate::ui::{palette, Button, Checkbox, DropdownButton, LineEdit, TextInput, TextPress};
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, AnyElement, Context, ElementId, InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _, SharedString,
-    Styled as _,
+    div, px, AnyElement, Context, ElementId, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
 };
-use crate::ui::{palette, Button, Checkbox, DropdownButton, LineEdit, TextInput, TextPress};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -86,7 +86,9 @@ impl DropOption {
 
 /// A dropdown's picks as they are kept: one JSON value per line.
 fn picks(text: &str) -> Vec<Value> {
-    text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
+    text.lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
 }
 
 #[derive(Clone)]
@@ -158,20 +160,41 @@ impl Field {
     }
 
     /// Several of the items at `path`, each read by `option`.
-    pub fn dropdown(key: &str, label: &str, path: impl Into<String>, option: impl Fn(&Value) -> DropOption + 'static) -> Self {
+    pub fn dropdown(
+        key: &str,
+        label: &str,
+        path: impl Into<String>,
+        option: impl Fn(&Value) -> DropOption + 'static,
+    ) -> Self {
         Self::new(
             key,
             label,
-            Kind::Dropdown(Rc::new(Dropdown { path: path.into(), multi: true, none: None, option: Rc::new(option) })),
+            Kind::Dropdown(Rc::new(Dropdown {
+                path: path.into(),
+                multi: true,
+                none: None,
+                option: Rc::new(option),
+            })),
         )
     }
 
     /// One of the items at `path`, or `none`.
-    pub fn dropdown_one(key: &str, label: &str, path: impl Into<String>, none: &str, option: impl Fn(&Value) -> DropOption + 'static) -> Self {
+    pub fn dropdown_one(
+        key: &str,
+        label: &str,
+        path: impl Into<String>,
+        none: &str,
+        option: impl Fn(&Value) -> DropOption + 'static,
+    ) -> Self {
         Self::new(
             key,
             label,
-            Kind::Dropdown(Rc::new(Dropdown { path: path.into(), multi: false, none: Some(none.to_string()), option: Rc::new(option) })),
+            Kind::Dropdown(Rc::new(Dropdown {
+                path: path.into(),
+                multi: false,
+                none: Some(none.to_string()),
+                option: Rc::new(option),
+            })),
         )
     }
 
@@ -351,7 +374,10 @@ impl FormSpec {
         let mut req = if let Some((query, vars)) = &self.gql {
             Req::gql(query, vars(values))
         } else {
-            let path = self.path.clone().ok_or("This form has nowhere to send to.")?;
+            let path = self
+                .path
+                .clone()
+                .ok_or("This form has nowhere to send to.")?;
             let mut body = values.json(&self.fields)?;
             if let (Some(Value::Object(extra)), Value::Object(map)) = (&self.extra, &mut body) {
                 for (k, v) in extra {
@@ -580,7 +606,12 @@ impl Hub {
     }
 
     /// A box that shows dots for what is typed.
-    pub fn secret_input(&mut self, id: &str, placeholder: &str, cx: &mut Context<Self>) -> TextInput {
+    pub fn secret_input(
+        &mut self,
+        id: &str,
+        placeholder: &str,
+        cx: &mut Context<Self>,
+    ) -> TextInput {
         let edit = self.field(id).clone();
         let masked: String = "•".repeat(edit.text.chars().count());
         let len = masked.len();
@@ -610,12 +641,8 @@ impl Hub {
                     .p_4()
                     .gap_3();
                 if let Some(note) = &spec.note {
-                    modal = modal.child(
-                        div()
-                            .text_color(rgb(p.text_dim))
-                            .pb_1()
-                            .child(note.clone()),
-                    );
+                    modal =
+                        modal.child(div().text_color(rgb(p.text_dim)).pb_1().child(note.clone()));
                 }
                 for field in &spec.fields {
                     modal = modal.child(self.render_field(field, cx));
@@ -647,11 +674,9 @@ impl Hub {
                 };
                 Some(
                     modal
-                        .action(
-                            div().flex_1().when(busy, |d| {
-                                d.child(crate::ui::Spinner::new("form-busy").size(16.0))
-                            }),
-                        )
+                        .action(div().flex_1().when(busy, |d| {
+                            d.child(crate::ui::Spinner::new("form-busy").size(16.0))
+                        }))
                         .action(
                             Button::new("form-cancel", "Cancel")
                                 .h(px(28.0))
@@ -714,19 +739,34 @@ impl Hub {
 
     /// A dropdown field: what is picked, as chips or names, in a box that
     /// opens the picker of everything there is to pick.
-    fn dropdown_field(&mut self, id: &str, field: &Field, dropdown: &Dropdown, cx: &mut Context<Self>) -> AnyElement {
+    fn dropdown_field(
+        &mut self,
+        id: &str,
+        field: &Field,
+        dropdown: &Dropdown,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette();
         let chosen = picks(&self.choice(id, &field.value));
         let load = self.fetch(&dropdown.path, cx);
         let options: Vec<DropOption> = load
             .ready()
-            .map(|v| v.list("").iter().map(|item| (dropdown.option)(item)).collect())
+            .map(|v| {
+                v.list("")
+                    .iter()
+                    .map(|item| (dropdown.option)(item))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let mut picker = Picker::new(field.label.clone(), "Filter…", dropdown.multi);
         picker.loading = matches!(load, crate::hub::Load::Loading);
         if let Some(none) = &dropdown.none {
-            picker = picker.item(PickItem::new(none.clone(), chosen.is_empty(), Act::choose(id.to_string(), "")));
+            picker = picker.item(PickItem::new(
+                none.clone(),
+                chosen.is_empty(),
+                Act::choose(id.to_string(), ""),
+            ));
         }
         for option in &options {
             let on = chosen.contains(&option.value);
@@ -738,7 +778,8 @@ impl Hub {
                     option.label.clone(),
                     on,
                     Act::run(move |hub, _, cx| {
-                        let mut lines: Vec<String> = hub.choice(&add, "").lines().map(str::to_string).collect();
+                        let mut lines: Vec<String> =
+                            hub.choice(&add, "").lines().map(str::to_string).collect();
                         if !lines.contains(&a) {
                             lines.push(a.clone());
                         }
@@ -746,7 +787,12 @@ impl Hub {
                         cx.notify();
                     }),
                     Act::run(move |hub, _, cx| {
-                        let lines: Vec<String> = hub.choice(&remove, "").lines().filter(|l| *l != r).map(str::to_string).collect();
+                        let lines: Vec<String> = hub
+                            .choice(&remove, "")
+                            .lines()
+                            .filter(|l| *l != r)
+                            .map(str::to_string)
+                            .collect();
                         hub.choices.insert(remove.clone(), lines.join("\n"));
                         cx.notify();
                     }),
@@ -767,18 +813,41 @@ impl Hub {
         }
 
         // What is picked, in the order it was picked.
-        let mut shown = div().flex().flex_row().flex_wrap().items_center().gap_1().flex_1().min_w_0();
+        let mut shown = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap_1()
+            .flex_1()
+            .min_w_0();
         if chosen.is_empty() {
-            shown = shown.child(widgets::dim(dropdown.none.clone().unwrap_or_else(|| "None yet".into())));
+            shown = shown.child(widgets::dim(
+                dropdown.none.clone().unwrap_or_else(|| "None yet".into()),
+            ));
         }
         for value in &chosen {
             let option = options.iter().find(|o| o.value == *value);
-            let label = option.map(|o| o.label.clone()).unwrap_or_else(|| value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()));
+            let label = option.map(|o| o.label.clone()).unwrap_or_else(|| {
+                value
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| value.to_string())
+            });
             shown = shown.child(match option {
-                Some(DropOption { color: Some(color), .. }) => widgets::label_chip(&label, color).into_any_element(),
-                Some(DropOption { avatar: Some(url), .. }) => {
+                Some(DropOption {
+                    color: Some(color), ..
+                }) => widgets::label_chip(&label, color).into_any_element(),
+                Some(DropOption {
+                    avatar: Some(url), ..
+                }) => {
                     let avatar = self.avatar(url, 18.0, cx);
-                    widgets::row().gap_1().pr_1().child(avatar).child(label).into_any_element()
+                    widgets::row()
+                        .gap_1()
+                        .pr_1()
+                        .child(avatar)
+                        .child(label)
+                        .into_any_element()
                 }
                 _ => div().pr_1().child(label).into_any_element(),
             });
@@ -815,7 +884,9 @@ impl Hub {
             .font_weight(gpui::FontWeight::MEDIUM)
             .text_color(rgb(p.text))
             .child(field.label.clone())
-            .when(field.required, |d| d.child(div().text_color(rgb(widgets::red())).child("*")));
+            .when(field.required, |d| {
+                d.child(div().text_color(rgb(widgets::red())).child("*"))
+            });
         let control: AnyElement = match &field.kind {
             Kind::Bool => {
                 let on_now = self.toggle(&id);
@@ -825,12 +896,18 @@ impl Hub {
                     .flex_col()
                     .gap_1()
                     .child(
-                        Checkbox::new(ElementId::Name(id.clone().into()), field.label.clone(), on_now)
-                            .text_size(px(13.0))
-                            .on_change(cx.listener(move |hub, value: &bool, _, cx| {
+                        Checkbox::new(
+                            ElementId::Name(id.clone().into()),
+                            field.label.clone(),
+                            on_now,
+                        )
+                        .text_size(px(13.0))
+                        .on_change(cx.listener(
+                            move |hub, value: &bool, _, cx| {
                                 hub.toggles.insert(key.clone(), *value);
                                 cx.notify();
-                            })),
+                            },
+                        )),
                     )
                     .when_some(field.hint.clone(), |d, hint| {
                         d.child(div().pl(px(22.0)).child(widgets::faint(hint)))
@@ -839,8 +916,8 @@ impl Hub {
             }
             Kind::Choice(options) => {
                 let current = self.choice(&id, &field.value);
-                let short = options.len() <= 4
-                    && options.iter().map(|o| o.1.len()).sum::<usize>() < 48;
+                let short =
+                    options.len() <= 4 && options.iter().map(|o| o.1.len()).sum::<usize>() < 48;
                 if short {
                     widgets::chips(
                         options
@@ -888,7 +965,10 @@ impl Hub {
                 };
                 // Fills the dialog's spare height, and grows past it with
                 // its text.
-                let mut el = self.textarea(&id, placeholder, cx).flex_grow().flex_shrink_0();
+                let mut el = self
+                    .textarea(&id, placeholder, cx)
+                    .flex_grow()
+                    .flex_shrink_0();
                 if matches!(field.kind, Kind::Json) {
                     el = el.font_family(widgets::MONO);
                 }
@@ -939,11 +1019,23 @@ mod tests {
             Field::dropdown("assignees", "Assignees", "/a", option),
             Field::dropdown_one("milestone", "Milestone", "/m", "No milestone", option),
         ];
-        let picked = |values: &[Value]| values.iter().map(Value::to_string).collect::<Vec<_>>().join("\n");
+        let picked = |values: &[Value]| {
+            values
+                .iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
         let mut text = HashMap::new();
-        text.insert("labels".to_string(), picked(&[json!("bug"), json!("good first issue")]));
+        text.insert(
+            "labels".to_string(),
+            picked(&[json!("bug"), json!("good first issue")]),
+        );
         text.insert("milestone".to_string(), picked(&[json!(3)]));
-        let values = FormValues { text, bools: HashMap::new() };
+        let values = FormValues {
+            text,
+            bools: HashMap::new(),
+        };
         assert_eq!(
             values.json(&fields).unwrap(),
             json!({ "labels": ["bug", "good first issue"], "milestone": 3 })

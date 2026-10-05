@@ -5,9 +5,9 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod api;
-mod cli;
 mod assets;
 mod autoscroll;
+mod cli;
 mod diff;
 mod forge;
 mod form;
@@ -20,8 +20,8 @@ mod markdown;
 mod picker;
 mod resource;
 mod scopes;
-mod select;
 mod screens;
+mod select;
 mod shell;
 mod time;
 mod ui;

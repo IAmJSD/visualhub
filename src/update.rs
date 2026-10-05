@@ -115,7 +115,9 @@ pub fn check() -> UpdateStatus {
             .and_then(|text| Ok(serde_json::from_str(&text)?))
         {
             Ok(v) => v,
-            Err(err) => return UpdateStatus::Failed(format!("GitHub's answer was unreadable: {err}")),
+            Err(err) => {
+                return UpdateStatus::Failed(format!("GitHub's answer was unreadable: {err}"))
+            }
         },
         Err(err) => return UpdateStatus::Failed(format!("{err}")),
     };
@@ -126,17 +128,28 @@ pub fn check() -> UpdateStatus {
     let page = release.s("html_url");
     UpdateStatus::Available(Update {
         version: tag.trim_start_matches('v').to_string(),
-        page: if page.is_empty() { RELEASES_PAGE.to_string() } else { page },
+        page: if page.is_empty() {
+            RELEASES_PAGE.to_string()
+        } else {
+            page
+        },
         // Offer to install only when this copy is one we can replace;
         // otherwise the dialog is a pointer at the release page.
-        install: if self_installable() { installer_for(&release) } else { None },
+        install: if self_installable() {
+            installer_for(&release)
+        } else {
+            None
+        },
     })
 }
 
 /// The release asset that would update this platform, ignoring whether
 /// this particular copy is one we may replace.
 fn installer_for(release: &Value) -> Option<Installer> {
-    let asset = release.list("assets").iter().find(|a| is_platform_asset(&a.s("name")))?;
+    let asset = release
+        .list("assets")
+        .iter()
+        .find(|a| is_platform_asset(&a.s("name")))?;
     let url = asset.s("browser_download_url");
     if url.is_empty() {
         return None;
@@ -170,7 +183,8 @@ fn is_platform_asset(name: &str) -> bool {
 /// required.
 fn sha256_from_digest(digest: &str) -> Option<String> {
     let hex = digest.strip_prefix("sha256:")?;
-    (hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit())).then(|| hex.to_ascii_lowercase())
+    (hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+        .then(|| hex.to_ascii_lowercase())
 }
 
 /// Whether this copy is one VisualHub can replace in place: an
@@ -213,7 +227,11 @@ pub fn download(installer: &Installer, received: &AtomicU64) -> anyhow::Result<P
     let mut file = std::fs::File::create(&path)?;
     // A guard against a redirect to something enormous. The release
     // tells us the size, so this is only a fallback for one that didn't.
-    let cap = if installer.size > 0 { installer.size } else { 1 << 30 };
+    let cap = if installer.size > 0 {
+        installer.size
+    } else {
+        1 << 30
+    };
     let mut hasher = sha2::Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
     let mut total = 0u64;
@@ -223,7 +241,10 @@ pub fn download(installer: &Installer, received: &AtomicU64) -> anyhow::Result<P
             break;
         }
         total += n as u64;
-        anyhow::ensure!(total <= cap, "the download is larger than the release says it is");
+        anyhow::ensure!(
+            total <= cap,
+            "the download is larger than the release says it is"
+        );
         hasher.update(&buf[..n]);
         file.write_all(&buf[..n])?;
         received.store(total, Ordering::Relaxed);
@@ -240,7 +261,10 @@ pub fn download(installer: &Installer, received: &AtomicU64) -> anyhow::Result<P
     }
     if let Some(want) = &installer.sha256 {
         let got = format!("{:x}", hasher.finalize());
-        anyhow::ensure!(&got == want, "the download's SHA-256 is {got}, not the {want} the release lists");
+        anyhow::ensure!(
+            &got == want,
+            "the download's SHA-256 is {got}, not the {want} the release lists"
+        );
     }
     Ok(path)
 }
@@ -264,7 +288,9 @@ pub fn clean_downloads() {
 fn bundle_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     // …/VisualHub.app/Contents/MacOS/visualhub
-    let app = exe.ancestors().find(|p| p.extension().is_some_and(|e| e == "app"))?;
+    let app = exe
+        .ancestors()
+        .find(|p| p.extension().is_some_and(|e| e == "app"))?;
     Some(app.to_path_buf())
 }
 
@@ -288,7 +314,9 @@ fn is_writable(dir: &Path) -> bool {
 #[cfg(target_os = "macos")]
 pub fn install_and_restart(zip: &Path) -> anyhow::Result<()> {
     let app = bundle_path().context("VisualHub isn't running from an application bundle")?;
-    let parent = app.parent().context("the application bundle has no folder")?;
+    let parent = app
+        .parent()
+        .context("the application bundle has no folder")?;
     // Staged beside the bundle, not in the temporary directory: the swap
     // below is a rename, and a rename cannot cross volumes.
     let stage = parent.join(format!(".visualhub-update-{}", std::process::id()));
@@ -311,7 +339,8 @@ pub fn install_and_restart(zip: &Path) -> anyhow::Result<()> {
     // failed swap can be undone.
     let backup = parent.join(format!(".VisualHub.app.old-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&backup);
-    std::fs::rename(&app, &backup).with_context(|| format!("can't move {} aside", app.display()))?;
+    std::fs::rename(&app, &backup)
+        .with_context(|| format!("can't move {} aside", app.display()))?;
     if let Err(err) = std::fs::rename(&new_app, &app) {
         let _ = std::fs::rename(&backup, &app);
         let _ = std::fs::remove_dir_all(&stage);
@@ -401,7 +430,10 @@ fn verify_signature(app: &Path, new_app: &Path) -> anyhow::Result<()> {
     let Some(theirs) = theirs else {
         anyhow::bail!("the update isn't signed, and this copy is");
     };
-    anyhow::ensure!(ours == theirs, "the update is signed by a different developer");
+    anyhow::ensure!(
+        ours == theirs,
+        "the update is signed by a different developer"
+    );
     Ok(())
 }
 
@@ -439,7 +471,9 @@ fn sh_quote(s: &str) -> String {
 fn install_dir() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    dir.join("uninstall.exe").exists().then(|| dir.to_path_buf())
+    dir.join("uninstall.exe")
+        .exists()
+        .then(|| dir.to_path_buf())
 }
 
 /// Queue the downloaded installer behind this process's exit.
@@ -524,7 +558,9 @@ pub fn check_due() -> bool {
 
 /// Record that a check just happened.
 pub fn mark_checked() {
-    let Some(dir) = crate::api::config_dir() else { return };
+    let Some(dir) = crate::api::config_dir() else {
+        return;
+    };
     if std::fs::create_dir_all(&dir).is_ok() {
         let _ = std::fs::write(dir.join("last-update-check"), now_secs().to_string());
     }
@@ -536,7 +572,9 @@ pub fn check_at_launch() -> bool {
 }
 
 pub fn set_check_at_launch(on: bool) {
-    let Some(dir) = crate::api::config_dir() else { return };
+    let Some(dir) = crate::api::config_dir() else {
+        return;
+    };
     let flag = dir.join("no-update-check");
     if on {
         let _ = std::fs::remove_file(flag);
@@ -618,7 +656,10 @@ mod tests {
         let sha = "a".repeat(64);
         assert_eq!(sha256_from_digest(&format!("sha256:{sha}")), Some(sha));
         // Upper case is the same digest.
-        assert_eq!(sha256_from_digest(&format!("sha256:{}", "AB".repeat(32))), Some("ab".repeat(32)));
+        assert_eq!(
+            sha256_from_digest(&format!("sha256:{}", "AB".repeat(32))),
+            Some("ab".repeat(32))
+        );
         assert_eq!(sha256_from_digest("sha512:beef"), None);
         assert_eq!(sha256_from_digest("sha256:beef"), None);
         assert_eq!(sha256_from_digest(""), None);
@@ -627,7 +668,10 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn paths_survive_the_shell() {
-        assert_eq!(sh_quote("/Applications/VisualHub.app"), "'/Applications/VisualHub.app'");
+        assert_eq!(
+            sh_quote("/Applications/VisualHub.app"),
+            "'/Applications/VisualHub.app'"
+        );
         // A quote in the path must not end the word.
         assert_eq!(sh_quote("/tmp/it's here"), r"'/tmp/it'\''s here'");
     }
@@ -635,7 +679,10 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn paths_survive_powershell() {
-        assert_eq!(ps_quote(r"C:\Program Files\VisualHub"), r"'C:\Program Files\VisualHub'");
+        assert_eq!(
+            ps_quote(r"C:\Program Files\VisualHub"),
+            r"'C:\Program Files\VisualHub'"
+        );
         // Doubling is how a single quote goes inside a quoted string.
         assert_eq!(ps_quote("C:\\it's"), "'C:\\it''s'");
     }

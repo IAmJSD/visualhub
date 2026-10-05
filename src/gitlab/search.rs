@@ -6,7 +6,7 @@
 //! type, become those parameters; the words left over are GitLab's
 //! `search`.
 
-use super::{get, grp, me, missing, parallel, project_path, proj, shape, Ask};
+use super::{get, grp, me, missing, parallel, proj, project_path, shape, Ask};
 use crate::api::{self, Client};
 use crate::json::{enc, Json as _};
 use anyhow::Result;
@@ -32,9 +32,18 @@ impl Parsed {
             };
             match rest.split_once(':') {
                 Some((key, value))
-                    if !key.is_empty() && !value.is_empty() && !value.starts_with("//") && key.chars().all(|c| c.is_ascii_alphabetic() || c == '-' || c == '_') =>
+                    if !key.is_empty()
+                        && !value.is_empty()
+                        && !value.starts_with("//")
+                        && key
+                            .chars()
+                            .all(|c| c.is_ascii_alphabetic() || c == '-' || c == '_') =>
                 {
-                    parsed.quals.push((key.to_lowercase(), value.trim_matches('"').to_string(), negated));
+                    parsed.quals.push((
+                        key.to_lowercase(),
+                        value.trim_matches('"').to_string(),
+                        negated,
+                    ));
                 }
                 _ => words.push(token),
             }
@@ -45,7 +54,11 @@ impl Parsed {
 
     /// Every value of `key`, not negated.
     pub fn all(&self, key: &str) -> Vec<&str> {
-        self.quals.iter().filter(|(k, _, n)| k == key && !n).map(|(_, v, _)| v.as_str()).collect()
+        self.quals
+            .iter()
+            .filter(|(k, _, n)| k == key && !n)
+            .map(|(_, v, _)| v.as_str())
+            .collect()
     }
 
     pub fn get(&self, key: &str) -> Option<&str> {
@@ -53,7 +66,11 @@ impl Parsed {
     }
 
     pub fn not(&self, key: &str) -> Vec<&str> {
-        self.quals.iter().filter(|(k, _, n)| k == key && *n).map(|(_, v, _)| v.as_str()).collect()
+        self.quals
+            .iter()
+            .filter(|(k, _, n)| k == key && *n)
+            .map(|(_, v, _)| v.as_str())
+            .collect()
     }
 
     pub fn is(&self, value: &str) -> bool {
@@ -91,11 +108,21 @@ pub fn search(a: &Ask, kind: &str) -> Result<Value> {
     let items = match kind {
         "issues" => issues(a, &parsed)?,
         "repositories" => repositories(a, &parsed)?,
-        "users" => shape::users(a.c, get(a.c, &format!("/users?search={}&{}", enc(&parsed.text), a.paging()))?.list("")),
+        "users" => shape::users(
+            a.c,
+            get(
+                a.c,
+                &format!("/users?search={}&{}", enc(&parsed.text), a.paging()),
+            )?
+            .list(""),
+        ),
         "code" => scoped(a, &parsed, "blobs")?,
         "commits" => scoped(a, &parsed, "commits")?,
         "topics" => {
-            let list = get(a.c, &format!("/topics?search={}&{}", enc(&parsed.text), a.paging()))?;
+            let list = get(
+                a.c,
+                &format!("/topics?search={}&{}", enc(&parsed.text), a.paging()),
+            )?;
             Value::Array(list.list("").iter().map(|t| json!({ "name": t.s("name"), "display_name": t.s("title"), "short_description": t.s("description") })).collect())
         }
         _ => return Err(missing("search of that kind")),
@@ -106,14 +133,22 @@ pub fn search(a: &Ask, kind: &str) -> Result<Value> {
 
 /// `@me` as the signed-in login.
 fn who(c: &Client, value: &str) -> Result<String> {
-    Ok(if value == "@me" { me(c)?.s("username") } else { value.trim_start_matches('@').to_string() })
+    Ok(if value == "@me" {
+        me(c)?.s("username")
+    } else {
+        value.trim_start_matches('@').to_string()
+    })
 }
 
 /// Where a search looks: one project, one group, or everywhere.
 fn scope(parsed: &Parsed) -> String {
     if let Some(repo) = parsed.get("repo") {
         proj(repo)
-    } else if let Some(group) = parsed.get("org").or_else(|| parsed.get("group")).or_else(|| parsed.get("user")) {
+    } else if let Some(group) = parsed
+        .get("org")
+        .or_else(|| parsed.get("group"))
+        .or_else(|| parsed.get("user"))
+    {
         grp(group)
     } else {
         String::new()
@@ -123,7 +158,10 @@ fn scope(parsed: &Parsed) -> String {
 fn issues(a: &Ask, parsed: &Parsed) -> Result<Value> {
     let c = a.c;
     let want_prs = !parsed.is("issue");
-    let want_issues = !parsed.is("pr") && !parsed.is("merged") && parsed.get("review-requested").is_none() && parsed.get("reviewed-by").is_none();
+    let want_issues = !parsed.is("pr")
+        && !parsed.is("merged")
+        && parsed.get("review-requested").is_none()
+        && parsed.get("reviewed-by").is_none();
     if let Some(who_value) = parsed.get("mentions") {
         return mentions(a, parsed, &who(c, who_value)?, want_issues, want_prs);
     }
@@ -143,7 +181,14 @@ fn issues(a: &Ask, parsed: &Parsed) -> Result<Value> {
         Some("reactions") => "popularity",
         _ => "updated_at",
     };
-    params.push(format!("order_by={order}&sort={}", if a.query.get("order") == Some("asc") { "asc" } else { "desc" }));
+    params.push(format!(
+        "order_by={order}&sort={}",
+        if a.query.get("order") == Some("asc") {
+            "asc"
+        } else {
+            "desc"
+        }
+    ));
     if let Some(v) = parsed.get("author") {
         params.push(format!("author_username={}", enc(&who(c, v)?)));
     }
@@ -183,7 +228,11 @@ fn issues(a: &Ask, parsed: &Parsed) -> Result<Value> {
     let mut items: Vec<Value> = Vec::new();
     if want_issues && state != "merged" {
         let list = get(c, &format!("{base}/issues?{query}{all}"))?;
-        items.extend(list.list("").iter().map(|v| shape::issue(c, &shape::repo_of(v), v, &HashMap::new())));
+        items.extend(
+            list.list("")
+                .iter()
+                .map(|v| shape::issue(c, &shape::repo_of(v), v, &HashMap::new())),
+        );
     }
     if want_prs {
         let mut mr_query = query.clone();
@@ -195,24 +244,55 @@ fn issues(a: &Ask, parsed: &Parsed) -> Result<Value> {
                 let login = who(c, v)?;
                 // Approvals by name are a paid tier's filter; elsewhere the
                 // reviewer is the closest there is.
-                get(c, &format!("{base}/merge_requests?{mr_query}{all}&approved_by_usernames[]={}", enc(&login)))
-                    .or_else(|_| get(c, &format!("{base}/merge_requests?{mr_query}{all}&reviewer_username={}", enc(&login))))?
+                get(
+                    c,
+                    &format!(
+                        "{base}/merge_requests?{mr_query}{all}&approved_by_usernames[]={}",
+                        enc(&login)
+                    ),
+                )
+                .or_else(|_| {
+                    get(
+                        c,
+                        &format!(
+                            "{base}/merge_requests?{mr_query}{all}&reviewer_username={}",
+                            enc(&login)
+                        ),
+                    )
+                })?
             }
             None => get(c, &format!("{base}/merge_requests?{mr_query}{all}"))?,
         };
-        items.extend(list.list("").iter().map(|v| shape::mr(c, &shape::repo_of(v), v, &HashMap::new(), "")));
+        items.extend(
+            list.list("")
+                .iter()
+                .map(|v| shape::mr(c, &shape::repo_of(v), v, &HashMap::new(), "")),
+        );
     }
     if want_issues && want_prs {
-        items.sort_by_key(|i| std::cmp::Reverse(crate::time::parse(&i.s("updated_at")).unwrap_or(0)));
+        items.sort_by_key(|i| {
+            std::cmp::Reverse(crate::time::parse(&i.s("updated_at")).unwrap_or(0))
+        });
     }
     Ok(Value::Array(items))
 }
 
 /// Where `login` was mentioned: GitLab's to-do list keeps those.
-fn mentions(a: &Ask, parsed: &Parsed, _login: &str, want_issues: bool, want_prs: bool) -> Result<Value> {
+fn mentions(
+    a: &Ask,
+    parsed: &Parsed,
+    _login: &str,
+    want_issues: bool,
+    want_prs: bool,
+) -> Result<Value> {
     let c = a.c;
     let states = ["pending", "done"];
-    let lists = parallel(&states, |state| get(c, &format!("/todos?action=mentioned&state={state}&{}", a.paging())));
+    let lists = parallel(&states, |state| {
+        get(
+            c,
+            &format!("/todos?action=mentioned&state={state}&{}", a.paging()),
+        )
+    });
     let open_only = parsed.is("open");
     let closed_only = parsed.is("closed");
     let mut items = Vec::new();
@@ -225,8 +305,12 @@ fn mentions(a: &Ask, parsed: &Parsed, _login: &str, want_issues: bool, want_prs:
                 continue;
             }
             match todo.s("target_type").as_str() {
-                "Issue" if want_issues => items.push(shape::issue(c, &repo, target, &HashMap::new())),
-                "MergeRequest" if want_prs => items.push(shape::mr(c, &repo, target, &HashMap::new(), "")),
+                "Issue" if want_issues => {
+                    items.push(shape::issue(c, &repo, target, &HashMap::new()))
+                }
+                "MergeRequest" if want_prs => {
+                    items.push(shape::mr(c, &repo, target, &HashMap::new(), ""))
+                }
                 _ => {}
             }
         }
@@ -263,9 +347,15 @@ fn repositories(a: &Ask, parsed: &Parsed) -> Result<Value> {
     };
     params.push(format!("order_by={order}&sort=desc"));
     let query = params.join("&");
-    let owner = parsed.get("user").or_else(|| parsed.get("org")).or_else(|| parsed.get("group"));
+    let owner = parsed
+        .get("user")
+        .or_else(|| parsed.get("org"))
+        .or_else(|| parsed.get("group"));
     let list = match owner {
-        Some(owner) => match get(c, &format!("{}/projects?include_subgroups=true&{query}", grp(owner))) {
+        Some(owner) => match get(
+            c,
+            &format!("{}/projects?include_subgroups=true&{query}", grp(owner)),
+        ) {
             Ok(list) => list,
             Err(e) if api::status_of(&e) == Some(404) => {
                 let id = super::user_id(c, owner)?;
@@ -283,11 +373,22 @@ fn repositories(a: &Ask, parsed: &Parsed) -> Result<Value> {
 fn scoped(a: &Ask, parsed: &Parsed, what: &str) -> Result<Value> {
     let c = a.c;
     let base = scope(parsed);
-    let list = get(c, &format!("{base}/search?scope={what}&search={}&{}", enc(&parsed.text), a.paging()))?;
+    let list = get(
+        c,
+        &format!(
+            "{base}/search?scope={what}&search={}&{}",
+            enc(&parsed.text),
+            a.paging()
+        ),
+    )?;
     let mut ids: Vec<i64> = list.list("").iter().map(|r| r.i("project_id")).collect();
     ids.sort();
     ids.dedup();
-    let paths: HashMap<i64, String> = ids.iter().copied().zip(parallel(&ids, |id| project_path(c, *id))).collect();
+    let paths: HashMap<i64, String> = ids
+        .iter()
+        .copied()
+        .zip(parallel(&ids, |id| project_path(c, *id)))
+        .collect();
     Ok(Value::Array(
         list.list("")
             .iter()
@@ -317,12 +418,17 @@ mod tests {
 
     #[test]
     fn queries_come_apart() {
-        let p = Parsed::new("is:open is:pr review-requested:@me label:\"good first\" -label:wontfix speed up");
+        let p = Parsed::new(
+            "is:open is:pr review-requested:@me label:\"good first\" -label:wontfix speed up",
+        );
         assert!(p.is("open") && p.is("pr"));
         assert_eq!(p.get("review-requested"), Some("@me"));
         assert_eq!(p.all("label"), ["good first"]);
         assert_eq!(p.not("label"), ["wontfix"]);
         assert_eq!(p.text, "speed up");
-        assert_eq!(Parsed::new("https://example.com").text, "https://example.com");
+        assert_eq!(
+            Parsed::new("https://example.com").text,
+            "https://example.com"
+        );
     }
 }

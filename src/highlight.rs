@@ -47,7 +47,11 @@ pub fn syntax_for(name: &str) -> Option<&'static SyntaxReference> {
 }
 
 fn theme() -> &'static Theme {
-    THEMES.get(if is_light() { EmbeddedThemeName::Github } else { EmbeddedThemeName::OneHalfDark })
+    THEMES.get(if is_light() {
+        EmbeddedThemeName::Github
+    } else {
+        EmbeddedThemeName::OneHalfDark
+    })
 }
 
 thread_local! {
@@ -57,7 +61,11 @@ thread_local! {
 /// Highlight `lines` (no newlines) as one run of `syntax`; `None` when the
 /// text is too big or has no known grammar. `breaks` are line indices to
 /// restart the parse at (a diff's hunks).
-pub fn lines(syntax: Option<&'static SyntaxReference>, lines: &[String], breaks: &[usize]) -> Option<Lines> {
+pub fn lines(
+    syntax: Option<&'static SyntaxReference>,
+    lines: &[String],
+    breaks: &[usize],
+) -> Option<Lines> {
     let syntax = syntax?;
     let bytes: usize = lines.iter().map(String::len).sum();
     if bytes > MAX_BYTES || lines.iter().any(|l| l.len() > MAX_LINE) {
@@ -127,7 +135,20 @@ mod tests {
 
     #[test]
     fn finds_grammars() {
-        for name in ["src/main.rs", "a.ts", "b.tsx", "c.py", "Cargo.toml", "Dockerfile", "x.go", "y.kt", "z.swift", "rust", "js", "sh"] {
+        for name in [
+            "src/main.rs",
+            "a.ts",
+            "b.tsx",
+            "c.py",
+            "Cargo.toml",
+            "Dockerfile",
+            "x.go",
+            "y.kt",
+            "z.swift",
+            "rust",
+            "js",
+            "sh",
+        ] {
             assert!(syntax_for(name).is_some(), "{name}");
         }
         assert!(syntax_for("notes.unknownext").is_none());

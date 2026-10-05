@@ -4,17 +4,20 @@
 
 use super::common::{post_comment, side_section, CommentActs};
 use crate::diff::ReviewTarget;
-use crate::picker::{PickItem, Picker};
 use crate::form::{Field, FormSpec};
-use crate::hub::{Act, Hub, MenuEntry, PullTab, Req, Route, RepoTab};
+use crate::hub::{Act, Hub, MenuEntry, PullTab, RepoTab, Req, Route};
 use crate::json::{first_line, Json as _};
+use crate::picker::{PickItem, Picker};
 use crate::ready;
 use crate::resource::{Fetched, ListSpec, Row};
 use crate::time;
+use crate::ui::{icon, palette};
 use crate::widgets::{self, rgb, TabItem};
 use gpui::prelude::FluentBuilder as _;
-use gpui::{div, px, AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _, Styled as _};
-use crate::ui::{icon, palette};
+use gpui::{
+    div, px, AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, StatefulInteractiveElement as _, Styled as _,
+};
 use serde_json::{json, Value};
 
 pub fn new_pull_form(repo: &str, base: &str, head: &str) -> Act {
@@ -22,12 +25,33 @@ pub fn new_pull_form(repo: &str, base: &str, head: &str) -> Act {
     FormSpec::new(format!("Open a {} in {repo}", crate::forge::pr()))
         .submit(format!("Create {}", crate::forge::pr()))
         .width(640.0)
-        .field(Field::text("base", "Base branch").value(base).required().hint("The branch to merge into."))
-        .field(Field::text("head", if crate::forge::is_gitlab() { "Source branch" } else { "Compare branch" }).value(head).required().hint("branch, or owner:branch for a fork."))
+        .field(
+            Field::text("base", "Base branch")
+                .value(base)
+                .required()
+                .hint("The branch to merge into."),
+        )
+        .field(
+            Field::text(
+                "head",
+                if crate::forge::is_gitlab() {
+                    "Source branch"
+                } else {
+                    "Compare branch"
+                },
+            )
+            .value(head)
+            .required()
+            .hint("branch, or owner:branch for a fork."),
+        )
         .field(Field::text("title", "Title").required())
         .field(Field::multiline("body", "Description"))
         .field(Field::bool("draft", "Create as draft", false))
-        .field(Field::bool("maintainer_can_modify", "Allow edits by maintainers", true))
+        .field(Field::bool(
+            "maintainer_can_modify",
+            "Allow edits by maintainers",
+            true,
+        ))
         .rest("POST", format!("/repos/{repo}/pulls"))
         .ok(format!("{} opened", crate::forge::pr_title()))
         .inval(format!("/repos/{repo}/pulls"))
@@ -69,7 +93,11 @@ pub fn review_form(repo: &str, number: u64) -> Act {
         .field(Field::choice(
             "event",
             "Verdict",
-            &[("COMMENT", "Comment"), ("APPROVE", "Approve"), ("REQUEST_CHANGES", "Request changes")],
+            &[
+                ("COMMENT", "Comment"),
+                ("APPROVE", "Approve"),
+                ("REQUEST_CHANGES", "Request changes"),
+            ],
         ))
         .rest("POST", format!("/repos/{repo}/pulls/{number}/reviews"))
         .ok("Review submitted")
@@ -90,8 +118,16 @@ fn check_row(repo: &str, check: &Value) -> Row {
         .meta(format!(
             "{}  ·  {}{}",
             check.s("app.name"),
-            if conclusion.is_empty() { status.clone() } else { conclusion.clone() },
-            if duration.is_empty() { String::new() } else { format!(" in {duration}") }
+            if conclusion.is_empty() {
+                status.clone()
+            } else {
+                conclusion.clone()
+            },
+            if duration.is_empty() {
+                String::new()
+            } else {
+                format!(" in {duration}")
+            }
         ))
         .body(check.s("output.title"))
         .open(match crate::hub::route_for_url(&details) {
@@ -102,10 +138,13 @@ fn check_row(repo: &str, check: &Value) -> Row {
     if matches!(check.s("app.slug").as_str(), "github-actions" | "gitlab-ci") {
         row = row.action(
             "Re-run",
-            Req::rest("POST", format!("/repos/{repo}/actions/jobs/{}/rerun", check.i("id")))
-                .ok("Job re-run requested")
-                .inval(format!("/repos/{repo}/commits"))
-                .act(),
+            Req::rest(
+                "POST",
+                format!("/repos/{repo}/actions/jobs/{}/rerun", check.i("id")),
+            )
+            .ok("Job re-run requested")
+            .inval(format!("/repos/{repo}/commits"))
+            .act(),
         );
     }
     row
@@ -120,7 +159,9 @@ pub fn status_icon(status: &str, conclusion: &str) -> (&'static str, u32) {
         (_, "skipped") | (_, "neutral") => ("skip", widgets::gray()),
         (_, "action_required") => ("alert", widgets::yellow()),
         ("in_progress", _) => ("dot", widgets::yellow()),
-        ("queued", _) | ("waiting", _) | ("pending", _) | ("requested", _) => ("clock", widgets::yellow()),
+        ("queued", _) | ("waiting", _) | ("pending", _) | ("requested", _) => {
+            ("clock", widgets::yellow())
+        }
         ("completed", _) => ("check-circle", widgets::gray()),
         _ => ("circle", widgets::gray()),
     }
@@ -132,7 +173,11 @@ pub fn ci_mark(state: &str) -> Option<(&'static str, u32, &'static str)> {
     match state {
         "SUCCESS" => Some(("check", widgets::green(), "All checks have passed")),
         "FAILURE" | "ERROR" => Some(("close", widgets::red(), "Some checks were not successful")),
-        "PENDING" | "EXPECTED" => Some(("dot", widgets::yellow(), "Some checks haven't completed yet")),
+        "PENDING" | "EXPECTED" => Some((
+            "dot",
+            widgets::yellow(),
+            "Some checks haven't completed yet",
+        )),
         _ => None,
     }
 }
@@ -156,21 +201,40 @@ impl Hub {
     }
 
     /// A repository's Pull requests tab.
-    pub fn repo_pulls(&mut self, repo: &str, default_branch: &str, cx: &mut Context<Self>) -> AnyElement {
+    pub fn repo_pulls(
+        &mut self,
+        repo: &str,
+        default_branch: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let list = self.issue_list(repo, "pr", cx);
         widgets::col()
             .gap_3()
             .child(
                 widgets::row()
                     .child(widgets::spacer())
-                    .child(widgets::btn("compare", "Compare branches", compare_form(repo, default_branch)))
-                    .child(widgets::go_btn("new-pr", format!("New {}", crate::forge::pr()), new_pull_form(repo, default_branch, ""))),
+                    .child(widgets::btn(
+                        "compare",
+                        "Compare branches",
+                        compare_form(repo, default_branch),
+                    ))
+                    .child(widgets::go_btn(
+                        "new-pr",
+                        format!("New {}", crate::forge::pr()),
+                        new_pull_form(repo, default_branch, ""),
+                    )),
             )
             .child(list)
             .into_any_element()
     }
 
-    pub fn pull(&mut self, repo: &str, number: u64, tab: PullTab, cx: &mut Context<Self>) -> AnyElement {
+    pub fn pull(
+        &mut self,
+        repo: &str,
+        number: u64,
+        tab: PullTab,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let path = format!("/repos/{repo}/pulls/{number}");
         let pr = ready!(self.fetch(&path, cx));
         let header = self.issue_header(repo, &pr, true, cx);
@@ -184,11 +248,33 @@ impl Hub {
         let tabs = widgets::tabs(
             "pr",
             vec![
-                TabItem::new("Conversation", "comment", tab == PullTab::Conversation, go(PullTab::Conversation))
-                    .count(Some(pr.i("comments") + pr.i("review_comments"))),
-                TabItem::new("Commits", "commit", tab == PullTab::Commits, go(PullTab::Commits)).count(Some(pr.i("commits"))),
-                TabItem::new("Checks", "check-circle", tab == PullTab::Checks, go(PullTab::Checks)),
-                TabItem::new("Files changed", "file", tab == PullTab::Files, go(PullTab::Files)).count(Some(pr.i("changed_files"))),
+                TabItem::new(
+                    "Conversation",
+                    "comment",
+                    tab == PullTab::Conversation,
+                    go(PullTab::Conversation),
+                )
+                .count(Some(pr.i("comments") + pr.i("review_comments"))),
+                TabItem::new(
+                    "Commits",
+                    "commit",
+                    tab == PullTab::Commits,
+                    go(PullTab::Commits),
+                )
+                .count(Some(pr.i("commits"))),
+                TabItem::new(
+                    "Checks",
+                    "check-circle",
+                    tab == PullTab::Checks,
+                    go(PullTab::Checks),
+                ),
+                TabItem::new(
+                    "Files changed",
+                    "file",
+                    tab == PullTab::Files,
+                    go(PullTab::Files),
+                )
+                .count(Some(pr.i("changed_files"))),
             ],
         );
         let body = match tab {
@@ -203,23 +289,39 @@ impl Hub {
             .when(fill, |d| d.flex_1().min_h_0())
             .child(header)
             .child(
-                widgets::row()
-                    .child(div().flex_1().child(tabs))
-                    .child(
-                        div()
-                            .text_size(px(12.0))
+                widgets::row().child(div().flex_1().child(tabs)).child(
+                    div().text_size(px(12.0)).child(
+                        widgets::row()
                             .child(
-                                widgets::row()
-                                    .child(div().text_color(rgb(widgets::green())).child(format!("+{}", pr.i("additions"))))
-                                    .child(div().text_color(rgb(widgets::red())).child(format!("−{}", pr.i("deletions")))),
+                                div()
+                                    .text_color(rgb(widgets::green()))
+                                    .child(format!("+{}", pr.i("additions"))),
+                            )
+                            .child(
+                                div()
+                                    .text_color(rgb(widgets::red()))
+                                    .child(format!("−{}", pr.i("deletions"))),
                             ),
                     ),
+                ),
             )
-            .child(div().flex().flex_col().when(fill, |d| d.flex_1().min_h_0()).child(body))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .when(fill, |d| d.flex_1().min_h_0())
+                    .child(body),
+            )
             .into_any_element()
     }
 
-    fn pull_conversation(&mut self, repo: &str, number: u64, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
+    fn pull_conversation(
+        &mut self,
+        repo: &str,
+        number: u64,
+        pr: &Value,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let inval = crate::forge::issue_api(repo, number, true);
         let field = format!("comment:{repo}#{number}");
         let mut col = widgets::col().gap_3();
@@ -227,7 +329,11 @@ impl Hub {
             edit: Some(
                 FormSpec::new("Edit description")
                     .width(680.0)
-                    .field(Field::multiline("body", "Description").value(pr.s("body")).keep_empty())
+                    .field(
+                        Field::multiline("body", "Description")
+                            .value(pr.s("body"))
+                            .keep_empty(),
+                    )
                     .rest("PATCH", format!("/repos/{repo}/pulls/{number}"))
                     .ok("Saved")
                     .inval(format!("/repos/{repo}/pulls/{number}"))
@@ -249,14 +355,24 @@ impl Hub {
         let me = self.login();
         let spec = ListSpec::new(format!("{inval}/timeline"), |_| Row::new(""));
         match self.fetch_list(&spec, cx) {
-            Fetched::Items { items, loading, more } => {
+            Fetched::Items {
+                items,
+                loading,
+                more,
+            } => {
                 // Commit events carry only the git author's name; ask who
                 // the accounts are, co-authors included, in one go.
-                let shas: Vec<String> = items.iter().filter(|e| e.s("event") == "committed").map(|e| e.s("sha")).collect();
+                let shas: Vec<String> = items
+                    .iter()
+                    .filter(|e| e.s("event") == "committed")
+                    .map(|e| e.s("sha"))
+                    .collect();
                 let found = self.commit_batch(repo, &shas, cx);
                 self.commit_info.extend(found);
                 for (i, event) in items.iter().enumerate() {
-                    if let Some(el) = self.timeline_item(repo, &format!("tl{i}"), event, &field, &inval, &me, cx) {
+                    if let Some(el) =
+                        self.timeline_item(repo, &format!("tl{i}"), event, &field, &inval, &me, cx)
+                    {
                         col = col.child(el);
                     }
                 }
@@ -291,11 +407,32 @@ impl Hub {
         };
         let (pr_word, pr_title) = (crate::forge::pr(), crate::forge::pr_title());
         let extra = vec![
-            widgets::icon_action("review", "eye", palette().text_dim, "Review changes", review_form(repo, number)).into_any_element(),
+            widgets::icon_action(
+                "review",
+                "eye",
+                palette().text_dim,
+                "Review changes",
+                review_form(repo, number),
+            )
+            .into_any_element(),
             if open {
-                widgets::icon_action("close-pr", "pr-closed", widgets::red(), format!("Close {pr_word}"), state_req("closed", &format!("{pr_title} closed"))).into_any_element()
+                widgets::icon_action(
+                    "close-pr",
+                    "pr-closed",
+                    widgets::red(),
+                    format!("Close {pr_word}"),
+                    state_req("closed", &format!("{pr_title} closed")),
+                )
+                .into_any_element()
             } else if !pr.b("merged") {
-                widgets::icon_action("reopen-pr", "pr", widgets::green(), format!("Reopen {pr_word}"), state_req("open", &format!("{pr_title} reopened"))).into_any_element()
+                widgets::icon_action(
+                    "reopen-pr",
+                    "pr",
+                    widgets::green(),
+                    format!("Reopen {pr_word}"),
+                    state_req("open", &format!("{pr_title} reopened")),
+                )
+                .into_any_element()
             } else {
                 div().into_any_element()
             },
@@ -314,7 +451,13 @@ impl Hub {
     }
 
     /// Whether it can merge, and the buttons that do.
-    fn merge_box(&mut self, repo: &str, number: u64, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
+    fn merge_box(
+        &mut self,
+        repo: &str,
+        number: u64,
+        pr: &Value,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette();
         let pr_path = format!("/repos/{repo}/pulls/{number}");
         let inval_issue = crate::forge::issue_api(repo, number, true);
@@ -330,7 +473,10 @@ impl Hub {
                     widgets::col()
                         .gap_0()
                         .flex_1()
-                        .child(widgets::h3(format!("{} successfully merged and closed", crate::forge::pr_title())))
+                        .child(widgets::h3(format!(
+                            "{} successfully merged and closed",
+                            crate::forge::pr_title()
+                        )))
                         .child(widgets::dim(format!(
                             "Merged by {} {}",
                             pr.s("merged_by.login"),
@@ -338,15 +484,19 @@ impl Hub {
                         ))),
                 );
             if !head_repo.is_empty() {
-                let exists = self.fetch_check(&format!("/repos/{head_repo}/branches/{head_ref}"), cx);
+                let exists =
+                    self.fetch_check(&format!("/repos/{head_repo}/branches/{head_ref}"), cx);
                 if exists.ready().map(|v| v.b("")).unwrap_or(false) {
                     row = row.child(widgets::btn(
                         "delete-head",
                         "Delete branch",
-                        Req::rest("DELETE", format!("/repos/{head_repo}/git/refs/heads/{head_ref}"))
-                            .ok(format!("Deleted {head_ref}"))
-                            .inval(format!("/repos/{head_repo}/branches"))
-                            .act(),
+                        Req::rest(
+                            "DELETE",
+                            format!("/repos/{head_repo}/git/refs/heads/{head_ref}"),
+                        )
+                        .ok(format!("Deleted {head_ref}"))
+                        .inval(format!("/repos/{head_repo}/branches"))
+                        .act(),
                     ));
                 }
             }
@@ -365,39 +515,123 @@ impl Hub {
 
         // Checks on the head commit.
         let sha = pr.s("head.sha");
-        let checks = self.fetch(&format!("/repos/{repo}/commits/{sha}/check-runs?per_page=100"), cx);
+        let checks = self.fetch(
+            &format!("/repos/{repo}/commits/{sha}/check-runs?per_page=100"),
+            cx,
+        );
         let (ok, bad, pending) = checks
             .ready()
             .map(|v| {
                 let runs = v.list("check_runs");
-                let ok = runs.iter().filter(|r| matches!(r.s("conclusion").as_str(), "success" | "skipped" | "neutral")).count();
-                let bad = runs.iter().filter(|r| matches!(r.s("conclusion").as_str(), "failure" | "timed_out" | "cancelled" | "action_required")).count();
+                let ok = runs
+                    .iter()
+                    .filter(|r| {
+                        matches!(
+                            r.s("conclusion").as_str(),
+                            "success" | "skipped" | "neutral"
+                        )
+                    })
+                    .count();
+                let bad = runs
+                    .iter()
+                    .filter(|r| {
+                        matches!(
+                            r.s("conclusion").as_str(),
+                            "failure" | "timed_out" | "cancelled" | "action_required"
+                        )
+                    })
+                    .count();
                 (ok, bad, runs.len() - ok - bad)
             })
             .unwrap_or((0, 0, 0));
         let (check_icon, check_color, check_title, check_sub) = if ok + bad + pending == 0 {
-            ("dot", widgets::gray(), "No checks reported".to_string(), "This commit has no status checks.".to_string())
+            (
+                "dot",
+                widgets::gray(),
+                "No checks reported".to_string(),
+                "This commit has no status checks.".to_string(),
+            )
         } else if bad > 0 {
-            ("close", widgets::red(), "Some checks were not successful".to_string(), format!("{bad} failing, {pending} pending, {ok} successful checks"))
+            (
+                "close",
+                widgets::red(),
+                "Some checks were not successful".to_string(),
+                format!("{bad} failing, {pending} pending, {ok} successful checks"),
+            )
         } else if pending > 0 {
-            ("clock", widgets::yellow(), "Some checks haven't completed yet".to_string(), format!("{pending} pending, {ok} successful checks"))
+            (
+                "clock",
+                widgets::yellow(),
+                "Some checks haven't completed yet".to_string(),
+                format!("{pending} pending, {ok} successful checks"),
+            )
         } else {
-            ("check", widgets::green(), "All checks have passed".to_string(), format!("{ok} successful check{}", if ok == 1 { "" } else { "s" }))
+            (
+                "check",
+                widgets::green(),
+                "All checks have passed".to_string(),
+                format!("{ok} successful check{}", if ok == 1 { "" } else { "s" }),
+            )
         };
 
         let state = pr.s("mergeable_state");
         // GitLab says why it can't merge in its own words.
         let blocker = pr.s("merge_blocker");
         let (merge_icon, merge_color, merge_title, merge_sub) = match state.as_str() {
-            "blocked" if !blocker.is_empty() => ("alert", widgets::yellow(), "Merging is blocked", blocker.as_str()),
-            "dirty" if gitlab => ("close", widgets::red(), "This branch has conflicts that must be resolved", "Resolve them on the command line or in GitLab's editor."),
-            "draft" if gitlab => ("pr-draft", widgets::gray(), "This merge request is still a draft", "Draft merge requests can't be merged."),
-            "clean" | "has_hooks" => ("check", widgets::green(), "No conflicts with base branch", "Merging can be performed automatically."),
-            "unstable" => ("check", widgets::green(), "No conflicts with base branch", "Merging can be performed automatically, though some checks failed."),
-            "dirty" => ("close", widgets::red(), "This branch has conflicts that must be resolved", "Resolve them on the command line or in GitHub's web editor."),
-            "blocked" => ("alert", widgets::yellow(), "Merging is blocked", "Branch protection requires approving reviews or passing checks."),
-            "behind" => ("alert", widgets::yellow(), "This branch is out-of-date with the base branch", "Update it to bring in the latest changes from the base."),
-            "draft" => ("pr-draft", widgets::gray(), "This pull request is still a work in progress", "Draft pull requests can't be merged."),
+            "blocked" if !blocker.is_empty() => (
+                "alert",
+                widgets::yellow(),
+                "Merging is blocked",
+                blocker.as_str(),
+            ),
+            "dirty" if gitlab => (
+                "close",
+                widgets::red(),
+                "This branch has conflicts that must be resolved",
+                "Resolve them on the command line or in GitLab's editor.",
+            ),
+            "draft" if gitlab => (
+                "pr-draft",
+                widgets::gray(),
+                "This merge request is still a draft",
+                "Draft merge requests can't be merged.",
+            ),
+            "clean" | "has_hooks" => (
+                "check",
+                widgets::green(),
+                "No conflicts with base branch",
+                "Merging can be performed automatically.",
+            ),
+            "unstable" => (
+                "check",
+                widgets::green(),
+                "No conflicts with base branch",
+                "Merging can be performed automatically, though some checks failed.",
+            ),
+            "dirty" => (
+                "close",
+                widgets::red(),
+                "This branch has conflicts that must be resolved",
+                "Resolve them on the command line or in GitHub's web editor.",
+            ),
+            "blocked" => (
+                "alert",
+                widgets::yellow(),
+                "Merging is blocked",
+                "Branch protection requires approving reviews or passing checks.",
+            ),
+            "behind" => (
+                "alert",
+                widgets::yellow(),
+                "This branch is out-of-date with the base branch",
+                "Update it to bring in the latest changes from the base.",
+            ),
+            "draft" => (
+                "pr-draft",
+                widgets::gray(),
+                "This pull request is still a work in progress",
+                "Draft pull requests can't be merged.",
+            ),
             _ => ("clock", widgets::gray(), "Checking mergeability…", ""),
         };
         let mergeable = matches!(state.as_str(), "clean" | "has_hooks" | "unstable");
@@ -420,7 +654,11 @@ impl Hub {
         };
         let title_default = match method.as_str() {
             "squash" => format!("{} ({})", pr.s("title"), crate::forge::pr_ref(number)),
-            _ if gitlab => format!("Merge branch '{}' into '{}'", pr.s("head.ref"), pr.s("base.ref")),
+            _ if gitlab => format!(
+                "Merge branch '{}' into '{}'",
+                pr.s("head.ref"),
+                pr.s("base.ref")
+            ),
             _ => format!("Merge pull request #{number} from {}", pr.s("head.label")),
         };
         let repo_path = format!("/repos/{repo}");
@@ -428,10 +666,25 @@ impl Hub {
             .submit("Confirm merge")
             .width(600.0)
             .field(Field::text("commit_title", "Commit title").value(title_default))
-            .field(Field::multiline("commit_message", "Commit message").value(if method == "squash" { pr.s("body") } else { pr.s("title") }))
-            .field(Field::bool("delete_branch", if gitlab { "Delete the source branch afterwards" } else { "Delete the head branch afterwards" }, gitlab && pr.b("force_remove_source_branch")))
+            .field(Field::multiline("commit_message", "Commit message").value(
+                if method == "squash" {
+                    pr.s("body")
+                } else {
+                    pr.s("title")
+                },
+            ))
+            .field(Field::bool(
+                "delete_branch",
+                if gitlab {
+                    "Delete the source branch afterwards"
+                } else {
+                    "Delete the head branch afterwards"
+                },
+                gitlab && pr.b("force_remove_source_branch"),
+            ))
             .build_with({
-                let (pr_path, repo_path, method) = (pr_path.clone(), repo_path.clone(), method.clone());
+                let (pr_path, repo_path, method) =
+                    (pr_path.clone(), repo_path.clone(), method.clone());
                 let (head_repo, head_ref, sha) = (head_repo.clone(), head_ref.clone(), sha.clone());
                 move |values| {
                     let mut body = json!({ "merge_method": method, "sha": sha });
@@ -440,11 +693,19 @@ impl Hub {
                         body["commit_message"] = json!(values.s("commit_message"));
                     }
                     let delete = values.b("delete_branch");
-                    let (path, head_repo, head_ref) = (format!("{pr_path}/merge"), head_repo.clone(), head_ref.clone());
+                    let (path, head_repo, head_ref) = (
+                        format!("{pr_path}/merge"),
+                        head_repo.clone(),
+                        head_ref.clone(),
+                    );
                     Ok(Req::custom(move |client| {
                         let merged = client.json("PUT", &path, Some(&body))?;
                         if delete && !head_repo.is_empty() {
-                            client.json("DELETE", &format!("/repos/{head_repo}/git/refs/heads/{head_ref}"), None)?;
+                            client.json(
+                                "DELETE",
+                                &format!("/repos/{head_repo}/git/refs/heads/{head_ref}"),
+                                None,
+                            )?;
                         }
                         Ok(merged)
                     })
@@ -467,14 +728,26 @@ impl Hub {
         };
         let mut methods = vec![
             MenuEntry::check(
-                if gitlab { "Merge — as the project merges (a merge commit, or fast-forward)" } else { "Create a merge commit — all commits are added to the base branch" },
+                if gitlab {
+                    "Merge — as the project merges (a merge commit, or fast-forward)"
+                } else {
+                    "Create a merge commit — all commits are added to the base branch"
+                },
                 method == "merge",
                 pick("merge"),
             ),
-            MenuEntry::check("Squash and merge — the commits are combined into one", method == "squash", pick("squash")),
+            MenuEntry::check(
+                "Squash and merge — the commits are combined into one",
+                method == "squash",
+                pick("squash"),
+            ),
         ];
         if !gitlab {
-            methods.push(MenuEntry::check("Rebase and merge — the commits are rebased onto the base branch", method == "rebase", pick("rebase")));
+            methods.push(MenuEntry::check(
+                "Rebase and merge — the commits are rebased onto the base branch",
+                method == "rebase",
+                pick("rebase"),
+            ));
         }
         let methods = Act::menu(methods);
         let node = pr.s("node_id");
@@ -518,9 +791,18 @@ impl Hub {
             // Conflicts: no merging until they're settled, here (GitLab's
             // editor is on its site).
             let resolve = if gitlab {
-                Act::Url(Route::Conflicts { repo: repo.to_string(), number }.web_url())
+                Act::Url(
+                    Route::Conflicts {
+                        repo: repo.to_string(),
+                        number,
+                    }
+                    .web_url(),
+                )
             } else {
-                Act::Go(Route::Conflicts { repo: repo.to_string(), number })
+                Act::Go(Route::Conflicts {
+                    repo: repo.to_string(),
+                    number,
+                })
             };
             widgets::btn("resolve-conflicts", "Resolve conflicts", resolve)
                 .h(px(32.0))
@@ -529,7 +811,11 @@ impl Hub {
                 .into_any_element()
         } else if matches!(state.as_str(), "unknown" | "") {
             // Still working out whether it can merge.
-            widgets::row().gap_2().child(crate::ui::Spinner::new("merge-wait").size(14.0)).child(widgets::dim("Checking whether this can merge…")).into_any_element()
+            widgets::row()
+                .gap_2()
+                .child(crate::ui::Spinner::new("merge-wait").size(14.0))
+                .child(widgets::dim("Checking whether this can merge…"))
+                .into_any_element()
         } else {
             widgets::split_btn("merge", method_label, merge_form, methods)
         };
@@ -557,7 +843,11 @@ impl Hub {
                     .child(widgets::spacer())
                     .child(widgets::btn(
                         "update-branch",
-                        if gitlab { "Rebase source branch" } else { "Update branch" },
+                        if gitlab {
+                            "Rebase source branch"
+                        } else {
+                            "Update branch"
+                        },
                         Req::rest("PUT", format!("{pr_path}/update-branch"))
                             .body(json!({ "expected_head_sha": sha }))
                             .ok("Branch update queued")
@@ -578,13 +868,23 @@ impl Hub {
             .child(
                 widgets::row()
                     .gap_1()
-                    .child(widgets::dim("You can also merge this with the command line."))
-                    .child(crate::ui::Link::new("merge-cli", "Copy the command").on_click(crate::hub::on(Act::Copy(cli)))),
+                    .child(widgets::dim(
+                        "You can also merge this with the command line.",
+                    ))
+                    .child(
+                        crate::ui::Link::new("merge-cli", "Copy the command")
+                            .on_click(crate::hub::on(Act::Copy(cli))),
+                    ),
             );
 
         // A status: a filled circle with its mark, a title and a line.
         // `open` is what clicking does and the chevron that says so.
-        let status = |id: &str, mark: &str, color: u32, title: String, sub: String, open: Option<(Act, &'static str)>| {
+        let status = |id: &str,
+                      mark: &str,
+                      color: u32,
+                      title: String,
+                      sub: String,
+                      open: Option<(Act, &'static str)>| {
             let chevron = open.as_ref().map(|(_, c)| *c);
             div()
                 .id(gpui::ElementId::Name(id.to_string().into()))
@@ -611,11 +911,20 @@ impl Hub {
                     widgets::col()
                         .flex_1()
                         .gap_0p5()
-                        .child(div().text_size(px(15.0)).font_weight(gpui::FontWeight::SEMIBOLD).child(title))
+                        .child(
+                            div()
+                                .text_size(px(15.0))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(title),
+                        )
                         .when(!sub.is_empty(), |d| d.child(widgets::dim(sub))),
                 )
                 .when_some(chevron, |d, c| d.child(icon(c, 14.0, p.text_dim)))
-                .when_some(open, |d, (act, _)| d.cursor_pointer().hover(|s| s.bg(rgb(p.hover))).on_click(crate::hub::on(act)))
+                .when_some(open, |d, (act, _)| {
+                    d.cursor_pointer()
+                        .hover(|s| s.bg(rgb(p.hover)))
+                        .on_click(crate::hub::on(act))
+                })
         };
         // The checks open in place, as on github.com.
         let open_key = format!("merge.checks:{repo}#{number}");
@@ -626,26 +935,47 @@ impl Hub {
             }
             cx.notify();
         });
-        let runs: Vec<Value> = checks.ready().map(|v| v.list("check_runs").to_vec()).unwrap_or_default();
+        let runs: Vec<Value> = checks
+            .ready()
+            .map(|v| v.list("check_runs").to_vec())
+            .unwrap_or_default();
         card = card
-            .border_color(rgb(if mergeable && bad == 0 { widgets::green() } else { p.edge }))
+            .border_color(rgb(if mergeable && bad == 0 {
+                widgets::green()
+            } else {
+                p.edge
+            }))
             .child(status(
                 "merge-checks",
                 check_icon,
                 check_color,
                 check_title,
                 check_sub,
-                (!runs.is_empty()).then_some((toggle, if expanded { "chevron-down" } else { "chevron-right" })),
+                (!runs.is_empty()).then_some((
+                    toggle,
+                    if expanded {
+                        "chevron-down"
+                    } else {
+                        "chevron-right"
+                    },
+                )),
             ));
         if expanded {
             // Failing first, then running, then the rest, by name.
             let rank = |c: &Value| match (c.s("status").as_str(), c.s("conclusion").as_str()) {
-                (_, "failure" | "timed_out" | "cancelled" | "action_required" | "startup_failure") => 0,
+                (
+                    _,
+                    "failure" | "timed_out" | "cancelled" | "action_required" | "startup_failure",
+                ) => 0,
                 ("completed", _) => 2,
                 _ => 1,
             };
             let mut runs = runs;
-            runs.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.s("name").cmp(&b.s("name"))));
+            runs.sort_by(|a, b| {
+                rank(a)
+                    .cmp(&rank(b))
+                    .then_with(|| a.s("name").cmp(&b.s("name")))
+            });
             let mut list = div()
                 .id("merge-check-list")
                 .flex()
@@ -680,7 +1010,12 @@ impl Hub {
                         .text_size(px(12.0))
                         .hover(|s| s.bg(rgb(p.hover)))
                         .child(icon(mark, 14.0, color))
-                        .child(div().flex_none().font_weight(gpui::FontWeight::SEMIBOLD).child(run.s("name")))
+                        .child(
+                            div()
+                                .flex_none()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(run.s("name")),
+                        )
                         .child(
                             div()
                                 .flex_1()
@@ -692,21 +1027,37 @@ impl Hub {
                                 .child(format!("{}  ·  {summary}", run.s("app.name"))),
                         )
                         .when_some(rerun, |d, a| {
-                            d.child(crate::ui::Link::new(("merge-check-rerun", i), "Re-run").on_click(crate::hub::on(a.act)))
+                            d.child(
+                                crate::ui::Link::new(("merge-check-rerun", i), "Re-run")
+                                    .on_click(crate::hub::on(a.act)),
+                            )
                         })
-                        .child(crate::ui::Link::new(("merge-check-details", i), "Details").on_click(crate::hub::on(row.open))),
+                        .child(
+                            crate::ui::Link::new(("merge-check-details", i), "Details")
+                                .on_click(crate::hub::on(row.open)),
+                        ),
                 );
             }
             card = card.child(list);
         }
-        card = card.child(status("merge-state", merge_icon, merge_color, merge_title.to_string(), merge_sub.to_string(), None));
+        card = card.child(status(
+            "merge-state",
+            merge_icon,
+            merge_color,
+            merge_title.to_string(),
+            merge_sub.to_string(),
+            None,
+        ));
         if auto_merge_on {
             card = card.child(status(
                 "merge-auto",
                 "zap",
                 widgets::green(),
                 "Auto-merge is enabled".into(),
-                format!("{} will merge this once its requirements are met.", pr.s("auto_merge.enabled_by.login")),
+                format!(
+                    "{} will merge this once its requirements are met.",
+                    pr.s("auto_merge.enabled_by.login")
+                ),
                 None,
             ));
         }
@@ -755,17 +1106,34 @@ impl Hub {
                         .gap_1()
                         .child(widgets::spacer())
                         .child(widgets::dim("Still in progress?"))
-                        .child(crate::ui::Link::new("to-draft", "Convert to draft").on_click(crate::hub::on(to_draft))),
+                        .child(
+                            crate::ui::Link::new("to-draft", "Convert to draft")
+                                .on_click(crate::hub::on(to_draft)),
+                        ),
                 )
             })
             .into_any_element()
     }
 
-    fn pull_sidebar(&mut self, repo: &str, number: u64, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
+    fn pull_sidebar(
+        &mut self,
+        repo: &str,
+        number: u64,
+        pr: &Value,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let pr_path = format!("/repos/{repo}/pulls/{number}");
-        let requested: Vec<String> = pr.list("requested_reviewers").iter().map(|u| u.s("login")).collect();
+        let requested: Vec<String> = pr
+            .list("requested_reviewers")
+            .iter()
+            .map(|u| u.s("login"))
+            .collect();
         let mut reviewer_picker = Picker::new("Request up to 15 reviewers", "Filter people…", true);
-        match self.fetch(&format!("/repos/{repo}/assignees?per_page=100"), cx).ready().cloned() {
+        match self
+            .fetch(&format!("/repos/{repo}/assignees?per_page=100"), cx)
+            .ready()
+            .cloned()
+        {
             Some(users) => {
                 let author = pr.s("user.login");
                 for user in users.list("") {
@@ -780,14 +1148,21 @@ impl Hub {
                             .inval(pr_path.clone())
                             .act()
                     };
-                    reviewer_picker = reviewer_picker.item(PickItem::toggle(login.clone(), on_now, req("POST"), req("DELETE")).avatar(user.s("avatar_url")));
+                    reviewer_picker = reviewer_picker.item(
+                        PickItem::toggle(login.clone(), on_now, req("POST"), req("DELETE"))
+                            .avatar(user.s("avatar_url")),
+                    );
                 }
             }
             None => reviewer_picker.loading = true,
         }
         // Latest review state per reviewer.
         let mut states: Vec<(String, String, String)> = Vec::new();
-        if let Some(reviews) = self.fetch(&format!("{pr_path}/reviews?per_page=100"), cx).ready().cloned() {
+        if let Some(reviews) = self
+            .fetch(&format!("{pr_path}/reviews?per_page=100"), cx)
+            .ready()
+            .cloned()
+        {
             for r in reviews.list("") {
                 let login = r.s("user.login");
                 let state = r.s("state");
@@ -823,7 +1198,11 @@ impl Hub {
             );
         }
         let base_form = FormSpec::new("Change base branch")
-            .field(Field::text("base", "Base branch").value(pr.s("base.ref")).required())
+            .field(
+                Field::text("base", "Base branch")
+                    .value(pr.s("base.ref"))
+                    .required(),
+            )
             .rest("PATCH", pr_path.clone())
             .ok("Base branch changed")
             .inval(pr_path.clone())
@@ -831,7 +1210,12 @@ impl Hub {
         let issue_side = self.issue_sidebar(repo, pr, true, cx);
         widgets::col()
             .gap_3()
-            .child(side_section("reviewers", "Reviewers", Some(reviewer_picker.act()), reviewers.into_any_element()))
+            .child(side_section(
+                "reviewers",
+                "Reviewers",
+                Some(reviewer_picker.act()),
+                reviewers.into_any_element(),
+            ))
             .child(issue_side)
             .child(widgets::ibtn("change-base", "branch", "Change base branch", base_form).w_full())
             .child(
@@ -839,7 +1223,11 @@ impl Hub {
                     "checkout",
                     "copy",
                     "Copy checkout command",
-                    Act::Copy(if crate::forge::is_gitlab() { format!("glab mr checkout {number} --repo {repo}") } else { format!("gh pr checkout {number} --repo {repo}") }),
+                    Act::Copy(if crate::forge::is_gitlab() {
+                        format!("glab mr checkout {number} --repo {repo}")
+                    } else {
+                        format!("gh pr checkout {number} --repo {repo}")
+                    }),
                 )
                 .w_full(),
             )
@@ -848,14 +1236,27 @@ impl Hub {
 
     fn pull_commits(&mut self, repo: &str, number: u64, cx: &mut Context<Self>) -> AnyElement {
         let repo_s = repo.to_string();
-        let spec = ListSpec::new(format!("/repos/{repo}/pulls/{number}/commits"), move |c| commit_row(&repo_s, c));
+        let spec = ListSpec::new(format!("/repos/{repo}/pulls/{number}/commits"), move |c| {
+            commit_row(&repo_s, c)
+        });
         self.list(&spec, cx)
     }
 
-    fn pull_files(&mut self, repo: &str, number: u64, pr: &Value, cx: &mut Context<Self>) -> AnyElement {
-        let spec = ListSpec::new(format!("/repos/{repo}/pulls/{number}/files"), |_| Row::new(""));
+    fn pull_files(
+        &mut self,
+        repo: &str,
+        number: u64,
+        pr: &Value,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let spec = ListSpec::new(format!("/repos/{repo}/pulls/{number}/files"), |_| {
+            Row::new("")
+        });
         let comments = self
-            .fetch(&format!("/repos/{repo}/pulls/{number}/comments?per_page=100"), cx)
+            .fetch(
+                &format!("/repos/{repo}/pulls/{number}/comments?per_page=100"),
+                cx,
+            )
             .ready()
             .map(|v| v.list("").to_vec())
             .unwrap_or_default();
@@ -865,23 +1266,49 @@ impl Hub {
             commit: pr.s("head.sha"),
         };
         let header = widgets::row()
-            .child(widgets::dim("Click any line to leave a review comment on it."))
+            .child(widgets::dim(
+                "Click any line to leave a review comment on it.",
+            ))
             .child(widgets::spacer())
-            .child(widgets::primary("review-top", "Review changes", review_form(repo, number)));
+            .child(widgets::primary(
+                "review-top",
+                "Review changes",
+                review_form(repo, number),
+            ));
         // Every page, without asking: the tree needs the whole list.
         let (files, loading) = loop {
             match self.fetch_list(&spec, cx) {
-                Fetched::Items { more: true, loading: false, .. } => {
+                Fetched::Items {
+                    more: true,
+                    loading: false,
+                    ..
+                } => {
                     let next = self.page(&spec.id) + 1;
                     self.pages.insert(spec.id.clone(), next);
                 }
                 Fetched::Items { items, loading, .. } => break (items, loading),
-                Fetched::Failed(error) => return widgets::col().gap_3().child(header).child(widgets::error_box(&error)).into_any_element(),
+                Fetched::Failed(error) => {
+                    return widgets::col()
+                        .gap_3()
+                        .child(header)
+                        .child(widgets::error_box(&error))
+                        .into_any_element()
+                }
             }
         };
         if files.is_empty() {
-            let body = if loading { widgets::loading() } else { widgets::card().child(widgets::empty("No files changed.")).into_any_element() };
-            return widgets::col().gap_3().child(header).child(body).into_any_element();
+            let body = if loading {
+                widgets::loading()
+            } else {
+                widgets::card()
+                    .child(widgets::empty("No files changed."))
+                    .into_any_element()
+            };
+            return widgets::col()
+                .gap_3()
+                .child(header)
+                .child(body)
+                .into_any_element();
         }
 
         // One file at a time on the right, picked from a tree on the left.
@@ -889,20 +1316,32 @@ impl Hub {
         let order = tree_order(&FileTree::build(&paths, |_| true));
         let key = format!("pr.file:{repo}#{number}");
         let chosen = self.choice(&key, "");
-        let selected = paths.iter().position(|f| *f == chosen).or_else(|| order.first().copied()).unwrap_or(0);
+        let selected = paths
+            .iter()
+            .position(|f| *f == chosen)
+            .or_else(|| order.first().copied())
+            .unwrap_or(0);
         let comments_on = |name: &str| -> Vec<Value> {
-            comments.iter().filter(|c| c.s("path") == name && c.has("line")).cloned().collect()
+            comments
+                .iter()
+                .filter(|c| c.s("path") == name && c.has("line"))
+                .cloned()
+                .collect()
         };
 
         let p = palette();
         let search_id = format!("pr-file-search:{repo}#{number}");
         let query = self.field_text(&search_id).trim().to_lowercase();
         let search = self.input(&search_id, "Filter files…", cx).w_full();
-        let tree = FileTree::build(&paths, |path| query.is_empty() || path.to_lowercase().contains(&query));
+        let tree = FileTree::build(&paths, |path| {
+            query.is_empty() || path.to_lowercase().contains(&query)
+        });
         let fold_prefix = format!("pr.dir:{repo}#{number}:");
         let mut entries = Vec::new();
         // While filtering every folder is open, so matches are never hidden.
-        tree_entries(&tree, "", 0, &mut entries, &|dir| query.is_empty() && self.is_open(&format!("{fold_prefix}{dir}")));
+        tree_entries(&tree, "", 0, &mut entries, &|dir| {
+            query.is_empty() && self.is_open(&format!("{fold_prefix}{dir}"))
+        });
 
         let mut picker = div()
             .id("pr-file-list")
@@ -939,9 +1378,27 @@ impl Hub {
                             }
                             cx.notify();
                         })))
-                        .child(icon(if open { "chevron-down" } else { "chevron-right" }, 12.0, p.text_dim))
+                        .child(icon(
+                            if open {
+                                "chevron-down"
+                            } else {
+                                "chevron-right"
+                            },
+                            12.0,
+                            p.text_dim,
+                        ))
                         .child(icon("folder", 13.0, p.text_dim))
-                        .child(div().flex_1().min_w_0().text_size(px(12.0)).text_color(rgb(p.text_dim)).text_ellipsis().overflow_hidden().whitespace_nowrap().child(label))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(12.0))
+                                .text_color(rgb(p.text_dim))
+                                .text_ellipsis()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .child(label),
+                        )
                 }
                 Entry::File { index, label } => {
                     let file = &files[index];
@@ -960,10 +1417,36 @@ impl Hub {
                         // Lines up with a folder's chevron.
                         .child(div().w(px(12.0)).flex_none())
                         .child(icon(mark, 12.0, color))
-                        .child(div().flex_1().min_w_0().text_size(px(12.0)).text_ellipsis().overflow_hidden().whitespace_nowrap().child(label))
-                        .when(noted > 0, |d| d.child(widgets::row().gap_0p5().child(icon("comment", 11.0, p.text_dim)).child(widgets::faint(noted.to_string()))))
-                        .child(div().text_size(px(11.0)).text_color(rgb(widgets::green())).child(format!("+{}", file.i("additions"))))
-                        .child(div().text_size(px(11.0)).text_color(rgb(widgets::red())).child(format!("−{}", file.i("deletions"))))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(12.0))
+                                .text_ellipsis()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .child(label),
+                        )
+                        .when(noted > 0, |d| {
+                            d.child(
+                                widgets::row()
+                                    .gap_0p5()
+                                    .child(icon("comment", 11.0, p.text_dim))
+                                    .child(widgets::faint(noted.to_string())),
+                            )
+                        })
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(widgets::green()))
+                                .child(format!("+{}", file.i("additions"))),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(widgets::red()))
+                                .child(format!("−{}", file.i("deletions"))),
+                        )
                 }
             });
         }
@@ -981,24 +1464,60 @@ impl Hub {
                     .h(px(34.0))
                     .border_b_1()
                     .border_color(rgb(p.divider))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(format!("{} files", pr.i("changed_files"))))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("{} files", pr.i("changed_files"))),
+                    )
                     .child(widgets::spacer())
-                    .child(widgets::faint(format!("{} of {}", position + 1, files.len()))),
+                    .child(widgets::faint(format!(
+                        "{} of {}",
+                        position + 1,
+                        files.len()
+                    ))),
             )
-            .child(div().p_2().border_b_1().border_color(rgb(p.divider)).child(search))
+            .child(
+                div()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(rgb(p.divider))
+                    .child(search),
+            )
             .child(picker);
 
         let file = &files[selected];
         let name = file.s("filename");
-        let step = |id: &'static str, icon_name: &'static str, label: &'static str, to: Option<&Value>| {
-            let act = to.map(|f| Act::choose(key.clone(), f.s("filename"))).unwrap_or(Act::None);
-            widgets::ibtn(id, icon_name, label, act).disabled(to.is_none())
-        };
+        let step =
+            |id: &'static str, icon_name: &'static str, label: &'static str, to: Option<&Value>| {
+                let act = to
+                    .map(|f| Act::choose(key.clone(), f.s("filename")))
+                    .unwrap_or(Act::None);
+                widgets::ibtn(id, icon_name, label, act).disabled(to.is_none())
+            };
         let nav = widgets::row()
-            .child(step("file-prev", "chevron-left", "Previous file", position.checked_sub(1).and_then(|n| order.get(n)).map(|&i| &files[i])))
+            .child(step(
+                "file-prev",
+                "chevron-left",
+                "Previous file",
+                position
+                    .checked_sub(1)
+                    .and_then(|n| order.get(n))
+                    .map(|&i| &files[i]),
+            ))
             .child(widgets::spacer())
-            .child(step("file-next", "chevron-right", "Next file", order.get(position + 1).map(|&i| &files[i])));
-        let diff = self.diff_file(&format!("prf{number}-{selected}"), file, Some(&target), &comments_on(&name), cx);
+            .child(step(
+                "file-next",
+                "chevron-right",
+                "Next file",
+                order.get(position + 1).map(|&i| &files[i]),
+            ));
+        let diff = self.diff_file(
+            &format!("prf{number}-{selected}"),
+            file,
+            Some(&target),
+            &comments_on(&name),
+            cx,
+        );
 
         // A fresh handle per file, so each starts at its top.
         let diff_scroll = self.scroller(&format!("pr-diff:{name}"));
@@ -1030,9 +1549,12 @@ impl Hub {
 
     pub fn pull_checks(&mut self, repo: &str, sha: &str, cx: &mut Context<Self>) -> AnyElement {
         let repo_s = repo.to_string();
-        let runs = ListSpec::new(format!("/repos/{repo}/commits/{sha}/check-runs"), move |c| check_row(&repo_s, c))
-            .items("check_runs")
-            .empty("No check runs for this commit.");
+        let runs = ListSpec::new(
+            format!("/repos/{repo}/commits/{sha}/check-runs"),
+            move |c| check_row(&repo_s, c),
+        )
+        .items("check_runs")
+        .empty("No check runs for this commit.");
         let statuses = ListSpec::new(format!("/repos/{repo}/commits/{sha}/status"), |s| {
             let (icon_name, color) = match s.s("state").as_str() {
                 "success" => ("check-circle", widgets::green()),
@@ -1058,7 +1580,13 @@ impl Hub {
             .into_any_element()
     }
 
-    pub fn compare(&mut self, repo: &str, base: &str, head: &str, cx: &mut Context<Self>) -> AnyElement {
+    pub fn compare(
+        &mut self,
+        repo: &str,
+        base: &str,
+        head: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let path = format!("/repos/{repo}/compare/{base}...{head}");
         let cmp = ready!(self.fetch(&path, cx));
         let status = cmp.s("status");
@@ -1070,7 +1598,11 @@ impl Hub {
             base
         );
         let mut col = widgets::col().gap_3();
-        let mut rows: Vec<Row> = cmp.list("commits").iter().map(|c| commit_row(repo, c)).collect();
+        let mut rows: Vec<Row> = cmp
+            .list("commits")
+            .iter()
+            .map(|c| commit_row(repo, c))
+            .collect();
         self.resolve_authors(&mut rows, cx);
         for (i, row) in rows.into_iter().enumerate() {
             col = col.child(self.render_row(&format!("cmp-c{i}"), row, cx));
@@ -1085,12 +1617,26 @@ impl Hub {
                 widgets::row()
                     .child(widgets::title(format!("Comparing {base}...{head}")))
                     .child(widgets::spacer())
-                    .child(widgets::go_btn("create-pr", format!("Create {}", crate::forge::pr()), new_pull_form(repo, base, head))),
+                    .child(widgets::go_btn(
+                        "create-pr",
+                        format!("Create {}", crate::forge::pr()),
+                        new_pull_form(repo, base, head),
+                    )),
             )
-            .child(widgets::row().child(widgets::tag(status, widgets::gray())).child(widgets::dim(summary)))
-            .child(widgets::h2(format!("{} commits", cmp.list("commits").len())))
+            .child(
+                widgets::row()
+                    .child(widgets::tag(status, widgets::gray()))
+                    .child(widgets::dim(summary)),
+            )
+            .child(widgets::h2(format!(
+                "{} commits",
+                cmp.list("commits").len()
+            )))
             .child(commits)
-            .child(widgets::h2(format!("{} files changed", cmp.list("files").len())))
+            .child(widgets::h2(format!(
+                "{} files changed",
+                cmp.list("files").len()
+            )))
             .child(files)
             .into_any_element()
     }
@@ -1099,12 +1645,23 @@ impl Hub {
 /// A commit as a list row.
 pub fn commit_row(repo: &str, c: &Value) -> Row {
     let sha = c.s("sha");
-    let who = if c.has("author.login") { c.s("author.login") } else { c.s("commit.author.name") };
+    let who = if c.has("author.login") {
+        c.s("author.login")
+    } else {
+        c.s("commit.author.name")
+    };
     let verified = c.b("commit.verification.verified");
     let mut row = Row::new(first_line(&c.s("commit.message")))
         .avatar(c.s("author.avatar_url"))
-        .meta(format!("{who} committed {}", time::ago(&c.s("commit.author.date"))))
-        .commit(repo, sha.clone(), format!("committed {}", time::ago(&c.s("commit.author.date"))))
+        .meta(format!(
+            "{who} committed {}",
+            time::ago(&c.s("commit.author.date"))
+        ))
+        .commit(
+            repo,
+            sha.clone(),
+            format!("committed {}", time::ago(&c.s("commit.author.date"))),
+        )
         .right(sha.chars().take(7).collect::<String>())
         .open(Act::Go(Route::Commit {
             repo: repo.to_string(),
@@ -1137,12 +1694,19 @@ impl Hub {
         // GraphQL resolves co-authors to accounts; until it answers (or if
         // it can't), show the REST author.
         let head = self.commit_head(repo, sha, cx);
-        let checks = head.as_ref().map(|h| h.s("statusCheckRollup.state")).unwrap_or_default();
+        let checks = head
+            .as_ref()
+            .map(|h| h.s("statusCheckRollup.state"))
+            .unwrap_or_default();
         let authors = match head {
             Some(head) => self.commit_authors("commit", head.list("authors.nodes"), cx),
             None => {
                 let login = c.s("author.login");
-                let name = if login.is_empty() { c.s("commit.author.name") } else { login.clone() };
+                let name = if login.is_empty() {
+                    c.s("commit.author.name")
+                } else {
+                    login.clone()
+                };
                 let author = json!([{ "name": name, "avatarUrl": c.s("author.avatar_url"), "user": if login.is_empty() { Value::Null } else { json!({ "login": login }) } }]);
                 self.commit_authors("commit", author.list(""), cx)
             }
@@ -1158,19 +1722,30 @@ impl Hub {
             for (i, cm) in list.list("").iter().enumerate() {
                 let url = cm.s("url");
                 let acts = CommentActs {
-                    edit: Some(super::common::edit_comment(&url, &cm.s("body"), &comments_path)),
+                    edit: Some(super::common::edit_comment(
+                        &url,
+                        &cm.s("body"),
+                        &comments_path,
+                    )),
                     delete: Some(super::common::delete_comment(&url, &comments_path)),
                     extra: Vec::new(),
-                    reactions: (!crate::forge::is_gitlab()).then(|| format!("{}/reactions", super::common::api_path(&url))),
+                    reactions: (!crate::forge::is_gitlab())
+                        .then(|| format!("{}/reactions", super::common::api_path(&url))),
                     invalidate: comments_path.clone(),
                     quote_into: Some(field.clone()),
                 };
-                comments = comments.child(self.comment_card(&format!("cc{i}"), cm, "commented", acts, cx));
+                comments =
+                    comments.child(self.comment_card(&format!("cc{i}"), cm, "commented", acts, cx));
             }
         }
         let submit = post_comment(&field, &comments_path, &comments_path);
         let composer = self.composer(&field, submit, Vec::new(), cx);
-        let parents = c.list("parents").iter().map(|p| p.s("sha").chars().take(7).collect::<String>()).collect::<Vec<_>>().join(", ");
+        let parents = c
+            .list("parents")
+            .iter()
+            .map(|p| p.s("sha").chars().take(7).collect::<String>())
+            .collect::<Vec<_>>()
+            .join(", ");
         widgets::page()
             .child(
                 widgets::card()
@@ -1180,9 +1755,17 @@ impl Hub {
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child(div().text_size(px(18.0)).font_weight(FontWeight::SEMIBOLD).child(headline.to_string()))
+                            .child(
+                                div()
+                                    .text_size(px(18.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(headline.to_string()),
+                            )
                             .when(!rest.trim().is_empty(), |d| {
-                                d.child(widgets::mono(rest.trim().to_string()).text_color(rgb(p.text_dim)))
+                                d.child(
+                                    widgets::mono(rest.trim().to_string())
+                                        .text_color(rgb(p.text_dim)),
+                                )
                             }),
                     )
                     .child(
@@ -1193,9 +1776,14 @@ impl Hub {
                             .border_t_1()
                             .border_color(rgb(p.divider))
                             .child(authors)
-                            .child(widgets::dim(format!("committed {}", time::ago(&c.s("commit.author.date")))))
+                            .child(widgets::dim(format!(
+                                "committed {}",
+                                time::ago(&c.s("commit.author.date"))
+                            )))
                             .children(ci_mark_el("commit-checks", &checks))
-                            .when(c.b("commit.verification.verified"), |d| d.child(widgets::tag("Verified", widgets::green())))
+                            .when(c.b("commit.verification.verified"), |d| {
+                                d.child(widgets::tag("Verified", widgets::green()))
+                            })
                             .child(widgets::spacer())
                             .child(widgets::dim(format!("parents {parents}")))
                             .child(widgets::mono(sha.to_string()))
@@ -1281,8 +1869,15 @@ impl FileTree {
 }
 
 enum Entry {
-    Dir { path: String, label: String, open: bool },
-    File { index: usize, label: String },
+    Dir {
+        path: String,
+        label: String,
+        open: bool,
+    },
+    File {
+        index: usize,
+        label: String,
+    },
 }
 
 struct TreeEntry {
@@ -1291,18 +1886,41 @@ struct TreeEntry {
 }
 
 /// The rows to draw, folders first; `closed` says which folders are shut.
-fn tree_entries(node: &FileTree, prefix: &str, depth: usize, out: &mut Vec<TreeEntry>, closed: &dyn Fn(&str) -> bool) {
+fn tree_entries(
+    node: &FileTree,
+    prefix: &str,
+    depth: usize,
+    out: &mut Vec<TreeEntry>,
+    closed: &dyn Fn(&str) -> bool,
+) {
     for (name, child) in &node.dirs {
         let (label, child) = FileTree::squash(name.clone(), child);
-        let path = if prefix.is_empty() { label.clone() } else { format!("{prefix}/{label}") };
+        let path = if prefix.is_empty() {
+            label.clone()
+        } else {
+            format!("{prefix}/{label}")
+        };
         let open = !closed(&path);
-        out.push(TreeEntry { depth, kind: Entry::Dir { path: path.clone(), label, open } });
+        out.push(TreeEntry {
+            depth,
+            kind: Entry::Dir {
+                path: path.clone(),
+                label,
+                open,
+            },
+        });
         if open {
             tree_entries(child, &path, depth + 1, out, closed);
         }
     }
     for (name, index) in &node.files {
-        out.push(TreeEntry { depth, kind: Entry::File { index: *index, label: name.clone() } });
+        out.push(TreeEntry {
+            depth,
+            kind: Entry::File {
+                index: *index,
+                label: name.clone(),
+            },
+        });
     }
 }
 

@@ -451,8 +451,8 @@ impl Class {
 
 #[cfg(test)]
 mod tests {
-    use super::{caret_down, caret_left, caret_right, caret_up, word_at, LineEdit};
     use super::TextPress;
+    use super::{caret_down, caret_left, caret_right, caret_up, word_at, LineEdit};
 
     #[test]
     fn the_caret_moves_by_whole_characters_and_stays_in_bounds() {

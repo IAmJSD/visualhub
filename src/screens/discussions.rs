@@ -4,14 +4,16 @@
 
 use super::common::CommentActs;
 use crate::form::{Field, FormSpec};
-use crate::hub::{on, Act, Hub, Load, MenuEntry, Req, Route, RepoTab};
+use crate::hub::{on, Act, Hub, Load, MenuEntry, RepoTab, Req, Route};
 use crate::json::Json as _;
 use crate::resource::Row;
 use crate::time;
+use crate::ui::{icon, palette};
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
-use gpui::{div, px, AnyElement, Context, ElementId, IntoElement as _, ParentElement as _, Styled as _};
-use crate::ui::{icon, palette};
+use gpui::{
+    div, px, AnyElement, Context, ElementId, IntoElement as _, ParentElement as _, Styled as _,
+};
 use serde_json::{json, Value};
 
 const LIST: &str = "query($o: String!, $n: String!, $cat: ID) {
@@ -60,7 +62,10 @@ fn as_rest(node: &Value) -> Value {
 }
 
 fn gql(query: &str, vars: Value, ok: &str, scope: &str) -> Act {
-    Req::gql(query, vars).ok(ok.to_string()).inval(scope.to_string()).act()
+    Req::gql(query, vars)
+        .ok(ok.to_string())
+        .inval(scope.to_string())
+        .act()
 }
 
 impl Hub {
@@ -77,10 +82,17 @@ impl Hub {
         let categories: Vec<Value> = data.list("repository.discussionCategories.nodes").to_vec();
         let mut chips = vec![("All".to_string(), cat.is_empty(), Act::choose(&cat_key, ""))];
         for c in &categories {
-            chips.push((format!("{} {}", emoji(&c.s("emoji")), c.s("name")), cat == c.s("id"), Act::choose(&cat_key, c.s("id"))));
+            chips.push((
+                format!("{} {}", emoji(&c.s("emoji")), c.s("name")),
+                cat == c.s("id"),
+                Act::choose(&cat_key, c.s("id")),
+            ));
         }
         let repo_id = data.s("repository.id");
-        let options: Vec<(String, String)> = categories.iter().map(|c| (c.s("id"), c.s("name"))).collect();
+        let options: Vec<(String, String)> = categories
+            .iter()
+            .map(|c| (c.s("id"), c.s("name")))
+            .collect();
         let target = repo.to_string();
         let new = FormSpec::new("Start a new discussion")
             .submit("Start discussion")
@@ -120,8 +132,15 @@ impl Hub {
                     d.s("author.login"),
                     time::ago(&d.s("updatedAt"))
                 ))
-                .right(format!("▲ {}   💬 {}", d.i("upvoteCount"), d.i("comments.totalCount")))
-                .open(Act::Go(Route::Discussion { repo: repo.to_string(), number: d.i("number") as u64 }));
+                .right(format!(
+                    "▲ {}   💬 {}",
+                    d.i("upvoteCount"),
+                    d.i("comments.totalCount")
+                ))
+                .open(Act::Go(Route::Discussion {
+                    repo: repo.to_string(),
+                    number: d.i("number") as u64,
+                }));
             if d.has("answer") {
                 row = row.tag("Answered", widgets::green());
             }
@@ -132,7 +151,12 @@ impl Hub {
         }
         widgets::col()
             .gap_3()
-            .child(widgets::row().child(widgets::chips(chips)).child(widgets::spacer()).child(widgets::go_btn("new-discussion", "New discussion", new)))
+            .child(
+                widgets::row()
+                    .child(widgets::chips(chips))
+                    .child(widgets::spacer())
+                    .child(widgets::go_btn("new-discussion", "New discussion", new)),
+            )
             .child(list)
             .into_any_element()
     }
@@ -140,13 +164,24 @@ impl Hub {
     pub fn discussion(&mut self, repo: &str, number: u64, cx: &mut Context<Self>) -> AnyElement {
         let (owner, name) = repo.split_once('/').unwrap_or((repo, ""));
         let scope = format!("/repos/{repo}/discussions");
-        let data = match self.fetch_gql(&scope, ONE, json!({ "o": owner, "n": name, "num": number }), cx) {
+        let data = match self.fetch_gql(
+            &scope,
+            ONE,
+            json!({ "o": owner, "n": name, "num": number }),
+            cx,
+        ) {
             Load::Ready(v) => v,
-            other => return widgets::page().child(widgets::placeholder(&other)).into_any_element(),
+            other => {
+                return widgets::page()
+                    .child(widgets::placeholder(&other))
+                    .into_any_element()
+            }
         };
         let d = data.at("repository.discussion").clone();
         if d.is_null() {
-            return widgets::page().child(widgets::empty("Discussion not found.")).into_any_element();
+            return widgets::page()
+                .child(widgets::empty("Discussion not found."))
+                .into_any_element();
         }
         let id = d.s("id");
         let answerable = d.b("category.isAnswerable");
@@ -160,7 +195,12 @@ impl Hub {
                 .h(px(24.0))
                 .px_2()
                 .active(has)
-                .on_click(on(gql(q, json!({ "id": subject }), if has { "Upvote removed" } else { "Upvoted" }, &scope)))
+                .on_click(on(gql(
+                    q,
+                    json!({ "id": subject }),
+                    if has { "Upvote removed" } else { "Upvoted" },
+                    &scope,
+                )))
         };
 
         let edit = FormSpec::new("Edit discussion")
@@ -192,12 +232,27 @@ impl Hub {
             gql("mutation($id: ID!) { lockLockable(input: {lockableId: $id}) { clientMutationId } }", json!({ "id": id }), "Locked", &scope)
         };
         let back = repo.to_string();
-        let delete = Req::gql("mutation($id: ID!) { deleteDiscussion(input: {id: $id}) { clientMutationId } }", json!({ "id": id }))
-            .ok("Discussion deleted")
-            .inval(scope.clone())
-            .then(move |hub, _, cx| hub.go(Route::Repo { repo: back.clone(), tab: RepoTab::Discussions }, cx))
-            .act()
-            .confirm("Delete this discussion?", "It and all of its comments will be removed.", "Delete");
+        let delete = Req::gql(
+            "mutation($id: ID!) { deleteDiscussion(input: {id: $id}) { clientMutationId } }",
+            json!({ "id": id }),
+        )
+        .ok("Discussion deleted")
+        .inval(scope.clone())
+        .then(move |hub, _, cx| {
+            hub.go(
+                Route::Repo {
+                    repo: back.clone(),
+                    tab: RepoTab::Discussions,
+                },
+                cx,
+            )
+        })
+        .act()
+        .confirm(
+            "Delete this discussion?",
+            "It and all of its comments will be removed.",
+            "Delete",
+        );
 
         let body = as_rest(&d);
         let mut col = widgets::col().gap_3();
@@ -205,12 +260,22 @@ impl Hub {
             "disc-body",
             &body,
             "started this",
-            CommentActs { edit: None, delete: None, extra: Vec::new(), reactions: None, invalidate: scope.clone(), quote_into: None },
+            CommentActs {
+                edit: None,
+                delete: None,
+                extra: Vec::new(),
+                reactions: None,
+                invalidate: scope.clone(),
+                quote_into: None,
+            },
             cx,
         );
-        col = col.child(body_card).child(
-            div().pl(px(44.0)).child(upvote(&id, d.b("viewerHasUpvoted"), d.i("upvoteCount"), "disc-upvote".into())),
-        );
+        col = col.child(body_card).child(div().pl(px(44.0)).child(upvote(
+            &id,
+            d.b("viewerHasUpvoted"),
+            d.i("upvoteCount"),
+            "disc-upvote".into(),
+        )));
 
         for (i, c) in d.list("comments.nodes").to_vec().iter().enumerate() {
             let cid = c.s("id");
@@ -221,25 +286,54 @@ impl Hub {
             if c.b("viewerCanUnmarkAsAnswer") {
                 extra.push(MenuEntry::item("Unmark as answer", gql("mutation($id: ID!) { unmarkDiscussionCommentAsAnswer(input: {id: $id}) { clientMutationId } }", json!({ "id": cid }), "Unmarked", &scope)));
             }
-            let edit = c.b("viewerCanUpdate").then(|| comment_edit(&cid, &c.s("body"), &scope));
+            let edit = c
+                .b("viewerCanUpdate")
+                .then(|| comment_edit(&cid, &c.s("body"), &scope));
             let delete = c.b("viewerCanDelete").then(|| comment_delete(&cid, &scope));
             let card = self.comment_card(
                 &format!("dc{i}"),
                 &as_rest(c),
-                if c.b("isAnswer") { "answered" } else { "commented" },
-                CommentActs { edit, delete, extra, reactions: None, invalidate: scope.clone(), quote_into: None },
+                if c.b("isAnswer") {
+                    "answered"
+                } else {
+                    "commented"
+                },
+                CommentActs {
+                    edit,
+                    delete,
+                    extra,
+                    reactions: None,
+                    invalidate: scope.clone(),
+                    quote_into: None,
+                },
                 cx,
             );
             col = col.child(if c.b("isAnswer") {
-                div().border_l_4().border_color(rgb(widgets::green())).pl_2().child(card).into_any_element()
+                div()
+                    .border_l_4()
+                    .border_color(rgb(widgets::green()))
+                    .pl_2()
+                    .child(card)
+                    .into_any_element()
             } else {
                 card
             });
             let mut replies = widgets::col().gap_2().pl(px(44.0));
             replies = replies.child(
                 widgets::row()
-                    .child(upvote(&cid, c.b("viewerHasUpvoted"), c.i("upvoteCount"), format!("dc{i}-up")))
-                    .when(c.b("isAnswer"), |d| d.child(widgets::icon_text("check-circle", "Marked as answer", widgets::green()))),
+                    .child(upvote(
+                        &cid,
+                        c.b("viewerHasUpvoted"),
+                        c.i("upvoteCount"),
+                        format!("dc{i}-up"),
+                    ))
+                    .when(c.b("isAnswer"), |d| {
+                        d.child(widgets::icon_text(
+                            "check-circle",
+                            "Marked as answer",
+                            widgets::green(),
+                        ))
+                    }),
             );
             for (j, r) in c.list("replies.nodes").to_vec().iter().enumerate() {
                 let rid = r.s("id");
@@ -248,7 +342,9 @@ impl Hub {
                     &as_rest(r),
                     "replied",
                     CommentActs {
-                        edit: r.b("viewerCanUpdate").then(|| comment_edit(&rid, &r.s("body"), &scope)),
+                        edit: r
+                            .b("viewerCanUpdate")
+                            .then(|| comment_edit(&rid, &r.s("body"), &scope)),
                         delete: r.b("viewerCanDelete").then(|| comment_delete(&rid, &scope)),
                         extra: Vec::new(),
                         reactions: None,
@@ -260,8 +356,13 @@ impl Hub {
                 replies = replies.child(card);
             }
             let reply_field = format!("disc-reply:{cid}");
-            self.submits.insert(reply_field.clone(), reply_act(&id, Some(&cid), &reply_field, &scope));
-            let reply_input = self.input(&reply_field, "Write a reply — Enter to send", cx).w_full();
+            self.submits.insert(
+                reply_field.clone(),
+                reply_act(&id, Some(&cid), &reply_field, &scope),
+            );
+            let reply_input = self
+                .input(&reply_field, "Write a reply — Enter to send", cx)
+                .w_full();
             replies = replies.child(reply_input);
             col = col.child(replies);
         }
@@ -275,16 +376,34 @@ impl Hub {
                     .items_start()
                     .child(widgets::title(format!("{}  #{number}", d.s("title"))).flex_1())
                     .child(widgets::btn("edit-disc", "Edit", edit))
-                    .child(widgets::btn("close-disc", if d.b("closed") { "Reopen" } else { "Close ▾" }, close))
-                    .child(widgets::btn("lock-disc", if d.b("locked") { "Unlock" } else { "Lock" }, lock))
-                    .when(d.b("viewerCanDelete"), |r| r.child(widgets::danger("delete-disc", "Delete", delete))),
+                    .child(widgets::btn(
+                        "close-disc",
+                        if d.b("closed") { "Reopen" } else { "Close ▾" },
+                        close,
+                    ))
+                    .child(widgets::btn(
+                        "lock-disc",
+                        if d.b("locked") { "Unlock" } else { "Lock" },
+                        lock,
+                    ))
+                    .when(d.b("viewerCanDelete"), |r| {
+                        r.child(widgets::danger("delete-disc", "Delete", delete))
+                    }),
             )
             .child(
                 widgets::row()
                     .child(icon("discussion", 16.0, palette().text_dim))
-                    .child(widgets::dim(format!("{} {}", emoji(&d.s("category.emoji")), d.s("category.name"))))
-                    .when(d.b("closed"), |r| r.child(widgets::tag("Closed", widgets::purple())))
-                    .when(d.has("answer"), |r| r.child(widgets::tag("Answered", widgets::green()))),
+                    .child(widgets::dim(format!(
+                        "{} {}",
+                        emoji(&d.s("category.emoji")),
+                        d.s("category.name")
+                    )))
+                    .when(d.b("closed"), |r| {
+                        r.child(widgets::tag("Closed", widgets::purple()))
+                    })
+                    .when(d.has("answer"), |r| {
+                        r.child(widgets::tag("Answered", widgets::green()))
+                    }),
             )
             .child(col)
             .child(composer)
@@ -293,7 +412,12 @@ impl Hub {
 }
 
 fn reply_act(discussion: &str, reply_to: Option<&str>, field: &str, scope: &str) -> Act {
-    let (discussion, reply_to, field, scope) = (discussion.to_string(), reply_to.map(str::to_string), field.to_string(), scope.to_string());
+    let (discussion, reply_to, field, scope) = (
+        discussion.to_string(),
+        reply_to.map(str::to_string),
+        field.to_string(),
+        scope.to_string(),
+    );
     Act::run(move |hub, window, cx| {
         let body = hub.field_text(&field);
         if body.trim().is_empty() {
@@ -328,11 +452,14 @@ fn comment_edit(id: &str, body: &str, scope: &str) -> Act {
 }
 
 fn comment_delete(id: &str, scope: &str) -> Act {
-    Req::gql("mutation($id: ID!) { deleteDiscussionComment(input: {id: $id}) { clientMutationId } }", json!({ "id": id }))
-        .ok("Comment deleted")
-        .inval(scope.to_string())
-        .act()
-        .confirm("Delete comment?", "This cannot be undone.", "Delete")
+    Req::gql(
+        "mutation($id: ID!) { deleteDiscussionComment(input: {id: $id}) { clientMutationId } }",
+        json!({ "id": id }),
+    )
+    .ok("Comment deleted")
+    .inval(scope.to_string())
+    .act()
+    .confirm("Delete comment?", "This cannot be undone.", "Delete")
 }
 
 /// GitHub sends category emoji as `:shortcode:`; show the common ones.

@@ -141,7 +141,9 @@ pub fn web() -> String {
 /// `github.com`, `gitlab.example.com`.
 pub fn host() -> String {
     let web = web();
-    web.trim_start_matches("https://").trim_start_matches("http://").to_string()
+    web.trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .to_string()
 }
 
 /// A link the forge gave as a path (`/uploads/…`), made whole.
@@ -166,45 +168,85 @@ pub fn open_on() -> String {
 }
 
 pub fn pr() -> &'static str {
-    if is_gitlab() { "merge request" } else { "pull request" }
+    if is_gitlab() {
+        "merge request"
+    } else {
+        "pull request"
+    }
 }
 
 pub fn prs() -> &'static str {
-    if is_gitlab() { "merge requests" } else { "pull requests" }
+    if is_gitlab() {
+        "merge requests"
+    } else {
+        "pull requests"
+    }
 }
 
 pub fn pr_title() -> &'static str {
-    if is_gitlab() { "Merge request" } else { "Pull request" }
+    if is_gitlab() {
+        "Merge request"
+    } else {
+        "Pull request"
+    }
 }
 
 pub fn prs_title() -> &'static str {
-    if is_gitlab() { "Merge requests" } else { "Pull requests" }
+    if is_gitlab() {
+        "Merge requests"
+    } else {
+        "Pull requests"
+    }
 }
 
 /// `#12` on GitHub; `!12` for a merge request on GitLab.
 pub fn pr_ref(number: impl std::fmt::Display) -> String {
-    if is_gitlab() { format!("!{number}") } else { format!("#{number}") }
+    if is_gitlab() {
+        format!("!{number}")
+    } else {
+        format!("#{number}")
+    }
 }
 
 pub fn repo_word() -> &'static str {
-    if is_gitlab() { "project" } else { "repository" }
+    if is_gitlab() {
+        "project"
+    } else {
+        "repository"
+    }
 }
 
 pub fn repos_title() -> &'static str {
-    if is_gitlab() { "Projects" } else { "Repositories" }
+    if is_gitlab() {
+        "Projects"
+    } else {
+        "Repositories"
+    }
 }
 
 pub fn orgs_title() -> &'static str {
-    if is_gitlab() { "Groups" } else { "Organizations" }
+    if is_gitlab() {
+        "Groups"
+    } else {
+        "Organizations"
+    }
 }
 
 pub fn gists_title() -> &'static str {
-    if is_gitlab() { "Snippets" } else { "Gists" }
+    if is_gitlab() {
+        "Snippets"
+    } else {
+        "Gists"
+    }
 }
 
 /// The command-line tool: `gh` or `glab`.
 pub fn cli() -> &'static str {
-    if is_gitlab() { "glab" } else { "gh" }
+    if is_gitlab() {
+        "glab"
+    } else {
+        "gh"
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -214,15 +256,72 @@ pub fn cli() -> &'static str {
 /// repository's path has as many parts as its groups nest, so the first
 /// of these after the second part is where it ends.
 const AFTER_REPO: &[&str] = &[
-    "actions", "activity", "assignees", "autolinks", "automated-security-fixes", "branches", "check-runs",
-    "check-suites", "code-scanning", "codespaces", "collaborators", "comments", "commits", "community",
-    "compare", "contents", "contributors", "dependabot", "dependency-graph", "deployments", "discussions",
-    "dispatches", "environments", "events", "forks", "generate", "git", "hooks", "invitations", "issues",
-    "keys", "labels", "languages", "license", "merge_requests", "merges", "milestones", "notifications",
-    "pages", "private-vulnerability-reporting", "projects", "pulls", "readme", "releases", "rulesets",
-    "secret-scanning", "security-advisories", "stargazers", "stats", "statuses", "subscribers",
-    "subscription", "tags", "teams", "topics", "traffic", "transfer", "vulnerability-alerts", "tarball",
-    "zipball", "variables", "pipelines", "jobs", "packages", "members", "-",
+    "actions",
+    "activity",
+    "assignees",
+    "autolinks",
+    "automated-security-fixes",
+    "branches",
+    "check-runs",
+    "check-suites",
+    "code-scanning",
+    "codespaces",
+    "collaborators",
+    "comments",
+    "commits",
+    "community",
+    "compare",
+    "contents",
+    "contributors",
+    "dependabot",
+    "dependency-graph",
+    "deployments",
+    "discussions",
+    "dispatches",
+    "environments",
+    "events",
+    "forks",
+    "generate",
+    "git",
+    "hooks",
+    "invitations",
+    "issues",
+    "keys",
+    "labels",
+    "languages",
+    "license",
+    "merge_requests",
+    "merges",
+    "milestones",
+    "notifications",
+    "pages",
+    "private-vulnerability-reporting",
+    "projects",
+    "pulls",
+    "readme",
+    "releases",
+    "rulesets",
+    "secret-scanning",
+    "security-advisories",
+    "stargazers",
+    "stats",
+    "statuses",
+    "subscribers",
+    "subscription",
+    "tags",
+    "teams",
+    "topics",
+    "traffic",
+    "transfer",
+    "vulnerability-alerts",
+    "tarball",
+    "zipball",
+    "variables",
+    "pipelines",
+    "jobs",
+    "packages",
+    "members",
+    "-",
 ];
 
 /// How many of `parts` (a path after `/repos/`) name the repository.
@@ -230,7 +329,9 @@ pub fn repo_len(parts: &[&str]) -> usize {
     if parts.len() <= 2 {
         return parts.len();
     }
-    (2..parts.len()).find(|&i| AFTER_REPO.contains(&parts[i])).unwrap_or(parts.len())
+    (2..parts.len())
+        .find(|&i| AFTER_REPO.contains(&parts[i]))
+        .unwrap_or(parts.len())
 }
 
 /// Where an issue's (or a pull request's) comments, timeline, labels and
@@ -300,7 +401,12 @@ pub fn gitlab_url(route: &Route, w: &str) -> String {
             };
             format!("{w}/{repo}{suffix}")
         }
-        Route::Tree { repo, git_ref, path, file } => format!(
+        Route::Tree {
+            repo,
+            git_ref,
+            path,
+            file,
+        } => format!(
             "{w}/{repo}/-/{}/{git_ref}/{path}",
             if *file { "blob" } else { "tree" }
         ),
@@ -314,7 +420,9 @@ pub fn gitlab_url(route: &Route, w: &str) -> String {
             };
             format!("{w}/{repo}/-/merge_requests/{number}{suffix}")
         }
-        Route::Conflicts { repo, number } => format!("{w}/{repo}/-/merge_requests/{number}/conflicts"),
+        Route::Conflicts { repo, number } => {
+            format!("{w}/{repo}/-/merge_requests/{number}/conflicts")
+        }
         Route::Commit { repo, sha } => format!("{w}/{repo}/-/commit/{sha}"),
         Route::Compare { repo, base, head } => format!("{w}/{repo}/-/compare/{base}...{head}"),
         Route::Run { repo, id } => format!("{w}/{repo}/-/pipelines/{id}"),
@@ -340,7 +448,11 @@ pub fn gitlab_route(url: &str, w: &str) -> Option<Route> {
     if !(rest.is_empty() || rest.starts_with('/')) {
         return None;
     }
-    let rest = rest.split(['?', '#']).next().unwrap_or("").trim_matches('/');
+    let rest = rest
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim_matches('/');
     let num = |s: &str| s.parse::<u64>().ok();
     if rest.is_empty() {
         return Some(Route::Home);
@@ -355,9 +467,21 @@ pub fn gitlab_route(url: &str, w: &str) -> Option<Route> {
         ["projects", "new", ..] => return Some(Route::NewRepo { owner: None }),
         ["search", ..] => return Some(Route::Search),
         ["-", "snippets", id, ..] => return Some(Route::Gist { id: id.to_string() }),
-        ["-", "user_settings", ..] | ["-", "profile", ..] | ["profile", ..] => return Some(Route::Settings),
-        ["users", login, ..] => return Some(Route::User { login: login.to_string() }),
-        ["groups", ..] | ["explore", ..] | ["admin", ..] | ["help", ..] | ["-", ..] | ["api", ..] | ["oauth", ..] => return None,
+        ["-", "user_settings", ..] | ["-", "profile", ..] | ["profile", ..] => {
+            return Some(Route::Settings)
+        }
+        ["users", login, ..] => {
+            return Some(Route::User {
+                login: login.to_string(),
+            })
+        }
+        ["groups", ..]
+        | ["explore", ..]
+        | ["admin", ..]
+        | ["help", ..]
+        | ["-", ..]
+        | ["api", ..]
+        | ["oauth", ..] => return None,
         _ => {}
     }
     let Some((repo, page)) = rest.split_once("/-/") else {
@@ -365,17 +489,35 @@ pub fn gitlab_route(url: &str, w: &str) -> Option<Route> {
         // knows a group when it sees one), more is a project (whose page
         // does the same for subgroups).
         return Some(match parts.as_slice() {
-            [login] => Route::User { login: login.to_string() },
-            _ => Route::Repo { repo: rest.to_string(), tab: RepoTab::Code },
+            [login] => Route::User {
+                login: login.to_string(),
+            },
+            _ => Route::Repo {
+                repo: rest.to_string(),
+                tab: RepoTab::Code,
+            },
         });
     };
     let repo = repo.to_string();
     let page: Vec<&str> = page.split('/').filter(|p| !p.is_empty()).collect();
-    let tab = |tab: RepoTab| Route::Repo { repo: repo.clone(), tab };
+    let tab = |tab: RepoTab| Route::Repo {
+        repo: repo.clone(),
+        tab,
+    };
     Some(match page.as_slice() {
-        ["issues", n, ..] | ["work_items", n, ..] if num(n).is_some() => Route::Issue { repo, number: num(n)? },
-        ["issues", ..] | ["work_items", ..] | ["boards", ..] | ["labels", ..] | ["milestones", ..] => tab(RepoTab::Issues),
-        ["merge_requests", n, "conflicts"] if num(n).is_some() => Route::Conflicts { repo, number: num(n)? },
+        ["issues", n, ..] | ["work_items", n, ..] if num(n).is_some() => Route::Issue {
+            repo,
+            number: num(n)?,
+        },
+        ["issues", ..]
+        | ["work_items", ..]
+        | ["boards", ..]
+        | ["labels", ..]
+        | ["milestones", ..] => tab(RepoTab::Issues),
+        ["merge_requests", n, "conflicts"] if num(n).is_some() => Route::Conflicts {
+            repo,
+            number: num(n)?,
+        },
         ["merge_requests", n, rest @ ..] if num(n).is_some() => Route::Pull {
             repo,
             number: num(n)?,
@@ -387,23 +529,47 @@ pub fn gitlab_route(url: &str, w: &str) -> Option<Route> {
             },
         },
         ["merge_requests", ..] => tab(RepoTab::Pulls),
-        ["commit", sha, ..] => Route::Commit { repo, sha: sha.to_string() },
+        ["commit", sha, ..] => Route::Commit {
+            repo,
+            sha: sha.to_string(),
+        },
         ["commits", ..] => tab(RepoTab::Commits),
         ["pipelines", id, ..] if num(id).is_some() => Route::Run { repo, id: num(id)? },
         ["jobs", id, ..] if num(id).is_some() => Route::Job { repo, id: num(id)? },
-        ["pipelines", ..] | ["jobs", ..] | ["pipeline_schedules", ..] | ["environments", ..] => tab(RepoTab::Actions),
-        ["releases", tag, ..] => Route::Release { repo, id: release_id(tag) },
+        ["pipelines", ..] | ["jobs", ..] | ["pipeline_schedules", ..] | ["environments", ..] => {
+            tab(RepoTab::Actions)
+        }
+        ["releases", tag, ..] => Route::Release {
+            repo,
+            id: release_id(tag),
+        },
         ["releases", ..] => tab(RepoTab::Releases),
         ["tags", ..] => tab(RepoTab::Tags),
         ["branches", ..] => tab(RepoTab::Branches),
         ["compare", range, ..] if range.contains("...") => {
             let (base, head) = range.split_once("...")?;
-            Route::Compare { repo, base: base.to_string(), head: head.to_string() }
+            Route::Compare {
+                repo,
+                base: base.to_string(),
+                head: head.to_string(),
+            }
         }
-        ["tree", git_ref, path @ ..] => Route::Tree { repo, git_ref: git_ref.to_string(), path: path.join("/"), file: false },
-        ["blob", git_ref, path @ ..] => Route::Tree { repo, git_ref: git_ref.to_string(), path: path.join("/"), file: true },
+        ["tree", git_ref, path @ ..] => Route::Tree {
+            repo,
+            git_ref: git_ref.to_string(),
+            path: path.join("/"),
+            file: false,
+        },
+        ["blob", git_ref, path @ ..] => Route::Tree {
+            repo,
+            git_ref: git_ref.to_string(),
+            path: path.join("/"),
+            file: true,
+        },
         ["settings", ..] | ["project_members", ..] => tab(RepoTab::Settings),
-        ["graphs", ..] | ["network", ..] | ["forks", ..] | ["starrers", ..] => tab(RepoTab::Insights),
+        ["graphs", ..] | ["network", ..] | ["forks", ..] | ["starrers", ..] => {
+            tab(RepoTab::Insights)
+        }
         ["packages", ..] => tab(RepoTab::Packages),
         _ => return None,
     })
@@ -432,8 +598,14 @@ mod tests {
         assert_eq!(repo_len(&["a", "b", "c", "issues", "1"]), 3);
         assert_eq!(repo_len(&["a", "b", "c"]), 3);
         assert_eq!(split_repo("a/b/c"), ("a/b", "c"));
-        assert_eq!(normalize_host("https://gitlab.example.com/"), "gitlab.example.com");
-        assert_eq!(Account::new(Forge::GitLab, "http://10.0.0.5:8080", "t").api(), "http://10.0.0.5:8080/api/v4");
+        assert_eq!(
+            normalize_host("https://gitlab.example.com/"),
+            "gitlab.example.com"
+        );
+        assert_eq!(
+            Account::new(Forge::GitLab, "http://10.0.0.5:8080", "t").api(),
+            "http://10.0.0.5:8080/api/v4"
+        );
     }
 
     #[test]
@@ -441,20 +613,41 @@ mod tests {
         let w = "https://gitlab.com";
         assert_eq!(
             gitlab_route("https://gitlab.com/a/b/c/-/merge_requests/7/diffs", w),
-            Some(Route::Pull { repo: "a/b/c".into(), number: 7, tab: PullTab::Files })
+            Some(Route::Pull {
+                repo: "a/b/c".into(),
+                number: 7,
+                tab: PullTab::Files
+            })
         );
         assert_eq!(
             gitlab_route("https://gitlab.com/a/b/-/issues/3#note_1", w),
-            Some(Route::Issue { repo: "a/b".into(), number: 3 })
+            Some(Route::Issue {
+                repo: "a/b".into(),
+                number: 3
+            })
         );
         assert_eq!(
             gitlab_route("https://gitlab.com/a/b/-/blob/main/src/x.rs", w),
-            Some(Route::Tree { repo: "a/b".into(), git_ref: "main".into(), path: "src/x.rs".into(), file: true })
+            Some(Route::Tree {
+                repo: "a/b".into(),
+                git_ref: "main".into(),
+                path: "src/x.rs".into(),
+                file: true
+            })
         );
-        assert_eq!(gitlab_route("https://gitlab.com/someone", w), Some(Route::User { login: "someone".into() }));
+        assert_eq!(
+            gitlab_route("https://gitlab.com/someone", w),
+            Some(Route::User {
+                login: "someone".into()
+            })
+        );
         assert_eq!(gitlab_route("https://github.com/a/b", w), None);
         assert_eq!(gitlab_route("https://gitlab.com.evil.example/a/b", w), None);
-        let route = Route::Pull { repo: "a/b/c".into(), number: 7, tab: PullTab::Files };
+        let route = Route::Pull {
+            repo: "a/b/c".into(),
+            number: 7,
+            tab: PullTab::Files,
+        };
         assert_eq!(gitlab_route(&gitlab_url(&route, w), w), Some(route));
         assert_eq!(release_id("v1.0"), release_id("v1.0"));
         assert!(release_id("v1.0") < (1 << 53));

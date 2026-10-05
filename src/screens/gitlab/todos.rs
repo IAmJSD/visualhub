@@ -37,8 +37,15 @@ fn open(t: &Value) -> Act {
     let number = target.i("iid") as u64;
     match t.s("target_type").as_str() {
         "Issue" | "WorkItem" if !repo.is_empty() => Act::Go(Route::Issue { repo, number }),
-        "MergeRequest" if !repo.is_empty() => Act::Go(Route::Pull { repo, number, tab: PullTab::Conversation }),
-        "Commit" if !repo.is_empty() => Act::Go(Route::Commit { repo, sha: target.s("id") }),
+        "MergeRequest" if !repo.is_empty() => Act::Go(Route::Pull {
+            repo,
+            number,
+            tab: PullTab::Conversation,
+        }),
+        "Commit" if !repo.is_empty() => Act::Go(Route::Commit {
+            repo,
+            sha: target.s("id"),
+        }),
         _ => Act::Url(t.s("target_url")),
     }
 }
@@ -56,12 +63,34 @@ impl Hub {
             let target = t.at("target");
             let open_now = target.s("state") == "opened";
             let (icon, color) = match t.s("target_type").as_str() {
-                "MergeRequest" => (if target.s("state") == "merged" { "pr-merged" } else { "pr" }, if open_now { widgets::green() } else { widgets::purple() }),
-                "Issue" | "WorkItem" => ("issue", if open_now { widgets::green() } else { widgets::purple() }),
+                "MergeRequest" => (
+                    if target.s("state") == "merged" {
+                        "pr-merged"
+                    } else {
+                        "pr"
+                    },
+                    if open_now {
+                        widgets::green()
+                    } else {
+                        widgets::purple()
+                    },
+                ),
+                "Issue" | "WorkItem" => (
+                    "issue",
+                    if open_now {
+                        widgets::green()
+                    } else {
+                        widgets::purple()
+                    },
+                ),
                 "Commit" => ("commit", widgets::gray()),
                 _ => ("bell", widgets::gray()),
             };
-            let title = if target.s("title").is_empty() { t.s("body") } else { target.s("title") };
+            let title = if target.s("title").is_empty() {
+                t.s("body")
+            } else {
+                target.s("title")
+            };
             let reference = target.s("references.short");
             let id = t.i("id");
             let mut row = Row::new(title)
@@ -69,42 +98,95 @@ impl Hub {
                 .meta(format!(
                     "{}{}  ·  {} {}  ·  {}",
                     t.s("project.path_with_namespace"),
-                    if reference.is_empty() { String::new() } else { format!(" {reference}") },
+                    if reference.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {reference}")
+                    },
                     t.s("author.name"),
                     why(&t.s("action_name")),
                     time::ago(&t.s("created_at"))
                 ))
-                .body(if target.s("title").is_empty() { String::new() } else { t.s("body") })
+                .body(if target.s("title").is_empty() {
+                    String::new()
+                } else {
+                    t.s("body")
+                })
                 .open(open(t));
             if pending {
-                row = row.action("Done", Req::rest("POST", format!("/api/v4/todos/{id}/mark_as_done")).ok("Marked as done").inval("/api/v4/todos").act()).inline();
+                row = row
+                    .action(
+                        "Done",
+                        Req::rest("POST", format!("/api/v4/todos/{id}/mark_as_done"))
+                            .ok("Marked as done")
+                            .inval("/api/v4/todos")
+                            .act(),
+                    )
+                    .inline();
             }
             row
         })
-        .empty(if pending { "You're all done!" } else { "Nothing done yet." });
+        .empty(if pending {
+            "You're all done!"
+        } else {
+            "Nothing done yet."
+        });
         let list = self.list(&spec, cx);
-        let kinds = [("", "Everything"), ("Issue", "Issues"), ("MergeRequest", "Merge requests"), ("Commit", "Commits"), ("Epic", "Epics")];
-        let kind_menu = Act::menu(kinds.iter().map(|(v, l)| MenuEntry::check(*l, kind == *v, Act::choose("todos.type", *v))).collect());
+        let kinds = [
+            ("", "Everything"),
+            ("Issue", "Issues"),
+            ("MergeRequest", "Merge requests"),
+            ("Commit", "Commits"),
+            ("Epic", "Epics"),
+        ];
+        let kind_menu = Act::menu(
+            kinds
+                .iter()
+                .map(|(v, l)| MenuEntry::check(*l, kind == *v, Act::choose("todos.type", *v)))
+                .collect(),
+        );
         widgets::page()
             .child(
                 widgets::row()
                     .child(widgets::title("To-Do List"))
                     .child(widgets::spacer())
-                    .child(widgets::btn("todo-settings", "Notification settings", Act::Url(format!("{}/-/profile/notifications", crate::forge::web()))))
+                    .child(widgets::btn(
+                        "todo-settings",
+                        "Notification settings",
+                        Act::Url(format!("{}/-/profile/notifications", crate::forge::web())),
+                    ))
                     .child(widgets::primary(
                         "todos-done",
                         "Mark all as done",
-                        Req::rest("POST", "/api/v4/todos/mark_as_done").ok("All done").inval("/api/v4/todos").act(),
+                        Req::rest("POST", "/api/v4/todos/mark_as_done")
+                            .ok("All done")
+                            .inval("/api/v4/todos")
+                            .act(),
                     )),
             )
             .child(
                 widgets::row()
                     .child(widgets::chips(vec![
-                        ("To Do".into(), pending, Act::choose("todos.state", "pending")),
+                        (
+                            "To Do".into(),
+                            pending,
+                            Act::choose("todos.state", "pending"),
+                        ),
                         ("Done".into(), !pending, Act::choose("todos.state", "done")),
                     ]))
                     .child(widgets::spacer())
-                    .child(widgets::btn("todo-type", format!("{} ▾", kinds.iter().find(|k| k.0 == kind).map(|k| k.1).unwrap_or("Everything")), kind_menu)),
+                    .child(widgets::btn(
+                        "todo-type",
+                        format!(
+                            "{} ▾",
+                            kinds
+                                .iter()
+                                .find(|k| k.0 == kind)
+                                .map(|k| k.1)
+                                .unwrap_or("Everything")
+                        ),
+                        kind_menu,
+                    )),
             )
             .child(list)
             .into_any_element()

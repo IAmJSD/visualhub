@@ -18,24 +18,53 @@ impl Hub {
         let gitlab = crate::forge::is_gitlab();
         let title = crate::forge::repos_title();
         let mut tabs = vec![
-            (format!("Your {}", title.to_lowercase()), tab == "yours", Act::choose("repos.tab", "yours")),
-            ("Stars".into(), tab == "starred", Act::choose("repos.tab", "starred")),
+            (
+                format!("Your {}", title.to_lowercase()),
+                tab == "yours",
+                Act::choose("repos.tab", "yours"),
+            ),
+            (
+                "Stars".into(),
+                tab == "starred",
+                Act::choose("repos.tab", "starred"),
+            ),
         ];
         // GitLab lists neither what you watch nor invitations to accept.
         if !gitlab {
-            tabs.push(("Watching".into(), tab == "watching", Act::choose("repos.tab", "watching")));
-            tabs.push(("Invitations".into(), tab == "invites", Act::choose("repos.tab", "invites")));
+            tabs.push((
+                "Watching".into(),
+                tab == "watching",
+                Act::choose("repos.tab", "watching"),
+            ));
+            tabs.push((
+                "Invitations".into(),
+                tab == "invites",
+                Act::choose("repos.tab", "invites"),
+            ));
         }
         let tabs = widgets::chips(tabs);
         let body = match tab.as_str() {
             "starred" => {
-                let spec = ListSpec::new(format!("/user/starred?sort={}", if sort == "pushed" { "updated" } else { "created" }), |r| {
-                    let full = r.s("full_name");
-                    repo_row(r).action(
-                        "Unstar",
-                        Req::rest("DELETE", format!("/user/starred/{full}")).ok("Unstarred").inval("/user/starred").act(),
-                    )
-                })
+                let spec = ListSpec::new(
+                    format!(
+                        "/user/starred?sort={}",
+                        if sort == "pushed" {
+                            "updated"
+                        } else {
+                            "created"
+                        }
+                    ),
+                    |r| {
+                        let full = r.s("full_name");
+                        repo_row(r).action(
+                            "Unstar",
+                            Req::rest("DELETE", format!("/user/starred/{full}"))
+                                .ok("Unstarred")
+                                .inval("/user/starred")
+                                .act(),
+                        )
+                    },
+                )
                 .empty("You haven't starred any repositories yet.");
                 self.list(&spec, cx)
             }
@@ -44,7 +73,10 @@ impl Hub {
                     let full = r.s("full_name");
                     repo_row(r).action(
                         "Unwatch",
-                        Req::rest("DELETE", format!("/repos/{full}/subscription")).ok("Unwatched").inval("/user/subscriptions").act(),
+                        Req::rest("DELETE", format!("/repos/{full}/subscription"))
+                            .ok("Unwatched")
+                            .inval("/user/subscriptions")
+                            .act(),
                     )
                 })
                 .empty("You aren't watching any repositories.");
@@ -55,14 +87,25 @@ impl Hub {
                     let id = i.i("id");
                     Row::new(i.s("repository.full_name"))
                         .icon("mail", widgets::gray())
-                        .meta(format!("{} invited you {} with {} access", i.s("inviter.login"), time::ago(&i.s("created_at")), i.s("permissions")))
+                        .meta(format!(
+                            "{} invited you {} with {} access",
+                            i.s("inviter.login"),
+                            time::ago(&i.s("created_at")),
+                            i.s("permissions")
+                        ))
                         .action(
                             "Accept",
-                            Req::rest("PATCH", format!("/user/repository_invitations/{id}")).ok("Invitation accepted").inval("/user/repo").act(),
+                            Req::rest("PATCH", format!("/user/repository_invitations/{id}"))
+                                .ok("Invitation accepted")
+                                .inval("/user/repo")
+                                .act(),
                         )
                         .danger(
                             "Decline",
-                            Req::rest("DELETE", format!("/user/repository_invitations/{id}")).ok("Invitation declined").inval("/user/repository_invitations").act(),
+                            Req::rest("DELETE", format!("/user/repository_invitations/{id}"))
+                                .ok("Invitation declined")
+                                .inval("/user/repository_invitations")
+                                .act(),
                         )
                         .inline()
                 })
@@ -79,18 +122,43 @@ impl Hub {
                 self.list(&spec, cx)
             }
         };
-        let sorts = [("pushed", "Last pushed"), ("updated", "Last updated"), ("created", "Newest"), ("full_name", "Name")];
+        let sorts = [
+            ("pushed", "Last pushed"),
+            ("updated", "Last updated"),
+            ("created", "Newest"),
+            ("full_name", "Name"),
+        ];
         let kinds: &[(&str, &str)] = if gitlab {
-            &[("all", "All"), ("owner", "Owned by you"), ("public", "Public"), ("internal", "Internal"), ("private", "Private")]
+            &[
+                ("all", "All"),
+                ("owner", "Owned by you"),
+                ("public", "Public"),
+                ("internal", "Internal"),
+                ("private", "Private"),
+            ]
         } else {
-            &[("all", "All"), ("owner", "Owned by you"), ("public", "Public"), ("private", "Private"), ("member", "Member")]
+            &[
+                ("all", "All"),
+                ("owner", "Owned by you"),
+                ("public", "Public"),
+                ("private", "Private"),
+                ("member", "Member"),
+            ]
         };
         widgets::page()
             .child(
                 widgets::row()
                     .child(widgets::title(title))
                     .child(widgets::spacer())
-                    .child(widgets::go_btn("new-repo", if gitlab { "New project" } else { "New repository" }, Act::Go(Route::NewRepo { owner: None }))),
+                    .child(widgets::go_btn(
+                        "new-repo",
+                        if gitlab {
+                            "New project"
+                        } else {
+                            "New repository"
+                        },
+                        Act::Go(Route::NewRepo { owner: None }),
+                    )),
             )
             .child(
                 widgets::row()
@@ -100,14 +168,46 @@ impl Hub {
                     .when(tab == "yours", |d| {
                         d.child(widgets::btn(
                             "repo-kind",
-                            format!("Type: {} ▾", kinds.iter().find(|k| k.0 == kind).map(|k| k.1).unwrap_or("All")),
-                            Act::menu(kinds.iter().map(|(v, l)| MenuEntry::check(*l, kind == *v, Act::choose("repos.kind", *v))).collect()),
+                            format!(
+                                "Type: {} ▾",
+                                kinds
+                                    .iter()
+                                    .find(|k| k.0 == kind)
+                                    .map(|k| k.1)
+                                    .unwrap_or("All")
+                            ),
+                            Act::menu(
+                                kinds
+                                    .iter()
+                                    .map(|(v, l)| {
+                                        MenuEntry::check(
+                                            *l,
+                                            kind == *v,
+                                            Act::choose("repos.kind", *v),
+                                        )
+                                    })
+                                    .collect(),
+                            ),
                         ))
                     })
                     .child(widgets::btn(
                         "repo-sort",
-                        format!("Sort: {} ▾", sorts.iter().find(|s| s.0 == sort).map(|s| s.1).unwrap_or("Last pushed")),
-                        Act::menu(sorts.iter().map(|(v, l)| MenuEntry::check(*l, sort == *v, Act::choose("repos.sort", *v))).collect()),
+                        format!(
+                            "Sort: {} ▾",
+                            sorts
+                                .iter()
+                                .find(|s| s.0 == sort)
+                                .map(|s| s.1)
+                                .unwrap_or("Last pushed")
+                        ),
+                        Act::menu(
+                            sorts
+                                .iter()
+                                .map(|(v, l)| {
+                                    MenuEntry::check(*l, sort == *v, Act::choose("repos.sort", *v))
+                                })
+                                .collect(),
+                        ),
                     )),
             )
             .child(body)

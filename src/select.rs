@@ -7,8 +7,8 @@
 //! Cmd/Ctrl+C copies. Any other press clears it.
 
 use gpui::{
-    div, Div, HighlightStyle, InteractiveElement as _, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement as _, StyledText, Styled as _,
+    div, Div, HighlightStyle, InteractiveElement as _, MouseButton, MouseDownEvent, MouseMoveEvent,
+    ParentElement as _, Styled as _, StyledText,
 };
 use std::cell::RefCell;
 use std::ops::Range;
@@ -31,7 +31,11 @@ thread_local! {
 
 impl Selection {
     fn ordered(&self) -> (Pos, Pos) {
-        if self.anchor <= self.head { (self.anchor, self.head) } else { (self.head, self.anchor) }
+        if self.anchor <= self.head {
+            (self.anchor, self.head)
+        } else {
+            (self.head, self.anchor)
+        }
     }
 }
 
@@ -62,8 +66,16 @@ pub fn selected_text() -> Option<String> {
         let mut out = String::new();
         for line in start.0..=end.0 {
             let text = s.lines.get(line)?;
-            let from = if line == start.0 { start.1.min(text.len()) } else { 0 };
-            let to = if line == end.0 { end.1.min(text.len()) } else { text.len() };
+            let from = if line == start.0 {
+                start.1.min(text.len())
+            } else {
+                0
+            };
+            let to = if line == end.0 {
+                end.1.min(text.len())
+            } else {
+                text.len()
+            };
             out.push_str(&text[from..to]);
             if line != end.0 {
                 out.push('\n');
@@ -82,14 +94,25 @@ pub fn clear() -> bool {
 fn word(text: &str, at: usize) -> Range<usize> {
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
     let at = at.min(text.len());
-    let start = text[..at].char_indices().rev().take_while(|(_, c)| is_word(*c)).last().map_or(at, |(i, _)| i);
-    let end = text[at..].char_indices().find(|(_, c)| !is_word(*c)).map_or(text.len(), |(i, _)| at + i);
+    let start = text[..at]
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| is_word(*c))
+        .last()
+        .map_or(at, |(i, _)| i);
+    let end = text[at..]
+        .char_indices()
+        .find(|(_, c)| !is_word(*c))
+        .map_or(text.len(), |(i, _)| at + i);
     start..end
 }
 
 /// Syntax colours with the selection laid over them. gpui wants the runs
 /// sorted and disjoint, so both are cut at every edge.
-fn merge(syntax: &[(Range<usize>, HighlightStyle)], selected: Option<Range<usize>>) -> Vec<(Range<usize>, HighlightStyle)> {
+fn merge(
+    syntax: &[(Range<usize>, HighlightStyle)],
+    selected: Option<Range<usize>>,
+) -> Vec<(Range<usize>, HighlightStyle)> {
     let Some(sel) = selected.filter(|r| !r.is_empty()) else {
         return syntax.to_vec();
     };
@@ -104,7 +127,10 @@ fn merge(syntax: &[(Range<usize>, HighlightStyle)], selected: Option<Range<usize
     let mut out = Vec::new();
     for pair in edges.windows(2) {
         let piece = pair[0]..pair[1];
-        let base = syntax.iter().find(|(r, _)| r.start <= piece.start && piece.end <= r.end).map(|(_, s)| *s);
+        let base = syntax
+            .iter()
+            .find(|(r, _)| r.start <= piece.start && piece.end <= r.end)
+            .map(|(_, s)| *s);
         let in_sel = sel.start <= piece.start && piece.end <= sel.end;
         let style = match (base, in_sel) {
             (base, true) => HighlightStyle {
@@ -120,11 +146,20 @@ fn merge(syntax: &[(Range<usize>, HighlightStyle)], selected: Option<Range<usize
 }
 
 /// Line `line` of `block` as selectable text, coloured by `syntax`.
-pub fn line(block: &str, lines: &Rc<Vec<String>>, line: usize, syntax: Option<&[(Range<usize>, HighlightStyle)]>) -> Div {
+pub fn line(
+    block: &str,
+    lines: &Rc<Vec<String>>,
+    line: usize,
+    syntax: Option<&[(Range<usize>, HighlightStyle)]>,
+) -> Div {
     let text = lines.get(line).cloned().unwrap_or_default();
     let selected = range_in(block, line, text.len());
     // An empty line still needs a glyph to be laid out and hit.
-    let shown = if text.is_empty() { " ".to_string() } else { text.clone() };
+    let shown = if text.is_empty() {
+        " ".to_string()
+    } else {
+        text.clone()
+    };
     let runs = merge(syntax.unwrap_or(&[]), selected.filter(|_| !text.is_empty()));
     let styled = StyledText::new(shown).with_highlights(runs);
     let layout = styled.layout().clone();
@@ -136,27 +171,30 @@ pub fn line(block: &str, lines: &Rc<Vec<String>>, line: usize, syntax: Option<&[
     div()
         .whitespace_nowrap()
         .cursor_text()
-        .on_mouse_down(MouseButton::Left, move |event: &MouseDownEvent, window, _| {
-            let at = hit_down(event.position).min(lines_down[line].len());
-            let (anchor, head) = match event.click_count {
-                2 => {
-                    let w = word(&lines_down[line], at);
-                    ((line, w.start), (line, w.end))
-                }
-                n if n >= 3 => ((line, 0), (line, lines_down[line].len())),
-                _ => ((line, at), (line, at)),
-            };
-            SELECTION.with(|s| {
-                *s.borrow_mut() = Some(Selection {
-                    block: block_down.clone(),
-                    lines: lines_down.clone(),
-                    anchor,
-                    head,
-                    dragging: event.click_count < 2,
-                })
-            });
-            window.refresh();
-        })
+        .on_mouse_down(
+            MouseButton::Left,
+            move |event: &MouseDownEvent, window, _| {
+                let at = hit_down(event.position).min(lines_down[line].len());
+                let (anchor, head) = match event.click_count {
+                    2 => {
+                        let w = word(&lines_down[line], at);
+                        ((line, w.start), (line, w.end))
+                    }
+                    n if n >= 3 => ((line, 0), (line, lines_down[line].len())),
+                    _ => ((line, at), (line, at)),
+                };
+                SELECTION.with(|s| {
+                    *s.borrow_mut() = Some(Selection {
+                        block: block_down.clone(),
+                        lines: lines_down.clone(),
+                        anchor,
+                        head,
+                        dragging: event.click_count < 2,
+                    })
+                });
+                window.refresh();
+            },
+        )
         .on_mouse_move(move |event: &MouseMoveEvent, window, _| {
             if event.pressed_button != Some(MouseButton::Left) {
                 SELECTION.with(|s| {
@@ -196,9 +234,19 @@ mod tests {
 
     #[test]
     fn copies_across_lines() {
-        let lines = Rc::new(vec!["fn main() {".to_string(), "    hi();".to_string(), "}".to_string()]);
+        let lines = Rc::new(vec![
+            "fn main() {".to_string(),
+            "    hi();".to_string(),
+            "}".to_string(),
+        ]);
         SELECTION.with(|s| {
-            *s.borrow_mut() = Some(Selection { block: "b".into(), lines, anchor: (1, 4), head: (0, 3), dragging: false })
+            *s.borrow_mut() = Some(Selection {
+                block: "b".into(),
+                lines,
+                anchor: (1, 4),
+                head: (0, 3),
+                dragging: false,
+            })
         });
         assert_eq!(selected_text().as_deref(), Some("main() {\n    "));
         assert!(clear());

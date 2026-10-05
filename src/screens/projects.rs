@@ -7,10 +7,13 @@ use crate::hub::{on, Act, Hub, Load, MenuEntry, Req, Route};
 use crate::json::Json as _;
 use crate::resource::Row;
 use crate::time;
+use crate::ui::{icon, palette, IconButton};
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
-use gpui::{div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _, Styled as _};
-use crate::ui::{icon, palette, IconButton};
+use gpui::{
+    div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, StatefulInteractiveElement as _, Styled as _,
+};
 use serde_json::{json, Value};
 
 const SUMMARY: &str = "id title number shortDescription closed updatedAt url public items { totalCount } owner { ... on User { login } ... on Organization { login } }";
@@ -51,7 +54,14 @@ const PROJECT: &str = "query($id: ID!) {
 
 fn project_row(p: &Value) -> Row {
     let mut row = Row::new(p.s("title"))
-        .icon("project", if p.b("closed") { widgets::gray() } else { widgets::green() })
+        .icon(
+            "project",
+            if p.b("closed") {
+                widgets::gray()
+            } else {
+                widgets::green()
+            },
+        )
         .meta(format!(
             "{} #{}  ·  {} items  ·  updated {}",
             p.s("owner.login"),
@@ -92,7 +102,12 @@ impl Hub {
         );
         let data = match self.fetch_gql("/projects", &query, json!({}), cx) {
             Load::Ready(v) => v,
-            other => return widgets::page().child(widgets::title("Projects")).child(widgets::placeholder(&other)).into_any_element(),
+            other => {
+                return widgets::page()
+                    .child(widgets::title("Projects"))
+                    .child(widgets::placeholder(&other))
+                    .into_any_element()
+            }
         };
         let mut owners: Vec<(String, String)> = vec![(data.s("viewer.id"), data.s("viewer.login"))];
         for org in data.list("viewer.organizations.nodes") {
@@ -116,9 +131,15 @@ impl Hub {
             })
             .act();
         let mut page = widgets::page().child(
-            widgets::row().child(widgets::title("Projects")).child(widgets::spacer()).child(widgets::go_btn("new-project", "New project", create)),
+            widgets::row()
+                .child(widgets::title("Projects"))
+                .child(widgets::spacer())
+                .child(widgets::go_btn("new-project", "New project", create)),
         );
-        let mut sections: Vec<(String, Vec<Value>)> = vec![("Your projects".into(), data.list("viewer.projectsV2.nodes").to_vec())];
+        let mut sections: Vec<(String, Vec<Value>)> = vec![(
+            "Your projects".into(),
+            data.list("viewer.projectsV2.nodes").to_vec(),
+        )];
         for org in data.list("viewer.organizations.nodes") {
             let list = org.list("projectsV2.nodes").to_vec();
             if !list.is_empty() {
@@ -141,7 +162,12 @@ impl Hub {
     pub fn repo_projects(&mut self, repo: &str, cx: &mut Context<Self>) -> AnyElement {
         let (owner, name) = repo.split_once('/').unwrap_or((repo, ""));
         let query = format!("query($o: String!, $n: String!) {{ repository(owner: $o, name: $n) {{ id projectsV2(first: 50) {{ nodes {{ {SUMMARY} }} }} }} }}");
-        let data = match self.fetch_gql(&format!("/repos/{repo}/projects"), &query, json!({ "o": owner, "n": name }), cx) {
+        let data = match self.fetch_gql(
+            &format!("/repos/{repo}/projects"),
+            &query,
+            json!({ "o": owner, "n": name }),
+            cx,
+        ) {
             Load::Ready(v) => v,
             other => return widgets::placeholder(&other),
         };
@@ -155,7 +181,11 @@ impl Hub {
         }
         widgets::col()
             .gap_3()
-            .child(widgets::row().child(widgets::spacer()).child(widgets::btn("all-projects", "All your projects", Act::Go(Route::Projects))))
+            .child(widgets::row().child(widgets::spacer()).child(widgets::btn(
+                "all-projects",
+                "All your projects",
+                Act::Go(Route::Projects),
+            )))
             .child(card)
             .into_any_element()
     }
@@ -164,7 +194,11 @@ impl Hub {
         let scope = format!("/projects/{id}");
         let data = match self.fetch_gql(&scope, PROJECT, json!({ "id": id }), cx) {
             Load::Ready(v) => v,
-            other => return widgets::page().child(widgets::placeholder(&other)).into_any_element(),
+            other => {
+                return widgets::page()
+                    .child(widgets::placeholder(&other))
+                    .into_any_element()
+            }
         };
         let project = data.at("node").clone();
         let pid = project.s("id");
@@ -175,7 +209,12 @@ impl Hub {
             .find(|f| f.s("name") == "Status" && f.has("options"))
             .or_else(|| fields.iter().find(|f| f.has("options")))
             .cloned();
-        let items: Vec<Value> = project.list("items.nodes").iter().filter(|i| !i.b("isArchived")).cloned().collect();
+        let items: Vec<Value> = project
+            .list("items.nodes")
+            .iter()
+            .filter(|i| !i.b("isArchived"))
+            .cloned()
+            .collect();
         let view_key = format!("project.view:{id}");
         let view = self.choice(&view_key, if group.is_some() { "board" } else { "table" });
 
@@ -252,9 +291,20 @@ impl Hub {
             })
             .act();
 
-        let mut header_chips = vec![("Table".to_string(), view == "table", Act::choose(&view_key, "table"))];
+        let mut header_chips = vec![(
+            "Table".to_string(),
+            view == "table",
+            Act::choose(&view_key, "table"),
+        )];
         if group.is_some() {
-            header_chips.insert(0, ("Board".to_string(), view == "board", Act::choose(&view_key, "board")));
+            header_chips.insert(
+                0,
+                (
+                    "Board".to_string(),
+                    view == "board",
+                    Act::choose(&view_key, "board"),
+                ),
+            );
         }
         let body = if view == "board" {
             self.project_board(&pid, &scope, group.as_ref().unwrap(), &items, cx)
@@ -272,16 +322,34 @@ impl Hub {
                     .child(widgets::btn("add-draft", "Add draft", add_draft))
                     .child(widgets::btn("add-issue", "Add issue / PR", add_issue))
                     .child(widgets::btn("project-settings", "Settings", edit))
-                    .child(widgets::btn("close-project", if closed { "Reopen" } else { "Close" }, close))
+                    .child(widgets::btn(
+                        "close-project",
+                        if closed { "Reopen" } else { "Close" },
+                        close,
+                    ))
                     .child(widgets::danger("delete-project", "Delete", delete)),
             )
-            .when(!project.s("shortDescription").is_empty(), |d| d.child(widgets::dim(project.s("shortDescription"))))
-            .child(widgets::row().child(widgets::chips(header_chips)).child(widgets::spacer()).child(widgets::dim(format!("{} items", items.len()))))
+            .when(!project.s("shortDescription").is_empty(), |d| {
+                d.child(widgets::dim(project.s("shortDescription")))
+            })
+            .child(
+                widgets::row()
+                    .child(widgets::chips(header_chips))
+                    .child(widgets::spacer())
+                    .child(widgets::dim(format!("{} items", items.len()))),
+            )
             .child(body)
             .into_any_element()
     }
 
-    fn project_board(&mut self, pid: &str, scope: &str, group: &Value, items: &[Value], _cx: &mut Context<Self>) -> AnyElement {
+    fn project_board(
+        &mut self,
+        pid: &str,
+        scope: &str,
+        group: &Value,
+        items: &[Value],
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette();
         let field_id = group.s("id");
         let field_name = group.s("name");
@@ -290,7 +358,12 @@ impl Hub {
             .iter()
             .map(|o| (o.s("id"), o.s("name"), colour(&o.s("color")), Vec::new()))
             .collect();
-        columns.push((String::new(), format!("No {field_name}"), 0x8B949E, Vec::new()));
+        columns.push((
+            String::new(),
+            format!("No {field_name}"),
+            0x8B949E,
+            Vec::new(),
+        ));
         for item in items {
             let value = item
                 .list("fieldValues.nodes")
@@ -304,7 +377,15 @@ impl Hub {
                 None => columns.last_mut().unwrap().3.push(item),
             }
         }
-        let mut board = div().id("board").flex().flex_row().gap_3().items_start().overflow_x_scroll().track_scroll(&self.scroller("board")).pb_2();
+        let mut board = div()
+            .id("board")
+            .flex()
+            .flex_row()
+            .gap_3()
+            .items_start()
+            .overflow_x_scroll()
+            .track_scroll(&self.scroller("board"))
+            .pb_2();
         for (ci, (_, name, color, cards)) in columns.iter().enumerate() {
             let mut column = div()
                 .flex()
@@ -320,25 +401,47 @@ impl Hub {
                 .child(
                     widgets::row()
                         .px_1()
-                        .child(div().size(px(10.0)).rounded_full().border_2().border_color(rgb(*color)))
+                        .child(
+                            div()
+                                .size(px(10.0))
+                                .rounded_full()
+                                .border_2()
+                                .border_color(rgb(*color)),
+                        )
                         .child(widgets::h3(name.clone()))
                         .child(widgets::counter(cards.len() as i64)),
                 );
             for (ii, item) in cards.iter().enumerate() {
-                column = column.child(project_card(&format!("pc{ci}-{ii}"), pid, scope, &field_id, &options, item));
+                column = column.child(project_card(
+                    &format!("pc{ci}-{ii}"),
+                    pid,
+                    scope,
+                    &field_id,
+                    &options,
+                    item,
+                ));
             }
             board = board.child(column);
         }
         board.into_any_element()
     }
 
-    fn project_table(&mut self, pid: &str, scope: &str, group: Option<&Value>, items: &[Value], cx: &mut Context<Self>) -> AnyElement {
+    fn project_table(
+        &mut self,
+        pid: &str,
+        scope: &str,
+        group: Option<&Value>,
+        items: &[Value],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let mut card = widgets::card();
         if items.is_empty() {
             card = card.child(widgets::empty("This project has no items yet."));
         }
         let field_id = group.map(|g| g.s("id")).unwrap_or_default();
-        let options = group.map(|g| g.list("options").to_vec()).unwrap_or_default();
+        let options = group
+            .map(|g| g.list("options").to_vec())
+            .unwrap_or_default();
         for (i, item) in items.iter().enumerate() {
             let status = item
                 .list("fieldValues.nodes")
@@ -381,8 +484,16 @@ fn item_meta(item: &Value) -> String {
     if item.s("type") == "DRAFT_ISSUE" {
         "Draft".into()
     } else {
-        let assignees: Vec<String> = item.list("content.assignees.nodes").iter().map(|a| a.s("login")).collect();
-        let mut meta = format!("{}#{}", item.s("content.repository.nameWithOwner"), item.i("content.number"));
+        let assignees: Vec<String> = item
+            .list("content.assignees.nodes")
+            .iter()
+            .map(|a| a.s("login"))
+            .collect();
+        let mut meta = format!(
+            "{}#{}",
+            item.s("content.repository.nameWithOwner"),
+            item.i("content.number")
+        );
         if !assignees.is_empty() {
             meta.push_str(&format!("  ·  {}", assignees.join(", ")));
         }
@@ -402,7 +513,13 @@ fn item_open(item: &Value) -> Act {
     }
 }
 
-fn item_menu(pid: &str, scope: &str, field_id: &str, options: &[Value], item: &Value) -> Vec<MenuEntry> {
+fn item_menu(
+    pid: &str,
+    scope: &str,
+    field_id: &str,
+    options: &[Value],
+    item: &Value,
+) -> Vec<MenuEntry> {
     let item_id = item.s("id");
     let mut entries = Vec::new();
     for o in options {
@@ -459,7 +576,14 @@ fn item_menu(pid: &str, scope: &str, field_id: &str, options: &[Value], item: &V
     entries
 }
 
-fn project_card(id: &str, pid: &str, scope: &str, field_id: &str, options: &[Value], item: &Value) -> AnyElement {
+fn project_card(
+    id: &str,
+    pid: &str,
+    scope: &str,
+    field_id: &str,
+    options: &[Value],
+    item: &Value,
+) -> AnyElement {
     let p = palette();
     let (icon_name, color) = item_icon(item);
     let menu = Act::menu(item_menu(pid, scope, field_id, options, item));
@@ -487,6 +611,10 @@ fn project_card(id: &str, pid: &str, scope: &str, field_id: &str, options: &[Val
                         .on_click(on(menu)),
                 ),
         )
-        .child(div().font_weight(FontWeight::MEDIUM).child(item_title(item)))
+        .child(
+            div()
+                .font_weight(FontWeight::MEDIUM)
+                .child(item_title(item)),
+        )
         .into_any_element()
 }

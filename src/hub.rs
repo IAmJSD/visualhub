@@ -13,12 +13,12 @@ use crate::api::{self, Client};
 use crate::forge::{Account, Forge};
 use crate::form::{FormSpec, FormValues};
 use crate::json::Json as _;
+use crate::ui::{LineEdit, LineEditKey, TextPress};
 use anyhow::Result;
 use gpui::{
-    App, ClickEvent, ClipboardItem, Context, FocusHandle, Image,
-    ImageFormat, KeyDownEvent, Pixels, Point, WeakEntity, Window,
+    App, ClickEvent, ClipboardItem, Context, FocusHandle, Image, ImageFormat, KeyDownEvent, Pixels,
+    Point, WeakEntity, Window,
 };
-use crate::ui::{LineEdit, LineEditKey, TextPress};
 use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -63,31 +63,81 @@ pub enum Route {
     Repos,
     Pulls,
     Issues,
-    Repo { repo: String, tab: RepoTab },
+    Repo {
+        repo: String,
+        tab: RepoTab,
+    },
     /// A directory listing or a file, at a branch, tag or commit.
-    Tree { repo: String, git_ref: String, path: String, file: bool },
-    Issue { repo: String, number: u64 },
-    Pull { repo: String, number: u64, tab: PullTab },
+    Tree {
+        repo: String,
+        git_ref: String,
+        path: String,
+        file: bool,
+    },
+    Issue {
+        repo: String,
+        number: u64,
+    },
+    Pull {
+        repo: String,
+        number: u64,
+        tab: PullTab,
+    },
     /// Resolving a pull request's merge conflicts.
-    Conflicts { repo: String, number: u64 },
-    Commit { repo: String, sha: String },
-    Compare { repo: String, base: String, head: String },
-    Run { repo: String, id: u64 },
+    Conflicts {
+        repo: String,
+        number: u64,
+    },
+    Commit {
+        repo: String,
+        sha: String,
+    },
+    Compare {
+        repo: String,
+        base: String,
+        head: String,
+    },
+    Run {
+        repo: String,
+        id: u64,
+    },
     /// A GitLab CI job and its log.
-    Job { repo: String, id: u64 },
-    Release { repo: String, id: u64 },
-    Discussion { repo: String, number: u64 },
-    User { login: String },
-    Org { login: String },
-    Team { org: String, slug: String },
+    Job {
+        repo: String,
+        id: u64,
+    },
+    Release {
+        repo: String,
+        id: u64,
+    },
+    Discussion {
+        repo: String,
+        number: u64,
+    },
+    User {
+        login: String,
+    },
+    Org {
+        login: String,
+    },
+    Team {
+        org: String,
+        slug: String,
+    },
     Gists,
-    Gist { id: String },
+    Gist {
+        id: String,
+    },
     /// The New repository page, owned by you or `owner`.
-    NewRepo { owner: Option<String> },
+    NewRepo {
+        owner: Option<String>,
+    },
     NewGist,
     Search,
     Projects,
-    Project { id: String },
+    Project {
+        id: String,
+    },
     Codespaces,
     Packages,
     Settings,
@@ -126,7 +176,9 @@ impl Route {
             Route::Tree { repo, path, .. } => format!("{repo}/{path}"),
             Route::Issue { repo, number } => format!("{repo}#{number}"),
             Route::Pull { repo, number, .. } => format!("{repo}{}", crate::forge::pr_ref(number)),
-            Route::Conflicts { repo, number } => format!("Conflicts in {repo}{}", crate::forge::pr_ref(number)),
+            Route::Conflicts { repo, number } => {
+                format!("Conflicts in {repo}{}", crate::forge::pr_ref(number))
+            }
             Route::Commit { repo, sha } => format!("{repo}@{}", &sha[..sha.len().min(7)]),
             Route::Compare { repo, base, head } => format!("{repo} {base}...{head}"),
             Route::Run { repo, id } if crate::forge::is_gitlab() => format!("{repo} pipeline {id}"),
@@ -154,7 +206,12 @@ impl Route {
     pub fn owns_scroll(&self) -> bool {
         matches!(
             self,
-            Route::Tree { file: true, .. } | Route::Pull { tab: PullTab::Files, .. } | Route::Job { .. }
+            Route::Tree { file: true, .. }
+                | Route::Pull {
+                    tab: PullTab::Files,
+                    ..
+                }
+                | Route::Job { .. }
         )
     }
 
@@ -190,7 +247,12 @@ impl Route {
                 };
                 format!("{w}/{repo}{suffix}")
             }
-            Route::Tree { repo, git_ref, path, file } => format!(
+            Route::Tree {
+                repo,
+                git_ref,
+                path,
+                file,
+            } => format!(
                 "{w}/{repo}/{}/{git_ref}/{path}",
                 if *file { "blob" } else { "tree" }
             ),
@@ -228,8 +290,21 @@ pub fn route_for_url(url: &str) -> Option<Route> {
     let rest = rest.split(['?', '#']).next().unwrap_or("");
     let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
     let reserved = [
-        "settings", "notifications", "pulls", "issues", "marketplace", "explore", "topics",
-        "sponsors", "features", "login", "orgs", "apps", "search", "codespaces", "new",
+        "settings",
+        "notifications",
+        "pulls",
+        "issues",
+        "marketplace",
+        "explore",
+        "topics",
+        "sponsors",
+        "features",
+        "login",
+        "orgs",
+        "apps",
+        "search",
+        "codespaces",
+        "new",
     ];
     match parts.as_slice() {
         [] => Some(Route::Home),
@@ -277,10 +352,7 @@ pub fn route_for_url(url: &str) -> Option<Route> {
                 },
                 // A job opens on github.com, which can stream its log.
                 ["actions", "runs", _, "job", ..] => return None,
-                ["actions", "runs", id, ..] => Route::Run {
-                    repo,
-                    id: num(id)?,
-                },
+                ["actions", "runs", id, ..] => Route::Run { repo, id: num(id)? },
                 ["tree", git_ref, path @ ..] => Route::Tree {
                     repo,
                     git_ref: git_ref.to_string(),
@@ -578,9 +650,7 @@ pub enum Modal {
         error: Option<String>,
     },
     /// A newer release, offered by the update check.
-    Update {
-        update: crate::update::Update,
-    },
+    Update { update: crate::update::Update },
 }
 
 pub struct MenuState {
@@ -639,17 +709,28 @@ fn check_account(account: &Account) -> Result<(Value, String), String> {
     let client = Client::new(account);
     match account.forge {
         Forge::GitHub => match client.raw("GET", "/user", None, None) {
-            Ok(reply) if reply.status == 200 => Ok((serde_json::from_str(&reply.body).unwrap_or(Value::Null), reply.scopes.unwrap_or_default())),
+            Ok(reply) if reply.status == 200 => Ok((
+                serde_json::from_str(&reply.body).unwrap_or(Value::Null),
+                reply.scopes.unwrap_or_default(),
+            )),
             Ok(reply) => Err(format!("GitHub refused the token ({}).", reply.status)),
             Err(e) => Err(format!("{e:#}")),
         },
         Forge::GitLab => {
-            let me = client.json("GET", "/user", None).map_err(|e| format!("{} refused the token: {e:#}", account.host_name()))?;
+            let me = client
+                .json("GET", "/user", None)
+                .map_err(|e| format!("{} refused the token: {e:#}", account.host_name()))?;
             // OAuth tokens (the GitLab CLI's web sign-in) can't describe
             // themselves; they get no scopes listed.
             let scopes = client
                 .raw_json("GET", "/api/v4/personal_access_tokens/self", None)
-                .map(|t| t.list("scopes").iter().filter_map(|s| s.as_str()).collect::<Vec<_>>().join(", "))
+                .map(|t| {
+                    t.list("scopes")
+                        .iter()
+                        .filter_map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
                 .unwrap_or_default();
             Ok((me, scopes))
         }
@@ -806,7 +887,8 @@ impl Hub {
                 .background_executor()
                 .spawn(async move {
                     let found = api::discover_accounts();
-                    let results = crate::gitlab::parallel(&found, |(account, _)| check_account(account));
+                    let results =
+                        crate::gitlab::parallel(&found, |(account, _)| check_account(account));
                     found.into_iter().zip(results).collect::<Vec<_>>()
                 })
                 .await;
@@ -814,8 +896,15 @@ impl Hub {
                 let mut errors = Vec::new();
                 for ((account, source), result) in checked {
                     match result {
-                        Ok((me, scopes)) => hub.know(Known { account, source, me, scopes }),
-                        Err(error) => errors.push(format!("{source} ({}): {error}", account.host_name())),
+                        Ok((me, scopes)) => hub.know(Known {
+                            account,
+                            source,
+                            me,
+                            scopes,
+                        }),
+                        Err(error) => {
+                            errors.push(format!("{source} ({}): {error}", account.host_name()))
+                        }
                     }
                 }
                 if hub.accounts.is_empty() {
@@ -829,7 +918,11 @@ impl Hub {
                         .accounts
                         .iter()
                         .position(|k| !open.is_empty() && open.starts_with(&k.account.web()))
-                        .or_else(|| hub.accounts.iter().position(|k| Some(k.account.key()) == last))
+                        .or_else(|| {
+                            hub.accounts
+                                .iter()
+                                .position(|k| Some(k.account.key()) == last)
+                        })
                         .unwrap_or(0);
                     hub.switch_to(index, cx);
                 }
@@ -842,15 +935,33 @@ impl Hub {
 
     /// Add `known`, or update the account it already is.
     fn know(&mut self, known: Known) {
-        match self.accounts.iter_mut().find(|k| k.account == known.account) {
+        match self
+            .accounts
+            .iter_mut()
+            .find(|k| k.account == known.account)
+        {
             Some(existing) => *existing = known,
             None => self.accounts.push(known),
         }
     }
 
     /// Sign in with a pasted token, keeping it for next time.
-    pub fn sign_in_with(&mut self, forge: Forge, host: String, token: String, cx: &mut Context<Self>) {
-        let account = Account::new(forge, if forge == Forge::GitHub { "github.com" } else { &host }, &token);
+    pub fn sign_in_with(
+        &mut self,
+        forge: Forge,
+        host: String,
+        token: String,
+        cx: &mut Context<Self>,
+    ) {
+        let account = Account::new(
+            forge,
+            if forge == Forge::GitHub {
+                "github.com"
+            } else {
+                &host
+            },
+            &token,
+        );
         if account.token.is_empty() {
             self.sign_in_failed("Paste a personal access token first.".into());
             cx.notify();
@@ -873,8 +984,14 @@ impl Hub {
             this.update(cx, |hub, cx| {
                 match result {
                     Ok((account, (me, scopes))) => {
-                        hub.know(Known { account: account.clone(), source: "saved sign-in", me, scopes });
-                        if let Some(index) = hub.accounts.iter().position(|k| k.account == account) {
+                        hub.know(Known {
+                            account: account.clone(),
+                            source: "saved sign-in",
+                            me,
+                            scopes,
+                        });
+                        if let Some(index) = hub.accounts.iter().position(|k| k.account == account)
+                        {
                             hub.switch_to(index, cx);
                         }
                     }
@@ -919,7 +1036,9 @@ impl Hub {
     /// Show `self.accounts[index]`: the current account's pages are put
     /// away, and the other's come back as they were left.
     pub fn switch_to(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(known) = self.accounts.get(index).cloned() else { return };
+        let Some(known) = self.accounts.get(index).cloned() else {
+            return;
+        };
         let first = self.current.is_none();
         if let Some(current) = self.current.take() {
             if current == known.account && matches!(self.auth, Auth::SignedIn) {
@@ -990,7 +1109,9 @@ impl Hub {
 
     fn put_session(&mut self, mut session: Session) {
         // Answers still on their way when it was put away never landed.
-        session.cache.retain(|_, load| !matches!(load, Load::Loading));
+        session
+            .cache
+            .retain(|_, load| !matches!(load, Load::Loading));
         self.route = session.route;
         self.back = session.back;
         self.forward = session.forward;
@@ -1197,7 +1318,9 @@ impl Hub {
     }
 
     fn start_fetch(&mut self, key: String, work: Work, cx: &mut Context<Self>) {
-        let Some(client) = self.client.clone() else { return };
+        let Some(client) = self.client.clone() else {
+            return;
+        };
         self.next_generation += 1;
         let generation = self.next_generation;
         self.generation.insert(key.clone(), generation);
@@ -1216,7 +1339,9 @@ impl Hub {
                 };
                 // A failed refresh of something already shown keeps
                 // what was there.
-                if matches!(load, Load::Failed(_)) && matches!(hub.cache.get(&key), Some(Load::Ready(_))) {
+                if matches!(load, Load::Failed(_))
+                    && matches!(hub.cache.get(&key), Some(Load::Ready(_)))
+                {
                     return;
                 }
                 hub.cache.insert(key, load);
@@ -1238,7 +1363,9 @@ impl Hub {
         }
         let prefixes = prefixes.to_vec();
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_secs(secs)).await;
+            cx.background_executor()
+                .timer(Duration::from_secs(secs))
+                .await;
             this.update(cx, |hub, cx| {
                 hub.polls.remove(&key);
                 hub.mark_stale(&prefixes);
@@ -1252,7 +1379,12 @@ impl Hub {
     /// Fetch what's cached under `prefixes` again next time it shows,
     /// showing the old answer meanwhile.
     fn mark_stale(&mut self, prefixes: &[String]) {
-        let keys: Vec<String> = self.cache.keys().filter(|k| prefixes.iter().any(|p| k.starts_with(p.as_str()))).cloned().collect();
+        let keys: Vec<String> = self
+            .cache
+            .keys()
+            .filter(|k| prefixes.iter().any(|p| k.starts_with(p.as_str())))
+            .cloned()
+            .collect();
         self.stale.extend(keys);
     }
 
@@ -1281,7 +1413,9 @@ impl Hub {
         self.invalidate("/search/issues");
         for secs in [3, 10, 30] {
             cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(Duration::from_secs(secs)).await;
+                cx.background_executor()
+                    .timer(Duration::from_secs(secs))
+                    .await;
                 this.update(cx, |hub, cx| {
                     hub.mark_stale(&["/search/issues".to_string()]);
                     cx.notify();
@@ -1305,11 +1439,18 @@ impl Hub {
     /// Everything cached is asked again as it's shown, the old answer
     /// staying up until the new one lands.
     fn came_back(&mut self, cx: &mut Context<Self>) {
-        if self.refreshed.elapsed() < Duration::from_secs(30) || !matches!(self.auth, Auth::SignedIn) {
+        if self.refreshed.elapsed() < Duration::from_secs(30)
+            || !matches!(self.auth, Auth::SignedIn)
+        {
             return;
         }
         self.refreshed = std::time::Instant::now();
-        let keys: Vec<String> = self.cache.iter().filter(|(_, load)| !matches!(load, Load::Loading)).map(|(k, _)| k.clone()).collect();
+        let keys: Vec<String> = self
+            .cache
+            .iter()
+            .filter(|(_, load)| !matches!(load, Load::Loading))
+            .map(|(k, _)| k.clone())
+            .collect();
         self.stale.extend(keys);
         cx.notify();
     }
@@ -1456,7 +1597,10 @@ impl Hub {
 
     pub fn submit_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let form = match &self.modal {
-            Some(Modal::Form { busy: true, .. }) | Some(Modal::Confirm { busy: true, .. }) | Some(Modal::Update { .. }) | None => return,
+            Some(Modal::Form { busy: true, .. })
+            | Some(Modal::Confirm { busy: true, .. })
+            | Some(Modal::Update { .. })
+            | None => return,
             Some(Modal::Form { spec, .. }) => Some(spec.clone()),
             Some(Modal::Confirm { .. }) => None,
         };
@@ -1518,7 +1662,10 @@ impl Hub {
     }
 
     pub fn field_text(&self, id: &str) -> String {
-        self.fields.get(id).map(|f| f.text.clone()).unwrap_or_default()
+        self.fields
+            .get(id)
+            .map(|f| f.text.clone())
+            .unwrap_or_default()
     }
 
     pub fn set_field(&mut self, id: &str, text: impl Into<String>) {
@@ -1733,8 +1880,17 @@ impl Hub {
 
     /// An image at the size its HTML asked for; the other side follows
     /// the picture's own proportions.
-    pub fn image_sized(&mut self, url: &str, width: Option<f32>, height: Option<f32>, cx: &mut Context<Self>) -> gpui::AnyElement {
-        use gpui::{div, img, prelude::FluentBuilder as _, px, IntoElement as _, ParentElement as _, Styled as _};
+    pub fn image_sized(
+        &mut self,
+        url: &str,
+        width: Option<f32>,
+        height: Option<f32>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        use gpui::{
+            div, img, prelude::FluentBuilder as _, px, IntoElement as _, ParentElement as _,
+            Styled as _,
+        };
         let p = crate::ui::palette();
         match self.load_image(url.to_string(), cx) {
             Some(image) => img(image)
@@ -1757,7 +1913,6 @@ impl Hub {
                 .into_any_element(),
         }
     }
-
 }
 
 /// An image's format from its first bytes.
@@ -1779,12 +1934,18 @@ fn issues_repo(prefix: &str) -> Option<String> {
     let rest = prefix.strip_prefix("/repos/")?;
     let parts: Vec<&str> = rest.split(['/', '?', '#']).collect();
     // A GitLab project's path is as long as its groups nest.
-    let n = if crate::forge::is_gitlab() { crate::forge::repo_len(&parts) } else { 2 };
+    let n = if crate::forge::is_gitlab() {
+        crate::forge::repo_len(&parts)
+    } else {
+        2
+    };
     if n < 2 || parts.len() < n || parts[..n].iter().any(|p| p.is_empty()) {
         return None;
     }
     match parts.get(n) {
-        None | Some(&"issues") | Some(&"pulls") | Some(&"merge_requests") => Some(parts[..n].join("/")),
+        None | Some(&"issues") | Some(&"pulls") | Some(&"merge_requests") => {
+            Some(parts[..n].join("/"))
+        }
         _ => None,
     }
 }

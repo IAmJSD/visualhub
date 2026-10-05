@@ -5,13 +5,13 @@
 use crate::form::{Field, FormSpec};
 use crate::hub::{on, Act, Hub};
 use crate::json::Json as _;
+use crate::ui::{is_light, palette, IconButton};
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _,
     ParentElement as _, StatefulInteractiveElement as _, Styled as _,
 };
-use crate::ui::{is_light, palette, IconButton};
 use serde_json::{json, Value};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -141,7 +141,11 @@ impl Hub {
             .child(
                 IconButton::new(
                     ElementId::Name(format!("{id}-fold").into()),
-                    if collapsed { "chevron-right" } else { "chevron-down" },
+                    if collapsed {
+                        "chevron-right"
+                    } else {
+                        "chevron-down"
+                    },
                 )
                 .size(22.0)
                 .on_click(on(Act::run(move |hub, _, cx| {
@@ -194,8 +198,22 @@ impl Hub {
         }
         let lines = parse(&patch);
         // Coloured as the file's language, restarting at each hunk.
-        let texts: Vec<String> = lines.iter().map(|l| if l.kind == Kind::Hunk { String::new() } else { l.text.replace('\t', "    ") }).collect();
-        let breaks: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| l.kind == Kind::Hunk).map(|(i, _)| i).collect();
+        let texts: Vec<String> = lines
+            .iter()
+            .map(|l| {
+                if l.kind == Kind::Hunk {
+                    String::new()
+                } else {
+                    l.text.replace('\t', "    ")
+                }
+            })
+            .collect();
+        let breaks: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.kind == Kind::Hunk)
+            .map(|(i, _)| i)
+            .collect();
         let colours = crate::highlight::lines(crate::highlight::syntax_for(&name), &texts, &breaks);
         let mut body = div()
             .id(ElementId::Name(format!("{id}-body").into()))
@@ -249,7 +267,10 @@ impl Hub {
                             .flex_1()
                             .min_w_0()
                             .pr_4()
-                            .child(crate::highlight::styled(&texts[i], colours.as_ref().map(|c| c[i].as_slice()))),
+                            .child(crate::highlight::styled(
+                                &texts[i],
+                                colours.as_ref().map(|c| c[i].as_slice()),
+                            )),
                     );
                 if let Some(target) = review {
                     let (side, at) = match line.kind {
@@ -270,7 +291,9 @@ impl Hub {
             let here: Vec<&Value> = comments
                 .iter()
                 .filter(|c| match line.kind {
-                    Kind::Del => c.s("side") == "LEFT" && c.i("line") as u32 == line.old.unwrap_or(0),
+                    Kind::Del => {
+                        c.s("side") == "LEFT" && c.i("line") as u32 == line.old.unwrap_or(0)
+                    }
                     Kind::Hunk => false,
                     _ => c.s("side") != "LEFT" && c.i("line") as u32 == line.new.unwrap_or(0),
                 })
@@ -313,16 +336,27 @@ impl Hub {
             .inval(pulls_url.trim_start_matches(crate::api::API).to_string())
             .act();
         let edit = FormSpec::new("Edit comment")
-            .field(Field::multiline("body", "Comment").value(comment.s("body")).required())
+            .field(
+                Field::multiline("body", "Comment")
+                    .value(comment.s("body"))
+                    .required(),
+            )
             .rest("PATCH", url.trim_start_matches(crate::api::API).to_string())
             .ok("Comment updated")
             .inval(pulls_url.trim_start_matches(crate::api::API).to_string())
             .act();
-        let delete = crate::hub::Req::rest("DELETE", url.trim_start_matches(crate::api::API).to_string())
-            .ok("Comment deleted")
-            .inval(pulls_url.trim_start_matches(crate::api::API).to_string())
-            .act()
-            .confirm("Delete comment?", "This review comment will be removed.", "Delete");
+        let delete = crate::hub::Req::rest(
+            "DELETE",
+            url.trim_start_matches(crate::api::API).to_string(),
+        )
+        .ok("Comment deleted")
+        .inval(pulls_url.trim_start_matches(crate::api::API).to_string())
+        .act()
+        .confirm(
+            "Delete comment?",
+            "This review comment will be removed.",
+            "Delete",
+        );
         div()
             .flex()
             .flex_row()
@@ -339,15 +373,28 @@ impl Hub {
                             .child(widgets::h3(comment.s("user.login")))
                             .child(widgets::dim(crate::time::ago(&comment.s("created_at"))))
                             .child(widgets::spacer())
-                            .child(widgets::btn(ElementId::Name(format!("{id}-reply").into()), "Reply", reply).h(px(22.0)))
                             .child(
-                                IconButton::new(ElementId::Name(format!("{id}-more").into()), "kebab")
-                                    .on_click(on(Act::menu(vec![
-                                        crate::hub::MenuEntry::item("Edit", edit),
-                                        crate::hub::MenuEntry::item("Copy link", Act::Copy(comment.s("html_url"))),
-                                        crate::hub::MenuEntry::Sep,
-                                        crate::hub::MenuEntry::item("Delete", delete),
-                                    ]))),
+                                widgets::btn(
+                                    ElementId::Name(format!("{id}-reply").into()),
+                                    "Reply",
+                                    reply,
+                                )
+                                .h(px(22.0)),
+                            )
+                            .child(
+                                IconButton::new(
+                                    ElementId::Name(format!("{id}-more").into()),
+                                    "kebab",
+                                )
+                                .on_click(on(Act::menu(vec![
+                                    crate::hub::MenuEntry::item("Edit", edit),
+                                    crate::hub::MenuEntry::item(
+                                        "Copy link",
+                                        Act::Copy(comment.s("html_url")),
+                                    ),
+                                    crate::hub::MenuEntry::Sep,
+                                    crate::hub::MenuEntry::item("Delete", delete),
+                                ]))),
                             ),
                     )
                     .child(body),

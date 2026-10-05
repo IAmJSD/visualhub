@@ -12,8 +12,8 @@ use crate::widgets::{self, rgb};
 use anyhow::{anyhow, bail, Result};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _,
+    div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, StatefulInteractiveElement as _, Styled as _,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -33,7 +33,11 @@ pub enum Pick {
 #[derive(Clone)]
 pub enum Chunk {
     Clean(Vec<String>),
-    Conflict { current: Vec<String>, incoming: Vec<String>, pick: Option<Pick> },
+    Conflict {
+        current: Vec<String>,
+        incoming: Vec<String>,
+        pick: Option<Pick>,
+    },
 }
 
 pub struct ConflictFile {
@@ -50,7 +54,10 @@ pub struct ConflictFile {
 
 impl ConflictFile {
     fn conflicts(&self) -> usize {
-        self.chunks.iter().filter(|c| matches!(c, Chunk::Conflict { .. })).count()
+        self.chunks
+            .iter()
+            .filter(|c| matches!(c, Chunk::Conflict { .. }))
+            .count()
     }
 
     fn unresolved(&self) -> usize {
@@ -58,8 +65,15 @@ impl ConflictFile {
             return usize::from(self.binary_pick.is_none());
         }
         match &self.edited {
-            Some(text) => text.lines().filter(|l| l.starts_with(&"<".repeat(MARK))).count(),
-            None => self.chunks.iter().filter(|c| matches!(c, Chunk::Conflict { pick: None, .. })).count(),
+            Some(text) => text
+                .lines()
+                .filter(|l| l.starts_with(&"<".repeat(MARK)))
+                .count(),
+            None => self
+                .chunks
+                .iter()
+                .filter(|c| matches!(c, Chunk::Conflict { pick: None, .. }))
+                .count(),
         }
     }
 
@@ -73,7 +87,11 @@ impl ConflictFile {
         for chunk in &self.chunks {
             match chunk {
                 Chunk::Clean(lines) => out.extend(lines.iter().cloned()),
-                Chunk::Conflict { current: c, incoming: i, pick } => match pick {
+                Chunk::Conflict {
+                    current: c,
+                    incoming: i,
+                    pick,
+                } => match pick {
                     Some(Pick::Current) => out.extend(c.iter().cloned()),
                     Some(Pick::Incoming) => out.extend(i.iter().cloned()),
                     Some(Pick::Both) => {
@@ -148,10 +166,18 @@ fn chunks(merged: &str) -> Vec<Chunk> {
             Some((_, _, in_theirs)) if bare == mid => *in_theirs = true,
             Some(_) if bare.starts_with(&close) => {
                 let (current, incoming, _) = side.take().unwrap();
-                out.push(Chunk::Conflict { current, incoming, pick: None });
+                out.push(Chunk::Conflict {
+                    current,
+                    incoming,
+                    pick: None,
+                });
             }
             Some((c, i, in_theirs)) => {
-                if *in_theirs { i.push(line) } else { c.push(line) }
+                if *in_theirs {
+                    i.push(line)
+                } else {
+                    c.push(line)
+                }
             }
         }
     }
@@ -165,7 +191,14 @@ fn chunks(merged: &str) -> Vec<Chunk> {
 /// isn't text we can merge.
 fn file_at(client: &Client, repo: &str, path: &str, sha: &str) -> Result<Option<String>, ()> {
     use base64::Engine as _;
-    let reply = client.send("GET", &format!("/repos/{repo}/contents/{}?ref={sha}", enc_path(path)), None, None).map_err(|_| ())?;
+    let reply = client
+        .send(
+            "GET",
+            &format!("/repos/{repo}/contents/{}?ref={sha}", enc_path(path)),
+            None,
+            None,
+        )
+        .map_err(|_| ())?;
     if reply.status == 404 {
         return Ok(None);
     }
@@ -173,7 +206,9 @@ fn file_at(client: &Client, repo: &str, path: &str, sha: &str) -> Result<Option<
     if v.s("encoding") != "base64" {
         return Err(());
     }
-    let bytes = base64::engine::general_purpose::STANDARD.decode(v.s("content").replace('\n', "")).map_err(|_| ())?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(v.s("content").replace('\n', ""))
+        .map_err(|_| ())?;
     String::from_utf8(bytes).map(Some).map_err(|_| ())
 }
 
@@ -197,14 +232,28 @@ pub fn load(client: &Client, repo: &str, number: u64) -> Result<Session> {
     let head_sha = pr.s("head.sha");
     // The PR's base.sha lags the branch; merge with where it is now.
     let base_ref = pr.s("base.ref");
-    let base_sha = client.get(&format!("/repos/{repo}/branches/{}", enc_path(&base_ref)))?.s("commit.sha");
-    let head_repo = if pr.s("head.repo.full_name").is_empty() { repo.to_string() } else { pr.s("head.repo.full_name") };
-    let ancestor = client.get(&format!("/repos/{repo}/compare/{base_sha}...{head_sha}?per_page=1"))?.s("merge_base_commit.sha");
+    let base_sha = client
+        .get(&format!("/repos/{repo}/branches/{}", enc_path(&base_ref)))?
+        .s("commit.sha");
+    let head_repo = if pr.s("head.repo.full_name").is_empty() {
+        repo.to_string()
+    } else {
+        pr.s("head.repo.full_name")
+    };
+    let ancestor = client
+        .get(&format!(
+            "/repos/{repo}/compare/{base_sha}...{head_sha}?per_page=1"
+        ))?
+        .s("merge_base_commit.sha");
     if ancestor.is_empty() {
         bail!("GitHub couldn't find where the branches parted.");
     }
     // Whole trees rather than compare's file lists, which stop at 300.
-    let (anc, head, base) = (tree(client, repo, &ancestor)?, tree(client, repo, &head_sha)?, tree(client, repo, &base_sha)?);
+    let (anc, head, base) = (
+        tree(client, repo, &ancestor)?,
+        tree(client, repo, &head_sha)?,
+        tree(client, repo, &base_sha)?,
+    );
     let mut paths: Vec<&String> = anc.keys().chain(head.keys()).chain(base.keys()).collect();
     paths.sort();
     paths.dedup();
@@ -220,28 +269,56 @@ pub fn load(client: &Client, repo: &str, number: u64) -> Result<Session> {
             // The base didn't touch it, or both ended up the same.
             continue;
         }
-        let mode = b.or(h).map(|(_, m)| m.clone()).unwrap_or_else(|| "100644".into());
+        let mode = b
+            .or(h)
+            .map(|(_, m)| m.clone())
+            .unwrap_or_else(|| "100644".into());
         if h_sha == a_sha {
             // Only the base changed it: take the base's version.
-            base_only.push(BaseChange { path: path.clone(), sha: b_sha, mode });
+            base_only.push(BaseChange {
+                path: path.clone(),
+                sha: b_sha,
+                mode,
+            });
             continue;
         }
         // Both changed it, differently: merge the three versions.
         let sides = (
-            a_sha.as_ref().map_or(Ok(None), |_| file_at(client, repo, path, &ancestor)),
-            h_sha.as_ref().map_or(Ok(None), |_| file_at(client, repo, path, &head_sha)),
-            b_sha.as_ref().map_or(Ok(None), |_| file_at(client, repo, path, &base_sha)),
+            a_sha
+                .as_ref()
+                .map_or(Ok(None), |_| file_at(client, repo, path, &ancestor)),
+            h_sha
+                .as_ref()
+                .map_or(Ok(None), |_| file_at(client, repo, path, &head_sha)),
+            b_sha
+                .as_ref()
+                .map_or(Ok(None), |_| file_at(client, repo, path, &base_sha)),
         );
-        let mode = h.or(b).map(|(_, m)| m.clone()).unwrap_or_else(|| "100644".into());
+        let mode = h
+            .or(b)
+            .map(|(_, m)| m.clone())
+            .unwrap_or_else(|| "100644".into());
         match sides {
             (Ok(a), Ok(cur), Ok(inc)) => {
                 let deletable = cur.is_none() || inc.is_none();
-                let (a, cur, inc) = (a.unwrap_or_default(), cur.unwrap_or_default(), inc.unwrap_or_default());
+                let (a, cur, inc) = (
+                    a.unwrap_or_default(),
+                    cur.unwrap_or_default(),
+                    inc.unwrap_or_default(),
+                );
                 let mut opts = diffy::MergeOptions::new();
-                opts.set_conflict_style(diffy::ConflictStyle::Merge).set_conflict_marker_length(MARK);
+                opts.set_conflict_style(diffy::ConflictStyle::Merge)
+                    .set_conflict_marker_length(MARK);
                 match opts.merge(&a, &cur, &inc) {
                     Ok(text) => merged.push((path.clone(), text, mode)),
-                    Err(text) => files.push(ConflictFile { path: path.clone(), chunks: chunks(&text), edited: None, deletable, binary: None, binary_pick: None }),
+                    Err(text) => files.push(ConflictFile {
+                        path: path.clone(),
+                        chunks: chunks(&text),
+                        edited: None,
+                        deletable,
+                        binary: None,
+                        binary_pick: None,
+                    }),
                 }
             }
             _ => files.push(ConflictFile {
@@ -254,7 +331,10 @@ pub fn load(client: &Client, repo: &str, number: u64) -> Result<Session> {
             }),
         }
     }
-    let mut modes: HashMap<String, String> = head.iter().map(|(p, (_, m))| (p.clone(), m.clone())).collect();
+    let mut modes: HashMap<String, String> = head
+        .iter()
+        .map(|(p, (_, m))| (p.clone(), m.clone()))
+        .collect();
     modes.extend(base.iter().map(|(p, (_, m))| (p.clone(), m.clone())));
     Ok(Session {
         head_repo,
@@ -287,9 +367,20 @@ struct Plan {
 
 fn commit(client: &Client, plan: &Plan) -> Result<String> {
     let same_repo = plan.repo == plan.head_repo;
-    let head_tree = client.get(&format!("/repos/{}/git/commits/{}", plan.head_repo, plan.head_sha))?.s("tree.sha");
+    let head_tree = client
+        .get(&format!(
+            "/repos/{}/git/commits/{}",
+            plan.head_repo, plan.head_sha
+        ))?
+        .s("tree.sha");
     let blob = |text: &str| -> Result<String> {
-        Ok(client.json("POST", &format!("/repos/{}/git/blobs", plan.head_repo), Some(&json!({ "content": text, "encoding": "utf-8" })))?.s("sha"))
+        Ok(client
+            .json(
+                "POST",
+                &format!("/repos/{}/git/blobs", plan.head_repo),
+                Some(&json!({ "content": text, "encoding": "utf-8" })),
+            )?
+            .s("sha"))
     };
     let mut tree = Vec::new();
     for (path, text, mode) in &plan.writes {
@@ -305,7 +396,15 @@ fn commit(client: &Client, plan: &Plan) -> Result<String> {
             Some(sha) if !same_repo => {
                 let raw = client.get(&format!("/repos/{}/git/blobs/{sha}", plan.repo))?;
                 let content = raw.s("content").replace('\n', "");
-                Value::String(client.json("POST", &format!("/repos/{}/git/blobs", plan.head_repo), Some(&json!({ "content": content, "encoding": "base64" })))?.s("sha"))
+                Value::String(
+                    client
+                        .json(
+                            "POST",
+                            &format!("/repos/{}/git/blobs", plan.head_repo),
+                            Some(&json!({ "content": content, "encoding": "base64" })),
+                        )?
+                        .s("sha"),
+                )
             }
             Some(sha) => Value::String(sha.clone()),
             None => Value::Null,
@@ -314,13 +413,27 @@ fn commit(client: &Client, plan: &Plan) -> Result<String> {
         let kind = if mode == "160000" { "commit" } else { "blob" };
         tree.push(json!({ "path": path, "mode": mode, "type": kind, "sha": sha }));
     }
-    let new_tree = client.json("POST", &format!("/repos/{}/git/trees", plan.head_repo), Some(&json!({ "base_tree": head_tree, "tree": tree })))?.s("sha");
+    let new_tree = client
+        .json(
+            "POST",
+            &format!("/repos/{}/git/trees", plan.head_repo),
+            Some(&json!({ "base_tree": head_tree, "tree": tree })),
+        )?
+        .s("sha");
     let message = format!("Merge branch '{}' into {}", plan.base_ref, plan.head_ref);
     let commit = client
         .json("POST", &format!("/repos/{}/git/commits", plan.head_repo), Some(&json!({ "message": message, "tree": new_tree, "parents": [plan.head_sha, plan.base_sha] })))?
         .s("sha");
     client
-        .json("PATCH", &format!("/repos/{}/git/refs/heads/{}", plan.head_repo, enc_path(&plan.head_ref)), Some(&json!({ "sha": commit, "force": false })))
+        .json(
+            "PATCH",
+            &format!(
+                "/repos/{}/git/refs/heads/{}",
+                plan.head_repo,
+                enc_path(&plan.head_ref)
+            ),
+            Some(&json!({ "sha": commit, "force": false })),
+        )
         .map_err(|e| anyhow!("Couldn't move {} to the merge: {e:#}", plan.head_ref))?;
     Ok(commit)
 }
@@ -338,12 +451,17 @@ impl Hub {
     }
 
     fn start_session(&mut self, repo: &str, number: u64, cx: &mut Context<Self>) {
-        let Some(client) = self.client.clone() else { return };
+        let Some(client) = self.client.clone() else {
+            return;
+        };
         let k = key(repo, number);
         self.conflicts.insert(k.clone(), SessionLoad::Loading);
         let repo = repo.to_string();
         cx.spawn(async move |this, cx| {
-            let result = cx.background_executor().spawn(async move { load(&client, &repo, number) }).await;
+            let result = cx
+                .background_executor()
+                .spawn(async move { load(&client, &repo, number) })
+                .await;
             this.update(cx, |hub, cx| {
                 hub.conflicts.insert(
                     k,
@@ -360,13 +478,32 @@ impl Hub {
     }
 
     fn commit_resolution(&mut self, repo: &str, number: u64, cx: &mut Context<Self>) {
-        let Some(client) = self.client.clone() else { return };
-        let edits: HashMap<String, String> = self.fields.iter().filter_map(|(k, f)| k.strip_prefix(&format!("conflict:{repo}#{number}:")).map(|p| (p.to_string(), f.text.clone()))).collect();
-        let Some(s) = self.session(repo, number) else { return };
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        let edits: HashMap<String, String> = self
+            .fields
+            .iter()
+            .filter_map(|(k, f)| {
+                k.strip_prefix(&format!("conflict:{repo}#{number}:"))
+                    .map(|p| (p.to_string(), f.text.clone()))
+            })
+            .collect();
+        let Some(s) = self.session(repo, number) else {
+            return;
+        };
         let (current, incoming) = (s.head_ref.clone(), s.base_ref.clone());
-        let mut writes: Vec<(String, Option<String>, String)> = s.merged.iter().map(|(p, t, m)| (p.clone(), Some(t.clone()), m.clone())).collect();
+        let mut writes: Vec<(String, Option<String>, String)> = s
+            .merged
+            .iter()
+            .map(|(p, t, m)| (p.clone(), Some(t.clone()), m.clone()))
+            .collect();
         for f in &s.files {
-            let mode = s.modes.get(&f.path).cloned().unwrap_or_else(|| "100644".into());
+            let mode = s
+                .modes
+                .get(&f.path)
+                .cloned()
+                .unwrap_or_else(|| "100644".into());
             if f.binary.is_some() {
                 // Kept whole from one side; see `binaries` below.
                 continue;
@@ -378,8 +515,16 @@ impl Hub {
             let delete = f.deletable && text.trim().is_empty();
             writes.push((f.path.clone(), (!delete).then_some(text), mode));
         }
-        let binaries: Vec<(String, Pick)> = s.files.iter().filter_map(|f| Some((f.path.clone(), f.binary_pick?))).collect();
-        let base_only = s.base_only.iter().map(|c| (c.path.clone(), c.sha.clone(), c.mode.clone())).collect();
+        let binaries: Vec<(String, Pick)> = s
+            .files
+            .iter()
+            .filter_map(|f| Some((f.path.clone(), f.binary_pick?)))
+            .collect();
+        let base_only = s
+            .base_only
+            .iter()
+            .map(|c| (c.path.clone(), c.sha.clone(), c.mode.clone()))
+            .collect();
         let plan = Plan {
             repo: repo.to_string(),
             head_repo: s.head_repo.clone(),
@@ -403,7 +548,12 @@ impl Hub {
                     for (path, pick) in binaries {
                         if pick == Pick::Incoming {
                             let sha = client
-                                .get(&format!("/repos/{}/contents/{}?ref={}", plan.repo, enc_path(&path), plan.base_sha))
+                                .get(&format!(
+                                    "/repos/{}/contents/{}?ref={}",
+                                    plan.repo,
+                                    enc_path(&path),
+                                    plan.base_sha
+                                ))
                                 .map(|v| v.s("sha"))
                                 .ok()
                                 .filter(|s| !s.is_empty());
@@ -419,7 +569,14 @@ impl Hub {
                         hub.conflicts.remove(&key(&repo, number));
                         hub.invalidate(&format!("/repos/{repo}"));
                         hub.toast("Merge committed — the conflicts are resolved", false, cx);
-                        hub.go(Route::Pull { repo: repo.clone(), number, tab: PullTab::Conversation }, cx);
+                        hub.go(
+                            Route::Pull {
+                                repo: repo.clone(),
+                                number,
+                                tab: PullTab::Conversation,
+                            },
+                            cx,
+                        );
                     }
                     Err(e) => {
                         if let Some(s) = hub.session(&repo, number) {
@@ -435,7 +592,12 @@ impl Hub {
         .detach();
     }
 
-    pub fn conflicts_page(&mut self, repo: &str, number: u64, cx: &mut Context<Self>) -> AnyElement {
+    pub fn conflicts_page(
+        &mut self,
+        repo: &str,
+        number: u64,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette();
         let k = key(repo, number);
         match self.conflicts.get(&k) {
@@ -456,21 +618,31 @@ impl Hub {
                 return widgets::page()
                     .child(widgets::title("Resolving conflicts"))
                     .child(widgets::error_box(&e))
-                    .child(widgets::btn("conflicts-retry", "Try again", Act::run(move |hub, _, cx| {
-                        hub.conflicts.remove(&key(&r, n));
-                        cx.notify();
-                    })))
+                    .child(widgets::btn(
+                        "conflicts-retry",
+                        "Try again",
+                        Act::run(move |hub, _, cx| {
+                            hub.conflicts.remove(&key(&r, n));
+                            cx.notify();
+                        }),
+                    ))
                     .into_any_element();
             }
             Some(SessionLoad::Ready(_)) => {}
         }
-        let Some(s) = self.session(repo, number) else { return div().into_any_element() };
+        let Some(s) = self.session(repo, number) else {
+            return div().into_any_element();
+        };
         let (current, incoming) = (s.head_ref.clone(), s.base_ref.clone());
         let left: usize = s.files.iter().map(|f| f.unresolved()).sum();
         let committing = s.committing;
         let selected = s.selected.min(s.files.len().saturating_sub(1));
         let auto = s.merged.len();
-        let file_rows: Vec<(String, usize, usize)> = s.files.iter().map(|f| (f.path.clone(), f.conflicts().max(1), f.unresolved())).collect();
+        let file_rows: Vec<(String, usize, usize)> = s
+            .files
+            .iter()
+            .map(|f| (f.path.clone(), f.conflicts().max(1), f.unresolved()))
+            .collect();
 
         let (r, n) = (repo.to_string(), number);
         let header = widgets::row()
@@ -487,15 +659,32 @@ impl Hub {
                             .child(widgets::tag(current.clone(), widgets::gray()))
                             .child(widgets::dim("and"))
                             .child(widgets::tag(incoming.clone(), widgets::gray()))
-                            .when(auto > 0, |d| d.child(widgets::faint(format!("  ·  {auto} more file{} merged cleanly", if auto == 1 { "" } else { "s" })))),
+                            .when(auto > 0, |d| {
+                                d.child(widgets::faint(format!(
+                                    "  ·  {auto} more file{} merged cleanly",
+                                    if auto == 1 { "" } else { "s" }
+                                )))
+                            }),
                     ),
             )
-            .child(widgets::faint(if left == 0 { "All conflicts resolved".to_string() } else { format!("{left} conflict{} left", if left == 1 { "" } else { "s" }) }))
+            .child(widgets::faint(if left == 0 {
+                "All conflicts resolved".to_string()
+            } else {
+                format!("{left} conflict{} left", if left == 1 { "" } else { "s" })
+            }))
             .child(
-                widgets::go_btn("conflicts-commit", if committing { "Committing…" } else { "Commit merge" }, Act::run(move |hub, _, cx| hub.commit_resolution(&r, n, cx)))
-                    .h(px(32.0))
-                    .px_4()
-                    .disabled(left > 0 || committing),
+                widgets::go_btn(
+                    "conflicts-commit",
+                    if committing {
+                        "Committing…"
+                    } else {
+                        "Commit merge"
+                    },
+                    Act::run(move |hub, _, cx| hub.commit_resolution(&r, n, cx)),
+                )
+                .h(px(32.0))
+                .px_4()
+                .disabled(left > 0 || committing),
             );
 
         let mut list = widgets::card().w(px(280.0)).flex_none();
@@ -519,18 +708,45 @@ impl Hub {
                         }
                         cx.notify();
                     })))
-                    .child(icon(if *open == 0 { "check-circle" } else { "alert" }, 14.0, if *open == 0 { widgets::green() } else { widgets::yellow() }))
+                    .child(icon(
+                        if *open == 0 { "check-circle" } else { "alert" },
+                        14.0,
+                        if *open == 0 {
+                            widgets::green()
+                        } else {
+                            widgets::yellow()
+                        },
+                    ))
                     .child(
                         widgets::col()
                             .flex_1()
                             .min_w_0()
-                            .child(div().text_ellipsis().overflow_hidden().whitespace_nowrap().font_family(widgets::MONO).text_size(px(12.0)).child(path.rsplit('/').next().unwrap_or(path).to_string()))
+                            .child(
+                                div()
+                                    .text_ellipsis()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .font_family(widgets::MONO)
+                                    .text_size(px(12.0))
+                                    .child(path.rsplit('/').next().unwrap_or(path).to_string()),
+                            )
                             .child(
                                 div()
                                     .text_size(px(12.0))
                                     // On the selection fill the usual faint grey disappears.
-                                    .text_color(rgb(if i == selected { p.text } else { p.text_faint }))
-                                    .child(if *open == 0 { "Resolved".to_string() } else { format!("{open} of {total} conflict{} left", if *total == 1 { "" } else { "s" }) }),
+                                    .text_color(rgb(if i == selected {
+                                        p.text
+                                    } else {
+                                        p.text_faint
+                                    }))
+                                    .child(if *open == 0 {
+                                        "Resolved".to_string()
+                                    } else {
+                                        format!(
+                                            "{open} of {total} conflict{} left",
+                                            if *total == 1 { "" } else { "s" }
+                                        )
+                                    }),
                             ),
                     ),
             );
@@ -554,19 +770,39 @@ impl Hub {
 
     /// One conflicted file: its clean stretches folded, each conflict with
     /// its two sides and the choices, or the whole file to edit by hand.
-    fn conflict_file(&mut self, repo: &str, number: u64, index: usize, current: &str, incoming: &str, cx: &mut Context<Self>) -> AnyElement {
+    fn conflict_file(
+        &mut self,
+        repo: &str,
+        number: u64,
+        index: usize,
+        current: &str,
+        incoming: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette();
         let field = {
-            let Some(s) = self.session(repo, number) else { return div().into_any_element() };
+            let Some(s) = self.session(repo, number) else {
+                return div().into_any_element();
+            };
             let Some(f) = s.files.get(index) else {
-                return widgets::card().child(widgets::empty("No files with conflicts — commit the merge to finish.")).into_any_element();
+                return widgets::card()
+                    .child(widgets::empty(
+                        "No files with conflicts — commit the merge to finish.",
+                    ))
+                    .into_any_element();
             };
             format!("conflict:{repo}#{number}:{}", f.path)
         };
         let (file_path, chunks, editing, binary, binary_pick) = {
             let s = self.session(repo, number).unwrap();
             let f = &s.files[index];
-            (f.path.clone(), f.chunks.clone(), f.edited.is_some(), f.binary.is_some(), f.binary_pick)
+            (
+                f.path.clone(),
+                f.chunks.clone(),
+                f.edited.is_some(),
+                f.binary.is_some(),
+                f.binary_pick,
+            )
         };
         let (r, n) = (repo.to_string(), number);
         let set = move |f: Box<dyn Fn(&mut ConflictFile)>| {
@@ -585,13 +821,24 @@ impl Hub {
         let card = widgets::card().child(
             widgets::card_header()
                 .child(icon("file", 14.0, p.text_dim))
-                .child(div().flex_1().font_family(widgets::MONO).text_size(px(12.0)).font_weight(FontWeight::SEMIBOLD).child(file_path.clone()))
+                .child(
+                    div()
+                        .flex_1()
+                        .font_family(widgets::MONO)
+                        .text_size(px(12.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(file_path.clone()),
+                )
                 .when(!binary, |d| {
                     let (cur, inc) = (current.to_string(), incoming.to_string());
                     let field = field.clone();
                     d.child(widgets::btn(
                         "conflict-edit",
-                        if editing { "Back to choices" } else { "Edit file" },
+                        if editing {
+                            "Back to choices"
+                        } else {
+                            "Edit file"
+                        },
                         Act::run({
                             let (r, n) = (repo.to_string(), number);
                             move |hub, _, cx| {
@@ -618,7 +865,15 @@ impl Hub {
         if binary {
             let pick = |label: &'static str, which: Pick| {
                 let chosen = binary_pick == Some(which);
-                widgets::btn(ElementId::Name(format!("bin-{label}").into()), if chosen { format!("✓ Keep {label}") } else { format!("Keep {label}") }, set(Box::new(move |f| f.binary_pick = Some(which))))
+                widgets::btn(
+                    ElementId::Name(format!("bin-{label}").into()),
+                    if chosen {
+                        format!("✓ Keep {label}")
+                    } else {
+                        format!("Keep {label}")
+                    },
+                    set(Box::new(move |f| f.binary_pick = Some(which))),
+                )
             };
             return card
                 .child(
@@ -634,23 +889,45 @@ impl Hub {
         if editing {
             // Keep the session's copy in step with the box.
             let text = self.field_text(&field);
-            if let Some(f) = self.session(repo, number).and_then(|s| s.files.get_mut(index)) {
+            if let Some(f) = self
+                .session(repo, number)
+                .and_then(|s| s.files.get_mut(index))
+            {
                 f.edited = Some(text);
             }
-            let editor = self.textarea(&field, "", cx).min_h(px(480.0)).font_family(widgets::MONO).text_size(px(12.0));
+            let editor = self
+                .textarea(&field, "", cx)
+                .min_h(px(480.0))
+                .font_family(widgets::MONO)
+                .text_size(px(12.0));
             return card
-                .child(div().p_2().child(widgets::faint(format!("Remove every {}… / {} / {}… block to resolve this file.", "<".repeat(7), "=".repeat(7), ">".repeat(7)))))
+                .child(div().p_2().child(widgets::faint(format!(
+                    "Remove every {}… / {} / {}… block to resolve this file.",
+                    "<".repeat(7),
+                    "=".repeat(7),
+                    ">".repeat(7)
+                ))))
                 .child(div().p_2().child(editor))
                 .into_any_element();
         }
 
-        let mut body = div().flex().flex_col().font_family(widgets::MONO).text_size(px(12.0)).line_height(px(20.0)).py_1();
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .font_family(widgets::MONO)
+            .text_size(px(12.0))
+            .line_height(px(20.0))
+            .py_1();
         let line_el = |text: &str, bg: Option<u32>| {
             div()
                 .px_4()
                 .whitespace_nowrap()
                 .when_some(bg, |d, c| d.bg(rgb(c)))
-                .child(if text.trim_end().is_empty() { " ".to_string() } else { text.trim_end_matches(['\n', '\r']).replace('\t', "    ") })
+                .child(if text.trim_end().is_empty() {
+                    " ".to_string()
+                } else {
+                    text.trim_end_matches(['\n', '\r']).replace('\t', "    ")
+                })
         };
         let light = crate::ui::is_light();
         let (cur_bg, inc_bg, cur_head, inc_head) = if light {
@@ -690,7 +967,11 @@ impl Hub {
                         }
                     }
                 }
-                Chunk::Conflict { current: c, incoming: i, pick } => {
+                Chunk::Conflict {
+                    current: c,
+                    incoming: i,
+                    pick,
+                } => {
                     let choose = |which: Option<Pick>| {
                         set(Box::new(move |f| {
                             if let Some(Chunk::Conflict { pick, .. }) = f.chunks.get_mut(ci) {
@@ -707,13 +988,34 @@ impl Hub {
                                         .px_4()
                                         .pt_2()
                                         .font_family(".SystemUIFont")
-                                        .child(crate::ui::Link::new(("accept-current", ci), "Accept current change").on_click(on(choose(Some(Pick::Current)))))
+                                        .child(
+                                            crate::ui::Link::new(
+                                                ("accept-current", ci),
+                                                "Accept current change",
+                                            )
+                                            .on_click(on(choose(Some(Pick::Current)))),
+                                        )
                                         .child(widgets::faint("|"))
-                                        .child(crate::ui::Link::new(("accept-incoming", ci), "Accept incoming change").on_click(on(choose(Some(Pick::Incoming)))))
+                                        .child(
+                                            crate::ui::Link::new(
+                                                ("accept-incoming", ci),
+                                                "Accept incoming change",
+                                            )
+                                            .on_click(on(choose(Some(Pick::Incoming)))),
+                                        )
                                         .child(widgets::faint("|"))
-                                        .child(crate::ui::Link::new(("accept-both", ci), "Accept both changes").on_click(on(choose(Some(Pick::Both))))),
+                                        .child(
+                                            crate::ui::Link::new(
+                                                ("accept-both", ci),
+                                                "Accept both changes",
+                                            )
+                                            .on_click(on(choose(Some(Pick::Both)))),
+                                        ),
                                 )
-                                .child(line_el(&format!("{} {current} (current change)", "<".repeat(7)), Some(cur_head)));
+                                .child(line_el(
+                                    &format!("{} {current} (current change)", "<".repeat(7)),
+                                    Some(cur_head),
+                                ));
                             for l in c {
                                 body = body.child(line_el(l, Some(cur_bg)));
                             }
@@ -721,7 +1023,10 @@ impl Hub {
                             for l in i {
                                 body = body.child(line_el(l, Some(inc_bg)));
                             }
-                            body = body.child(line_el(&format!("{} {incoming} (incoming change)", ">".repeat(7)), Some(inc_head)));
+                            body = body.child(line_el(
+                                &format!("{} {incoming} (incoming change)", ">".repeat(7)),
+                                Some(inc_head),
+                            ));
                         }
                         Some(which) => {
                             let label = match which {
@@ -737,7 +1042,10 @@ impl Hub {
                                     .font_family(".SystemUIFont")
                                     .child(icon("check", 12.0, widgets::green()))
                                     .child(widgets::faint(label))
-                                    .child(crate::ui::Link::new(("undo-pick", ci), "Undo").on_click(on(choose(None)))),
+                                    .child(
+                                        crate::ui::Link::new(("undo-pick", ci), "Undo")
+                                            .on_click(on(choose(None))),
+                                    ),
                             );
                             let kept: Vec<&String> = match which {
                                 Pick::Current => c.iter().collect(),
@@ -745,7 +1053,12 @@ impl Hub {
                                 Pick::Both => c.iter().chain(i.iter()).collect(),
                             };
                             for l in kept {
-                                body = body.child(div().border_l_2().border_color(rgb(widgets::green())).child(line_el(l, None)));
+                                body = body.child(
+                                    div()
+                                        .border_l_2()
+                                        .border_color(rgb(widgets::green()))
+                                        .child(line_el(l, None)),
+                                );
                             }
                         }
                     }
@@ -771,14 +1084,35 @@ mod tests {
     #[test]
     #[ignore]
     fn live_session() {
-        let Ok(target) = std::env::var("VH_CONFLICTS") else { return };
+        let Ok(target) = std::env::var("VH_CONFLICTS") else {
+            return;
+        };
         let (repo, number) = target.split_once('#').unwrap();
         let token = crate::api::gh_cli_token().unwrap();
-        let s = load(&Client::new(&crate::forge::Account::new(crate::forge::Forge::GitHub, "github.com", &token)), repo, number.parse().unwrap()).unwrap();
+        let s = load(
+            &Client::new(&crate::forge::Account::new(
+                crate::forge::Forge::GitHub,
+                "github.com",
+                &token,
+            )),
+            repo,
+            number.parse().unwrap(),
+        )
+        .unwrap();
         eprintln!("base {} head {}", s.base_sha, s.head_sha);
-        eprintln!("{} base-only, {} merged cleanly, {} conflicted", s.base_only.len(), s.merged.len(), s.files.len());
+        eprintln!(
+            "{} base-only, {} merged cleanly, {} conflicted",
+            s.base_only.len(),
+            s.merged.len(),
+            s.files.len()
+        );
         for f in &s.files {
-            eprintln!("  {} — {} conflicts{}", f.path, f.conflicts(), if f.binary.is_some() { " (binary)" } else { "" });
+            eprintln!(
+                "  {} — {} conflicts{}",
+                f.path,
+                f.conflicts(),
+                if f.binary.is_some() { " (binary)" } else { "" }
+            );
         }
         if let Ok(dir) = std::env::var("VH_DUMP") {
             for (path, text, _) in &s.merged {
@@ -795,14 +1129,27 @@ mod tests {
         let ours = "a\nB\nc\n";
         let theirs = "a\nX\nc\n";
         let mut opts = diffy::MergeOptions::new();
-        opts.set_conflict_style(diffy::ConflictStyle::Merge).set_conflict_marker_length(MARK);
+        opts.set_conflict_style(diffy::ConflictStyle::Merge)
+            .set_conflict_marker_length(MARK);
         let merged = opts.merge(base, ours, theirs).unwrap_err();
         let parts = chunks(&merged);
         assert_eq!(parts.len(), 3);
-        let Chunk::Conflict { current, incoming, .. } = &parts[1] else { panic!() };
+        let Chunk::Conflict {
+            current, incoming, ..
+        } = &parts[1]
+        else {
+            panic!()
+        };
         assert_eq!(current, &vec!["B\n".to_string()]);
         assert_eq!(incoming, &vec!["X\n".to_string()]);
-        let mut file = ConflictFile { path: "f".into(), chunks: parts, edited: None, deletable: false, binary: None, binary_pick: None };
+        let mut file = ConflictFile {
+            path: "f".into(),
+            chunks: parts,
+            edited: None,
+            deletable: false,
+            binary: None,
+            binary_pick: None,
+        };
         assert_eq!(file.unresolved(), 1);
         if let Chunk::Conflict { pick, .. } = &mut file.chunks[1] {
             *pick = Some(Pick::Both);

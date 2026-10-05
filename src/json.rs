@@ -54,7 +54,9 @@ impl Json for Value {
 
     fn i(&self, path: &str) -> i64 {
         match self.at(path) {
-            Value::Number(n) => n.as_i64().unwrap_or_else(|| n.as_f64().unwrap_or(0.0) as i64),
+            Value::Number(n) => n
+                .as_i64()
+                .unwrap_or_else(|| n.as_f64().unwrap_or(0.0) as i64),
             Value::String(s) => s.parse().unwrap_or(0),
             _ => 0,
         }

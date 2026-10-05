@@ -38,7 +38,12 @@ pub struct Memo {
 
 impl Memo {
     /// The value under `key` if it is younger than `ttl`, or `make`'s.
-    pub fn get_or(&self, key: &str, ttl: Duration, make: impl FnOnce() -> Result<Value>) -> Result<Value> {
+    pub fn get_or(
+        &self,
+        key: &str,
+        ttl: Duration,
+        make: impl FnOnce() -> Result<Value>,
+    ) -> Result<Value> {
         if let Some((at, value)) = self.map.lock().unwrap().get(key) {
             if at.elapsed() < ttl {
                 return Ok(value.clone());
@@ -55,7 +60,10 @@ impl Memo {
 
     /// Forget everything under `prefix`, after a write changes it.
     pub fn forget(&self, prefix: &str) {
-        self.map.lock().unwrap().retain(|k, _| !k.starts_with(prefix));
+        self.map
+            .lock()
+            .unwrap()
+            .retain(|k, _| !k.starts_with(prefix));
     }
 }
 
@@ -78,7 +86,11 @@ impl<'a> Ask<'a> {
         Ask {
             c,
             method,
-            parts: path.split('/').filter(|p| !p.is_empty()).map(decode).collect(),
+            parts: path
+                .split('/')
+                .filter(|p| !p.is_empty())
+                .map(decode)
+                .collect(),
             query: Query::parse(query),
             body,
         }
@@ -96,7 +108,11 @@ impl<'a> Ask<'a> {
 
     /// GitHub's paging, as GitLab spells it too.
     pub fn paging(&self) -> String {
-        format!("per_page={}&page={}", self.query.per_page(), self.query.page())
+        format!(
+            "per_page={}&page={}",
+            self.query.per_page(),
+            self.query.page()
+        )
     }
 }
 
@@ -121,15 +137,25 @@ impl Query {
     }
 
     pub fn get(&self, key: &str) -> Option<&str> {
-        self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()).filter(|v| !v.is_empty())
+        self.0
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+            .filter(|v| !v.is_empty())
     }
 
     pub fn page(&self) -> u64 {
-        self.get("page").and_then(|p| p.parse().ok()).unwrap_or(1).max(1)
+        self.get("page")
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(1)
+            .max(1)
     }
 
     pub fn per_page(&self) -> u64 {
-        self.get("per_page").and_then(|p| p.parse().ok()).unwrap_or(30).clamp(1, 100)
+        self.get("per_page")
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(30)
+            .clamp(1, 100)
     }
 }
 
@@ -183,7 +209,10 @@ pub fn call(c: &Client, method: &str, path: &str, body: Option<&Value>) -> Resul
 pub fn get_all(c: &Client, path: &str, max_pages: u64) -> Result<Vec<Value>> {
     let mut all = Vec::new();
     for page in 1..=max_pages {
-        let list = get(c, &crate::hub::with_query(path, &format!("per_page=100&page={page}")))?;
+        let list = get(
+            c,
+            &crate::hub::with_query(path, &format!("per_page=100&page={page}")),
+        )?;
         let items = list.list("");
         all.extend(items.iter().cloned());
         if items.len() < 100 {
@@ -209,7 +238,10 @@ pub fn parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Ve
             });
         }
     });
-    slots.into_iter().map(|s| s.into_inner().unwrap().unwrap()).collect()
+    slots
+        .into_iter()
+        .map(|s| s.into_inner().unwrap().unwrap())
+        .collect()
 }
 
 /// The signed-in user, as GitLab has them.
@@ -220,15 +252,16 @@ pub fn me(c: &Client) -> Result<Value> {
 /// A user by login.
 pub fn user_by_login(c: &Client, login: &str) -> Result<Value> {
     let login = login.trim_start_matches('@').to_string();
-    c.memo.get_or(&format!("user:{}", login.to_lowercase()), HOUR, || {
-        let found = get(c, &format!("/users?username={}", enc(&login)))?;
-        found.list("").first().cloned().ok_or_else(|| {
-            anyhow::Error::new(Status {
-                code: 404,
-                message: format!("No GitLab user is called {login}."),
+    c.memo
+        .get_or(&format!("user:{}", login.to_lowercase()), HOUR, || {
+            let found = get(c, &format!("/users?username={}", enc(&login)))?;
+            found.list("").first().cloned().ok_or_else(|| {
+                anyhow::Error::new(Status {
+                    code: 404,
+                    message: format!("No GitLab user is called {login}."),
+                })
             })
         })
-    })
 }
 
 pub fn user_id(c: &Client, login: &str) -> Result<i64> {
@@ -239,7 +272,9 @@ pub fn user_id(c: &Client, login: &str) -> Result<i64> {
 pub fn project_path(c: &Client, id: i64) -> String {
     c.memo
         .get_or(&format!("project-path:{id}"), HOUR, || {
-            Ok(get(c, &format!("/projects/{id}?simple=true"))?.at("path_with_namespace").clone())
+            Ok(get(c, &format!("/projects/{id}?simple=true"))?
+                .at("path_with_namespace")
+                .clone())
         })
         .map(|v| v.s(""))
         .unwrap_or_default()
@@ -256,7 +291,9 @@ pub fn avatars(c: &Client, emails: &[String]) -> HashMap<String, String> {
     let found = parallel(&distinct, |email| {
         c.memo
             .get_or(&format!("avatar:{email}"), HOUR, || {
-                Ok(get(c, &format!("/avatar?email={}&size=64", enc(email)))?.at("avatar_url").clone())
+                Ok(get(c, &format!("/avatar?email={}&size=64", enc(email)))?
+                    .at("avatar_url")
+                    .clone())
             })
             .map(|v| v.s(""))
             .unwrap_or_default()
@@ -284,14 +321,18 @@ pub fn rest(c: &Client, method: &str, path: &str, body: Option<&Value>) -> Resul
         }
         ["gitignore", "templates"] => {
             let list = get_all(c, "/templates/gitignores", 5)?;
-            Ok(Value::Array(list.iter().map(|t| json!(t.s("name"))).collect()))
+            Ok(Value::Array(
+                list.iter().map(|t| json!(t.s("name"))).collect(),
+            ))
         }
         ["licenses"] => {
             let list = get(c, "/templates/licenses?popular=false&per_page=100")?;
             Ok(Value::Array(list.list("").iter().map(|l| json!({ "key": l.s("key"), "name": l.s("name"), "spdx_id": l.s("key") })).collect()))
         }
         ["rate_limit"] => Ok(json!({})),
-        ["notifications", ..] => Err(missing("notifications inbox (its to-do list has its own page)")),
+        ["notifications", ..] => Err(missing(
+            "notifications inbox (its to-do list has its own page)",
+        )),
         _ => Err(missing(&format!("equivalent of {}", ask.parts.join("/")))),
     }
 }
@@ -341,7 +382,10 @@ pub fn send(c: &Client, method: &str, path: &str, body: Option<&Value>) -> Resul
     match rest(c, method, path, body) {
         Ok(value) => Ok(reply(200, value.to_string())),
         Err(e) => match api::status_of(&e) {
-            Some(status) => Ok(reply(status, json!({ "message": format!("{e:#}") }).to_string())),
+            Some(status) => Ok(reply(
+                status,
+                json!({ "message": format!("{e:#}") }).to_string(),
+            )),
             None => Err(e),
         },
     }
@@ -391,7 +435,9 @@ mod live {
         let info = ask(&format!("/repos/{repo}"));
         assert_eq!(info.s("full_name"), repo);
         assert!(!info.s("default_branch").is_empty());
-        let issues = ask(&format!("/repos/{repo}/issues?state=open&sort=created&direction=desc&per_page=5&page=1"));
+        let issues = ask(&format!(
+            "/repos/{repo}/issues?state=open&sort=created&direction=desc&per_page=5&page=1"
+        ));
         assert!(issues.list("")[0].i("number") > 0 && issues.list("")[0].has("user.login"));
         let pulls = ask(&format!("/repos/{repo}/pulls?state=open&per_page=5&page=1"));
         let pr = &pulls.list("")[0];
@@ -401,33 +447,55 @@ mod live {
         assert_eq!(one.i("number"), n);
         let files = ask(&format!("/repos/{repo}/pulls/{n}/files?per_page=30&page=1"));
         assert!(files.list("").iter().all(|f| f.has("filename")));
-        let commits = ask(&format!("/repos/{repo}/commits?sha={}&per_page=5&page=1", info.s("default_branch")));
+        let commits = ask(&format!(
+            "/repos/{repo}/commits?sha={}&per_page=5&page=1",
+            info.s("default_branch")
+        ));
         let sha = commits.list("")[0].s("sha");
         assert_eq!(sha.len(), 40);
         let commit = ask(&format!("/repos/{repo}/commits/{sha}"));
         assert!(commit.has("commit.message"));
-        let root = ask(&format!("/repos/{repo}/contents/?ref={}", info.s("default_branch")));
+        let root = ask(&format!(
+            "/repos/{repo}/contents/?ref={}",
+            info.s("default_branch")
+        ));
         assert!(root.list("").iter().any(|e| e.s("type") == "dir"));
-        let readme = text(&c, &format!("/repos/{repo}/readme?ref={}", info.s("default_branch"))).unwrap();
+        let readme = text(
+            &c,
+            &format!("/repos/{repo}/readme?ref={}", info.s("default_branch")),
+        )
+        .unwrap();
         assert!(readme.len() > 100);
         ask(&format!("/repos/{repo}/branches?per_page=5&page=1"));
         ask(&format!("/repos/{repo}/tags?per_page=5&page=1"));
         let releases = ask(&format!("/repos/{repo}/releases?per_page=2&page=1"));
         let release = releases.list("")[0].i("id");
-        assert_eq!(ask(&format!("/repos/{repo}/releases/{release}")).i("id"), release);
+        assert_eq!(
+            ask(&format!("/repos/{repo}/releases/{release}")).i("id"),
+            release
+        );
         // Signed out, gitlab.com answers some of these 401.
         let maybe = |path: &str| match rest(&c, "GET", path, None) {
             Ok(v) => println!("{path}: {}", crate::json::clip(&v.to_string(), 200)),
-            Err(e) if matches!(api::status_of(&e), Some(401 | 403)) => println!("{path}: needs signing in"),
+            Err(e) if matches!(api::status_of(&e), Some(401 | 403)) => {
+                println!("{path}: needs signing in")
+            }
             Err(e) => panic!("{path}: {e:#}"),
         };
         maybe(&format!("/repos/{repo}/labels?per_page=100"));
         maybe(&format!("/repos/{repo}/milestones?state=open&per_page=5"));
         maybe(&format!("/repos/{repo}/languages"));
         maybe(&format!("/repos/{repo}/contributors?per_page=5&page=1"));
-        maybe(&format!("/repos/{repo}/issues/{}/timeline?per_page=5&page=1", issues.list("")[0].i("number")));
-        maybe(&format!("/repos/{repo}/merge_requests/{n}/timeline?per_page=5&page=1"));
-        maybe(&format!("/repos/{repo}/pulls/{n}/commits?per_page=5&page=1"));
+        maybe(&format!(
+            "/repos/{repo}/issues/{}/timeline?per_page=5&page=1",
+            issues.list("")[0].i("number")
+        ));
+        maybe(&format!(
+            "/repos/{repo}/merge_requests/{n}/timeline?per_page=5&page=1"
+        ));
+        maybe(&format!(
+            "/repos/{repo}/pulls/{n}/commits?per_page=5&page=1"
+        ));
         maybe(&format!("/repos/{repo}/compare/v19.4.0...v19.4.1"));
         ask(&format!("/repos/{repo}/check-runs/1/annotations"));
         let checks = ask(&format!("/repos/{repo}/commits/{sha}/check-runs"));
@@ -437,26 +505,43 @@ mod live {
         let group = ask("/orgs/gitlab-org");
         assert_eq!(group.s("type"), "Organization");
         ask("/orgs/gitlab-org/repos?per_page=3");
-        let found = ask(&format!("/search/issues?q={}&per_page=5&page=1", crate::json::enc(&format!("repo:{repo} is:pr is:open"))));
+        let found = ask(&format!(
+            "/search/issues?q={}&per_page=5&page=1",
+            crate::json::enc(&format!("repo:{repo} is:pr is:open"))
+        ));
         assert!(found.list("items").iter().all(|i| i.has("pull_request")));
         ask("/search/repositories?q=gitlab-runner&per_page=3&page=1");
         let (o, nm) = repo.split_once('/').unwrap();
         let vars = serde_json::json!({ "o": o, "n": nm, "r": info.s("default_branch") });
-        match graphql(&c, "query { repository { openIssues: issues(states: OPEN) { totalCount } } }", vars.clone()) {
+        match graphql(
+            &c,
+            "query { repository { openIssues: issues(states: OPEN) { totalCount } } }",
+            vars.clone(),
+        ) {
             Ok(counts) => {
                 println!("counts: {counts}");
                 assert!(counts.i("repository.openPulls.totalCount") > 0);
             }
             Err(e) => println!("counts: {e:#}"),
         }
-        let head = graphql(&c, "{ object(expression: $r) { history(first: 1) { totalCount } } }", vars.clone()).unwrap();
+        let head = graphql(
+            &c,
+            "{ object(expression: $r) { history(first: 1) { totalCount } } }",
+            vars.clone(),
+        )
+        .unwrap();
         println!("head: {head}");
         assert_eq!(head.s("repository.object.oid").len(), 40);
         let q = "{ e0: history(first: 1, path: \"README.md\") { nodes { oid } } e1: history(first: 1, path: \"go.mod\") { nodes { oid } } }";
         let last = graphql(&c, q, vars.clone()).unwrap();
         println!("last: {last}");
         assert_eq!(last.list("repository.object.e0.nodes").len(), 1);
-        let batch = graphql(&c, &format!("{{ c0: object(oid: \"{sha}\") {{ x }} }}"), vars).unwrap();
+        let batch = graphql(
+            &c,
+            &format!("{{ c0: object(oid: \"{sha}\") {{ x }} }}"),
+            vars,
+        )
+        .unwrap();
         println!("batch: {batch}");
         assert!(batch.has("repository.c0.authors"));
     }

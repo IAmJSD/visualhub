@@ -7,12 +7,12 @@
 //! that the image editor the kit came from does not.
 
 use crate::hub::{on, Act, Load};
+use crate::ui::{icon, is_light, palette, Button, Spinner};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, AnyElement, Div, ElementId, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
 };
-use crate::ui::{icon, is_light, palette, Button, Spinner};
 
 #[cfg(target_os = "windows")]
 pub const MONO: &str = "Consolas";
@@ -151,7 +151,10 @@ pub fn faint(text: impl Into<SharedString>) -> Div {
 }
 
 pub fn mono(text: impl Into<SharedString>) -> Div {
-    div().font_family(MONO).text_size(px(12.0)).child(text.into())
+    div()
+        .font_family(MONO)
+        .text_size(px(12.0))
+        .child(text.into())
 }
 
 /// An icon with text after it, both in `color`.
@@ -308,7 +311,10 @@ pub fn ibtn(
 
 /// A primary (accent) button.
 pub fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>, act: Act) -> Button {
-    Button::new(id, label).primary().h(px(28.0)).on_click(on(act))
+    Button::new(id, label)
+        .primary()
+        .h(px(28.0))
+        .on_click(on(act))
 }
 
 /// A red-text button for destructive acts.
@@ -573,7 +579,12 @@ pub fn split_btn(id: &str, label: impl Into<SharedString>, act: Act, menu: Act) 
                 .rounded_r_none()
                 .on_click(on(act)),
         )
-        .child(div().w(px(1.0)).h(px(32.0)).bg(rgb(if is_light() { 0x1A7F37 } else { 0x196C2E })))
+        .child(
+            div()
+                .w(px(1.0))
+                .h(px(32.0))
+                .bg(rgb(if is_light() { 0x1A7F37 } else { 0x196C2E })),
+        )
         .child(
             Button::new(ElementId::Name(format!("{id}-more").into()), "")
                 .colors(green_colors())
@@ -589,7 +600,12 @@ pub fn split_btn(id: &str, label: impl Into<SharedString>, act: Act, menu: Act) 
 }
 
 /// A grey button showing a choice, with a ▾: "Public ▾", "No license ▾".
-pub fn dropdown_btn(id: impl Into<ElementId>, leading: Option<AnyElement>, label: impl Into<SharedString>, act: Act) -> Button {
+pub fn dropdown_btn(
+    id: impl Into<ElementId>,
+    leading: Option<AnyElement>,
+    label: impl Into<SharedString>,
+    act: Act,
+) -> Button {
     Button::new(id, "")
         .h(px(32.0))
         .px_3()
@@ -624,7 +640,11 @@ pub fn switch(id: impl Into<ElementId>, on_now: bool, act: Act) -> AnyElement {
                 .flex_row()
                 .when(on_now, |d| d.justify_end())
                 .on_click(on(act))
-                .child(div().size(px(18.0)).rounded_sm().bg(rgb(if on_now { 0xFFFFFF } else { p.text_dim }))),
+                .child(div().size(px(18.0)).rounded_sm().bg(rgb(if on_now {
+                    0xFFFFFF
+                } else {
+                    p.text_dim
+                }))),
         )
         .into_any_element()
 }
@@ -655,7 +675,9 @@ pub fn step(n: usize, title: &str, last: bool, body: impl IntoElement) -> AnyEle
                         .text_color(rgb(p.text_dim))
                         .child(n.to_string()),
                 )
-                .when(!last, |d| d.child(div().w(px(2.0)).flex_1().bg(rgb(p.edge)))),
+                .when(!last, |d| {
+                    d.child(div().w(px(2.0)).flex_1().bg(rgb(p.edge)))
+                }),
         )
         .child(
             col()
@@ -663,14 +685,25 @@ pub fn step(n: usize, title: &str, last: bool, body: impl IntoElement) -> AnyEle
                 .min_w_0()
                 .gap_3()
                 .pb_8()
-                .child(div().pt(px(3.0)).text_size(px(17.0)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
+                .child(
+                    div()
+                        .pt(px(3.0))
+                        .text_size(px(17.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(title.to_string()),
+                )
                 .child(body),
         )
         .into_any_element()
 }
 
 /// A setting in a card: its name and what it does, and the control.
-pub fn setting_row(title: &str, about: impl Into<SharedString>, control: impl IntoElement, first: bool) -> AnyElement {
+pub fn setting_row(
+    title: &str,
+    about: impl Into<SharedString>,
+    control: impl IntoElement,
+    first: bool,
+) -> AnyElement {
     let p = palette();
     row()
         .gap_4()
@@ -682,7 +715,11 @@ pub fn setting_row(title: &str, about: impl Into<SharedString>, control: impl In
                 .flex_1()
                 .min_w_0()
                 .gap_0p5()
-                .child(div().font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(title.to_string()),
+                )
                 .child(dim(about.into())),
         )
         .child(control)
@@ -695,11 +732,19 @@ pub fn field_label(text: &str, required: bool) -> Div {
         .gap_0p5()
         .font_weight(FontWeight::SEMIBOLD)
         .child(text.to_string())
-        .when(required, |d| d.child(div().text_color(rgb(red())).child("*")))
+        .when(required, |d| {
+            d.child(div().text_color(rgb(red())).child("*"))
+        })
 }
 
 /// A 32 px grey button led by a coloured icon: "Close pull request".
-pub fn icon_action(id: impl Into<ElementId>, icon_name: &str, color: u32, label: impl Into<SharedString>, act: Act) -> Button {
+pub fn icon_action(
+    id: impl Into<ElementId>,
+    icon_name: &str,
+    color: u32,
+    label: impl Into<SharedString>,
+    act: Act,
+) -> Button {
     Button::new(id, "")
         .h(px(32.0))
         .px_3()

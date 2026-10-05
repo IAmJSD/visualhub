@@ -35,7 +35,10 @@ pub fn route(a: &Ask, repo: &str, rest: &[&str]) -> Result<Value> {
     let c = a.c;
     let p = proj(repo);
     let m = a.method;
-    let number = |n: &str| n.parse::<i64>().map_err(|_| missing(&format!("issue called {n}")));
+    let number = |n: &str| {
+        n.parse::<i64>()
+            .map_err(|_| missing(&format!("issue called {n}")))
+    };
     match rest {
         ["issues"] if m == "GET" => list(a, repo, Kind::Issue),
         ["issues"] => create_issue(a, repo),
@@ -66,18 +69,45 @@ pub fn route(a: &Ask, repo: &str, rest: &[&str]) -> Result<Value> {
                 .iter()
                 .find(|t| t.list("notes").iter().any(|n| n.i("id") == id))
                 .ok_or_else(|| missing("thread for that comment"))?;
-            call(c, "POST", &format!("{p}/merge_requests/{n}/discussions/{}/notes", thread.s("id")), Some(&json!({ "body": a.field("body") })))
+            call(
+                c,
+                "POST",
+                &format!(
+                    "{p}/merge_requests/{n}/discussions/{}/notes",
+                    thread.s("id")
+                ),
+                Some(&json!({ "body": a.field("body") })),
+            )
         }
         ["pulls", n, "reviews"] if m == "GET" => reviews(c, repo, number(n)?),
         ["pulls", n, "reviews"] => review(a, repo, number(n)?),
         ["pulls", n, "requested_reviewers"] => {
             let n = number(n)?;
-            let current: Vec<i64> = get(c, &format!("{p}/merge_requests/{n}"))?.list("reviewers").iter().map(|u| u.i("id")).collect();
-            let ids = change(c, current, a.field("reviewers").as_array().map(Vec::as_slice).unwrap_or(&[]), m != "DELETE")?;
-            call(c, "PUT", &format!("{p}/merge_requests/{n}"), Some(&json!({ "reviewer_ids": ids })))
+            let current: Vec<i64> = get(c, &format!("{p}/merge_requests/{n}"))?
+                .list("reviewers")
+                .iter()
+                .map(|u| u.i("id"))
+                .collect();
+            let ids = change(
+                c,
+                current,
+                a.field("reviewers")
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+                m != "DELETE",
+            )?;
+            call(
+                c,
+                "PUT",
+                &format!("{p}/merge_requests/{n}"),
+                Some(&json!({ "reviewer_ids": ids })),
+            )
         }
         ["pulls", n, "merge"] => merge(a, repo, number(n)?),
-        ["pulls", n, "update-branch"] => call(c, "PUT", &format!("{p}/merge_requests/{n}/rebase"), None),
+        ["pulls", n, "update-branch"] => {
+            call(c, "PUT", &format!("{p}/merge_requests/{n}/rebase"), None)
+        }
         _ => Err(missing(&format!("equivalent of {}", rest.join("/")))),
     }
 }
@@ -95,7 +125,12 @@ fn change(c: &Client, mut current: Vec<i64>, logins: &[Value], add: bool) -> Res
 }
 
 fn ids(c: &Client, logins: &Value) -> Result<Vec<i64>> {
-    change(c, Vec::new(), logins.as_array().map(Vec::as_slice).unwrap_or(&[]), true)
+    change(
+        c,
+        Vec::new(),
+        logins.as_array().map(Vec::as_slice).unwrap_or(&[]),
+        true,
+    )
 }
 
 /// GitHub's list filters as GitLab's.
@@ -111,7 +146,11 @@ fn list(a: &Ask, repo: &str, kind: Kind) -> Result<Value> {
         Some("updated") | Some("comments") => "updated_at",
         _ => "created_at",
     };
-    let direction = if a.query.get("direction") == Some("asc") { "asc" } else { "desc" };
+    let direction = if a.query.get("direction") == Some("asc") {
+        "asc"
+    } else {
+        "desc"
+    };
     let mut path = format!(
         "{}/{}?state={state}&order_by={order}&sort={direction}&with_labels_details=true&{}",
         proj(repo),
@@ -150,12 +189,18 @@ fn update_body(c: &Client, a: &Ask, kind: Kind) -> Result<Value> {
     }
     match a.field("milestone") {
         // `"milestone": null` takes it off.
-        Value::Null if a.body.is_some_and(|b| b.get("milestone").is_some()) => body["milestone_id"] = json!(0),
+        Value::Null if a.body.is_some_and(|b| b.get("milestone").is_some()) => {
+            body["milestone_id"] = json!(0)
+        }
         Value::Number(n) => body["milestone_id"] = json!(n),
         _ => {}
     }
     if let Some(labels) = a.field("labels").as_array() {
-        body["labels"] = json!(labels.iter().filter_map(|l| l.as_str()).collect::<Vec<_>>().join(","));
+        body["labels"] = json!(labels
+            .iter()
+            .filter_map(|l| l.as_str())
+            .collect::<Vec<_>>()
+            .join(","));
     }
     if a.field("assignees").is_array() {
         body["assignee_ids"] = json!(ids(c, a.field("assignees"))?);
@@ -171,7 +216,12 @@ fn update_body(c: &Client, a: &Ask, kind: Kind) -> Result<Value> {
 fn update(a: &Ask, repo: &str, kind: Kind, n: i64) -> Result<Value> {
     let c = a.c;
     let body = update_body(c, a, kind)?;
-    let updated = call(c, "PUT", &format!("{}/{}/{n}", proj(repo), kind.part()), Some(&body))?;
+    let updated = call(
+        c,
+        "PUT",
+        &format!("{}/{}/{n}", proj(repo), kind.part()),
+        Some(&body),
+    )?;
     let colors = label_colors(c, repo);
     Ok(match kind {
         Kind::Issue => shape::issue(c, repo, &updated, &colors),
@@ -213,7 +263,12 @@ fn create_mr(a: &Ask, repo: &str) -> Result<Value> {
         }
         None => repo.to_string(),
     };
-    let created = call(c, "POST", &format!("{}/merge_requests", proj(&on)), Some(&body))?;
+    let created = call(
+        c,
+        "POST",
+        &format!("{}/merge_requests", proj(&on)),
+        Some(&body),
+    )?;
     Ok(shape::mr(c, repo, &created, &label_colors(c, repo), &on))
 }
 
@@ -250,9 +305,18 @@ fn item(a: &Ask, repo: &str, kind: Kind, n: i64, tail: &[&str]) -> Result<Value>
         [] if m == "GET" => {
             let mut shaped = match kind {
                 Kind::Issue => {
-                    let found = get(c, &format!("{}/issues?iids[]={n}&with_labels_details=true&scope=all&state=all", proj(repo)))?;
+                    let found = get(
+                        c,
+                        &format!(
+                            "{}/issues?iids[]={n}&with_labels_details=true&scope=all&state=all",
+                            proj(repo)
+                        ),
+                    )?;
                     let v = found.list("").first().cloned().ok_or_else(|| {
-                        anyhow::Error::new(api::Status { code: 404, message: format!("There's no issue #{n} here.") })
+                        anyhow::Error::new(api::Status {
+                            code: 404,
+                            message: format!("There's no issue #{n} here."),
+                        })
                     })?;
                     shape::issue(c, repo, &v, &HashMap::new())
                 }
@@ -264,40 +328,98 @@ fn item(a: &Ask, repo: &str, kind: Kind, n: i64, tail: &[&str]) -> Result<Value>
         }
         [] => update(a, repo, kind, n),
         ["comments"] if m == "GET" => {
-            let notes = get(c, &format!("{base}/notes?sort=asc&order_by=created_at&{}", a.paging()))?;
+            let notes = get(
+                c,
+                &format!("{base}/notes?sort=asc&order_by=created_at&{}", a.paging()),
+            )?;
             let page = item_url(c, repo, kind, n);
             Ok(Value::Array(
-                notes.list("").iter().filter(|n| !n.b("system")).map(|note| shape::note(c, repo, kind.part(), n, note, &page)).collect(),
+                notes
+                    .list("")
+                    .iter()
+                    .filter(|n| !n.b("system"))
+                    .map(|note| shape::note(c, repo, kind.part(), n, note, &page))
+                    .collect(),
             ))
         }
-        ["comments"] => call(c, "POST", &format!("{base}/notes"), Some(&json!({ "body": a.field("body") }))),
+        ["comments"] => call(
+            c,
+            "POST",
+            &format!("{base}/notes"),
+            Some(&json!({ "body": a.field("body") })),
+        ),
         ["timeline"] => timeline(a, repo, kind, n),
         ["reactions"] if m == "GET" => awards(a, &base),
-        ["reactions"] => call(c, "POST", &format!("{base}/award_emoji"), Some(&json!({ "name": shape::reaction_name(a.field("content").as_str().unwrap_or("+1")) }))),
+        ["reactions"] => call(
+            c,
+            "POST",
+            &format!("{base}/award_emoji"),
+            Some(
+                &json!({ "name": shape::reaction_name(a.field("content").as_str().unwrap_or("+1")) }),
+            ),
+        ),
         ["reactions", id] => call(c, "DELETE", &format!("{base}/award_emoji/{id}"), None),
         ["notes", note] => match m {
             "DELETE" => call(c, "DELETE", &format!("{base}/notes/{note}"), None),
-            _ => call(c, "PUT", &format!("{base}/notes/{note}"), Some(&json!({ "body": a.field("body") }))),
+            _ => call(
+                c,
+                "PUT",
+                &format!("{base}/notes/{note}"),
+                Some(&json!({ "body": a.field("body") })),
+            ),
         },
         ["notes", note, "reactions"] if m == "GET" => awards(a, &format!("{base}/notes/{note}")),
         ["notes", note, "reactions"] => call(
             c,
             "POST",
             &format!("{base}/notes/{note}/award_emoji"),
-            Some(&json!({ "name": shape::reaction_name(a.field("content").as_str().unwrap_or("+1")) })),
+            Some(
+                &json!({ "name": shape::reaction_name(a.field("content").as_str().unwrap_or("+1")) }),
+            ),
         ),
-        ["notes", note, "reactions", id] => call(c, "DELETE", &format!("{base}/notes/{note}/award_emoji/{id}"), None),
+        ["notes", note, "reactions", id] => call(
+            c,
+            "DELETE",
+            &format!("{base}/notes/{note}/award_emoji/{id}"),
+            None,
+        ),
         ["labels"] => {
-            let names: Vec<&str> = a.field("labels").as_array().map(|l| l.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
-            call(c, "PUT", &base, Some(&json!({ "add_labels": names.join(",") })))
+            let names: Vec<&str> = a
+                .field("labels")
+                .as_array()
+                .map(|l| l.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            call(
+                c,
+                "PUT",
+                &base,
+                Some(&json!({ "add_labels": names.join(",") })),
+            )
         }
         ["labels", name] => call(c, "PUT", &base, Some(&json!({ "remove_labels": name }))),
         ["assignees"] => {
-            let current: Vec<i64> = get(c, &base)?.list("assignees").iter().map(|u| u.i("id")).collect();
-            let ids = change(c, current, a.field("assignees").as_array().map(Vec::as_slice).unwrap_or(&[]), m != "DELETE")?;
+            let current: Vec<i64> = get(c, &base)?
+                .list("assignees")
+                .iter()
+                .map(|u| u.i("id"))
+                .collect();
+            let ids = change(
+                c,
+                current,
+                a.field("assignees")
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+                m != "DELETE",
+            )?;
             call(c, "PUT", &base, Some(&json!({ "assignee_ids": ids })))
         }
-        ["lock"] => call(c, "PUT", &base, Some(&json!({ "discussion_locked": m != "DELETE" }))),
+        ["lock"] => call(
+            c,
+            "PUT",
+            &base,
+            Some(&json!({ "discussion_locked": m != "DELETE" })),
+        ),
         _ => Err(missing(&format!("equivalent of {}", tail.join("/")))),
     }
 }
@@ -313,7 +435,12 @@ fn awards(a: &Ask, base: &str) -> Result<Value> {
     let (reactions, _) = shape::reactions(a.c, list.list(""));
     let wanted = a.query.get("content");
     Ok(Value::Array(
-        reactions.list("").iter().filter(|r| wanted.is_none_or(|w| r.s("content") == w)).cloned().collect(),
+        reactions
+            .list("")
+            .iter()
+            .filter(|r| wanted.is_none_or(|w| r.s("content") == w))
+            .cloned()
+            .collect(),
     ))
 }
 
@@ -322,7 +449,10 @@ fn awards(a: &Ask, base: &str) -> Result<Value> {
 fn timeline(a: &Ask, repo: &str, kind: Kind, n: i64) -> Result<Value> {
     let c = a.c;
     let base = format!("{}/{}/{n}", proj(repo), kind.part());
-    let notes = get(c, &format!("{base}/notes?sort=asc&order_by=created_at&{}", a.paging()))?;
+    let notes = get(
+        c,
+        &format!("{base}/notes?sort=asc&order_by=created_at&{}", a.paging()),
+    )?;
     let notes = notes.list("").to_vec();
     let page = item_url(c, repo, kind, n);
     // Each comment's reactions; GitLab gives them one comment at a time.
@@ -330,9 +460,12 @@ fn timeline(a: &Ask, repo: &str, kind: Kind, n: i64) -> Result<Value> {
         if note.b("system") {
             return Vec::new();
         }
-        get(c, &format!("{base}/notes/{}/award_emoji?per_page=100", note.i("id")))
-            .map(|v| v.list("").to_vec())
-            .unwrap_or_default()
+        get(
+            c,
+            &format!("{base}/notes/{}/award_emoji?per_page=100", note.i("id")),
+        )
+        .map(|v| v.list("").to_vec())
+        .unwrap_or_default()
     });
     Ok(Value::Array(
         notes
@@ -361,12 +494,21 @@ fn files(a: &Ask, repo: &str, n: i64) -> Result<Value> {
     let c = a.c;
     let p = proj(repo);
     match get(c, &format!("{p}/merge_requests/{n}/diffs?{}", a.paging())) {
-        Ok(list) => Ok(Value::Array(list.list("").iter().map(shape::file).collect())),
+        Ok(list) => Ok(Value::Array(
+            list.list("").iter().map(shape::file).collect(),
+        )),
         // Instances before 15.7 only give them all at once.
         Err(e) if api::status_of(&e) == Some(404) => {
             let all = get(c, &format!("{p}/merge_requests/{n}/changes"))?;
             let (per, page) = (a.query.per_page() as usize, a.query.page() as usize);
-            Ok(Value::Array(all.list("changes").iter().skip(per * (page - 1)).take(per).map(shape::file).collect()))
+            Ok(Value::Array(
+                all.list("changes")
+                    .iter()
+                    .skip(per * (page - 1))
+                    .take(per)
+                    .map(shape::file)
+                    .collect(),
+            ))
         }
         Err(e) => Err(e),
     }
@@ -374,7 +516,11 @@ fn files(a: &Ask, repo: &str, n: i64) -> Result<Value> {
 
 /// Comments on lines of the diff, as GitHub's review comments.
 fn review_comments(c: &Client, repo: &str, n: i64) -> Result<Value> {
-    let threads = get_all(c, &format!("{}/merge_requests/{n}/discussions", proj(repo)), 10)?;
+    let threads = get_all(
+        c,
+        &format!("{}/merge_requests/{n}/discussions", proj(repo)),
+        10,
+    )?;
     let page = item_url(c, repo, Kind::Mr, n);
     let mut out = Vec::new();
     for thread in &threads {
@@ -385,7 +531,11 @@ fn review_comments(c: &Client, repo: &str, n: i64) -> Result<Value> {
                 continue;
             }
             let position = note.at("position");
-            let (side, line) = if position.has("new_line") { ("RIGHT", position.i("new_line")) } else { ("LEFT", position.i("old_line")) };
+            let (side, line) = if position.has("new_line") {
+                ("RIGHT", position.i("new_line"))
+            } else {
+                ("LEFT", position.i("old_line"))
+            };
             let id = note.i("id");
             out.push(json!({
                 "id": id,
@@ -418,9 +568,14 @@ fn line_comment(a: &Ask, repo: &str, n: i64) -> Result<Value> {
     let path = a.field("path").as_str().unwrap_or("").to_string();
     let line = a.field("line").as_i64().unwrap_or(0) as u32;
     let left = a.field("side").as_str() == Some("LEFT");
-    let diffs = get_all(c, &format!("{p}/merge_requests/{n}/diffs"), 20)
-        .or_else(|_| get(c, &format!("{p}/merge_requests/{n}/changes")).map(|v| v.list("changes").to_vec()))?;
-    let diff = diffs.iter().find(|d| d.s("new_path") == path || d.s("old_path") == path).cloned().unwrap_or(Value::Null);
+    let diffs = get_all(c, &format!("{p}/merge_requests/{n}/diffs"), 20).or_else(|_| {
+        get(c, &format!("{p}/merge_requests/{n}/changes")).map(|v| v.list("changes").to_vec())
+    })?;
+    let diff = diffs
+        .iter()
+        .find(|d| d.s("new_path") == path || d.s("old_path") == path)
+        .cloned()
+        .unwrap_or(Value::Null);
     let mut position = json!({
         "position_type": "text",
         "base_sha": refs.s("base_sha"),
@@ -430,7 +585,13 @@ fn line_comment(a: &Ask, repo: &str, n: i64) -> Result<Value> {
         "old_path": if diff.is_null() { path.clone() } else { diff.s("old_path") },
     });
     let lines = crate::diff::parse(&diff.s("diff"));
-    let here = lines.iter().find(|l| if left { l.old == Some(line) && l.new.is_none() } else { l.new == Some(line) });
+    let here = lines.iter().find(|l| {
+        if left {
+            l.old == Some(line) && l.new.is_none()
+        } else {
+            l.new == Some(line)
+        }
+    });
     match here {
         Some(l) => {
             if let Some(old) = l.old {
@@ -443,7 +604,12 @@ fn line_comment(a: &Ask, repo: &str, n: i64) -> Result<Value> {
         None if left => position["old_line"] = json!(line),
         None => position["new_line"] = json!(line),
     }
-    call(c, "POST", &format!("{p}/merge_requests/{n}/discussions"), Some(&json!({ "body": a.field("body"), "position": position })))
+    call(
+        c,
+        "POST",
+        &format!("{p}/merge_requests/{n}/discussions"),
+        Some(&json!({ "body": a.field("body"), "position": position })),
+    )
 }
 
 /// Approvals, and what reviewers have said, as GitHub's reviews.
@@ -487,11 +653,20 @@ fn review(a: &Ask, repo: &str, n: i64) -> Result<Value> {
     }
     if !text.is_empty() || event == "REQUEST_CHANGES" {
         let body = if event == "REQUEST_CHANGES" {
-            if text.is_empty() { "Requested changes.".to_string() } else { format!("**Requested changes:**\n\n{text}") }
+            if text.is_empty() {
+                "Requested changes.".to_string()
+            } else {
+                format!("**Requested changes:**\n\n{text}")
+            }
         } else {
             text
         };
-        call(c, "POST", &format!("{base}/notes"), Some(&json!({ "body": body })))?;
+        call(
+            c,
+            "POST",
+            &format!("{base}/notes"),
+            Some(&json!({ "body": body })),
+        )?;
     }
     Ok(json!({ "state": event }))
 }
@@ -499,17 +674,40 @@ fn review(a: &Ask, repo: &str, n: i64) -> Result<Value> {
 fn merge(a: &Ask, repo: &str, n: i64) -> Result<Value> {
     let c = a.c;
     let squash = a.field("merge_method").as_str() == Some("squash");
-    let title = a.field("commit_title").as_str().unwrap_or("").trim().to_string();
-    let message = a.field("commit_message").as_str().unwrap_or("").trim().to_string();
+    let title = a
+        .field("commit_title")
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let message = a
+        .field("commit_message")
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
     let mut body = json!({ "squash": squash });
     if let Some(sha) = a.field("sha").as_str().filter(|s| !s.is_empty()) {
         body["sha"] = json!(sha);
     }
     if !title.is_empty() {
-        let text = if message.is_empty() { title } else { format!("{title}\n\n{message}") };
-        body[if squash { "squash_commit_message" } else { "merge_commit_message" }] = json!(text);
+        let text = if message.is_empty() {
+            title
+        } else {
+            format!("{title}\n\n{message}")
+        };
+        body[if squash {
+            "squash_commit_message"
+        } else {
+            "merge_commit_message"
+        }] = json!(text);
     }
-    let merged = call(c, "PUT", &format!("{}/merge_requests/{n}/merge", proj(repo)), Some(&body))?;
+    let merged = call(
+        c,
+        "PUT",
+        &format!("{}/merge_requests/{n}/merge", proj(repo)),
+        Some(&body),
+    )?;
     Ok(json!({ "merged": merged.s("state") == "merged", "sha": merged.s("merge_commit_sha") }))
 }
 

@@ -4,15 +4,18 @@
 
 use super::pulls::commit_row;
 use crate::form::{Field, FormSpec};
-use crate::hub::{on, Act, Hub, Load, MenuEntry, Req, Route, RepoTab, Work};
+use crate::hub::{on, Act, Hub, Load, MenuEntry, RepoTab, Req, Route, Work};
 use crate::json::{self, enc, enc_path, Json as _};
 use crate::ready;
 use crate::resource::{ListSpec, Row};
 use crate::time;
+use crate::ui::{icon, palette, DropdownButton};
 use crate::widgets::{self, rgb, TabItem};
 use gpui::prelude::FluentBuilder as _;
-use gpui::{div, px, AnyElement, InteractiveElement as _, StatefulInteractiveElement as _, Context, ElementId, FontWeight, IntoElement as _, ParentElement as _, Styled as _};
-use crate::ui::{icon, palette, DropdownButton};
+use gpui::{
+    div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, StatefulInteractiveElement as _, Styled as _,
+};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,7 +29,11 @@ pub fn distinct_authors(authors: &[Value]) -> Vec<Value> {
     authors
         .iter()
         .filter(|a| {
-            let key = if a.has("user.login") { a.s("user.login") } else { a.s("name") };
+            let key = if a.has("user.login") {
+                a.s("user.login")
+            } else {
+                a.s("name")
+            };
             !seen.contains(&key) && {
                 seen.push(key);
                 true
@@ -43,13 +50,22 @@ pub fn author_names(id: &str, authors: &[Value]) -> gpui::Div {
     let mut names = widgets::row().gap_1();
     for (i, a) in authors.iter().enumerate() {
         if i > 0 {
-            names = names.child(widgets::dim(if i + 1 == authors.len() { "and" } else { "," }));
+            names = names.child(widgets::dim(if i + 1 == authors.len() {
+                "and"
+            } else {
+                ","
+            }));
         }
         let login = a.s("user.login");
         names = names.child(if login.is_empty() {
-            div().text_color(rgb(palette().text)).child(a.s("name")).into_any_element()
+            div()
+                .text_color(rgb(palette().text))
+                .child(a.s("name"))
+                .into_any_element()
         } else {
-            let go = Act::Go(Route::User { login: login.clone() });
+            let go = Act::Go(Route::User {
+                login: login.clone(),
+            });
             crate::ui::Link::new(ElementId::Name(format!("{id}-author-{i}").into()), login)
                 .text_color(rgb(palette().text))
                 .on_click(move |_e, window, cx| {
@@ -81,7 +97,10 @@ pub fn new_branch_form(repo: &str, name: &str) -> Act {
     FormSpec::new("Create a branch")
         .submit("Create branch")
         .field(Field::text("name", "Branch name").value(name).required())
-        .field(Field::text("from", "From").hint("A branch, tag or commit SHA. Leave empty for the default branch."))
+        .field(
+            Field::text("from", "From")
+                .hint("A branch, tag or commit SHA. Leave empty for the default branch."),
+        )
         .build_with(move |values| {
             let (repo, name, from) = (repo.clone(), values.s("name"), values.s("from"));
             let refs = format!("/repos/{repo}/branches");
@@ -91,7 +110,9 @@ pub fn new_branch_form(repo: &str, name: &str) -> Act {
                 } else {
                     from.trim().to_string()
                 };
-                let sha = client.get(&format!("/repos/{repo}/commits/{}", enc(&from)))?.s("sha");
+                let sha = client
+                    .get(&format!("/repos/{repo}/commits/{}", enc(&from)))?
+                    .s("sha");
                 client.json(
                     "POST",
                     &format!("/repos/{repo}/git/refs"),
@@ -111,7 +132,10 @@ fn new_tag_form(repo: &str) -> Act {
         .submit("Create tag")
         .note("A lightweight tag pointing at a commit. To publish it, draft a release instead.")
         .field(Field::text("name", "Tag name").required())
-        .field(Field::text("from", "Target").hint("A branch or commit SHA. Leave empty for the default branch."))
+        .field(
+            Field::text("from", "Target")
+                .hint("A branch or commit SHA. Leave empty for the default branch."),
+        )
         .build_with(move |values| {
             let (repo, name, from) = (repo.clone(), values.s("name"), values.s("from"));
             let refs = format!("/repos/{repo}/tags");
@@ -121,7 +145,9 @@ fn new_tag_form(repo: &str) -> Act {
                 } else {
                     from.trim().to_string()
                 };
-                let sha = client.get(&format!("/repos/{repo}/commits/{}", enc(&from)))?.s("sha");
+                let sha = client
+                    .get(&format!("/repos/{repo}/commits/{}", enc(&from)))?
+                    .s("sha");
                 client.json(
                     "POST",
                     &format!("/repos/{repo}/git/refs"),
@@ -180,7 +206,11 @@ fn protection_form(repo: &str, branch: &str) -> Act {
 
 /// GitLab's protection: who may push, who may merge, and force pushes.
 fn gitlab_protection_form(repo: &str, branch: &str) -> Act {
-    let levels = [("40", "Maintainers"), ("30", "Developers and maintainers"), ("0", "No one")];
+    let levels = [
+        ("40", "Maintainers"),
+        ("30", "Developers and maintainers"),
+        ("0", "No one"),
+    ];
     let api = crate::screens::gitlab::project_api(repo);
     let (branch_s, repo_s) = (branch.to_string(), repo.to_string());
     FormSpec::new(format!("Protect {branch}"))
@@ -212,16 +242,26 @@ fn archive_url(repo: &str, git_ref: &str, format: &str, tag: bool) -> String {
         let file = format!("{name}-{}", git_ref.replace('/', "-"));
         format!("{web}/{repo}/-/archive/{git_ref}/{file}.{format}")
     } else {
-        format!("{web}/{repo}/archive/refs/{}/{git_ref}.{format}", if tag { "tags" } else { "heads" })
+        format!(
+            "{web}/{repo}/archive/refs/{}/{git_ref}.{format}",
+            if tag { "tags" } else { "heads" }
+        )
     }
 }
 
 fn fork_form(repo: &str, name: &str) -> Act {
     FormSpec::new(format!("Fork {repo}"))
         .submit("Create fork")
-        .field(Field::text("organization", "Owner").hint("An organization to fork into; leave empty for your account."))
+        .field(
+            Field::text("organization", "Owner")
+                .hint("An organization to fork into; leave empty for your account."),
+        )
         .field(Field::text("name", "Repository name").value(name))
-        .field(Field::bool("default_branch_only", "Copy the default branch only", true))
+        .field(Field::bool(
+            "default_branch_only",
+            "Copy the default branch only",
+            true,
+        ))
         .rest("POST", format!("/repos/{repo}/forks"))
         .ok("Fork created — it may take a moment to appear")
         .then(|hub, value, cx| {
@@ -243,7 +283,11 @@ fn template_form(repo: &str) -> Act {
         .field(Field::text("name", "Repository name").required())
         .field(Field::text("description", "Description"))
         .field(Field::bool("private", "Private", false))
-        .field(Field::bool("include_all_branches", "Include all branches", false))
+        .field(Field::bool(
+            "include_all_branches",
+            "Include all branches",
+            false,
+        ))
         .rest("POST", format!("/repos/{repo}/generate"))
         .ok("Repository created")
         .then(|hub, value, cx| {
@@ -269,32 +313,51 @@ impl Hub {
     pub fn ref_picker(&mut self, repo: &str, current: &str, cx: &mut Context<Self>) -> AnyElement {
         let key = format!("ref:{repo}");
         let mut entries = vec![MenuEntry::Header("Branches".into())];
-        if let Some(branches) = self.fetch(&format!("/repos/{repo}/branches?per_page=100"), cx).ready().cloned() {
+        if let Some(branches) = self
+            .fetch(&format!("/repos/{repo}/branches?per_page=100"), cx)
+            .ready()
+            .cloned()
+        {
             for b in branches.list("") {
                 let name = b.s("name");
-                entries.push(MenuEntry::check(name.clone(), name == current, Act::choose(&key, name)));
+                entries.push(MenuEntry::check(
+                    name.clone(),
+                    name == current,
+                    Act::choose(&key, name),
+                ));
             }
         }
-        if let Some(tags) = self.fetch(&format!("/repos/{repo}/tags?per_page=30"), cx).ready().cloned() {
+        if let Some(tags) = self
+            .fetch(&format!("/repos/{repo}/tags?per_page=30"), cx)
+            .ready()
+            .cloned()
+        {
             if !tags.list("").is_empty() {
                 entries.push(MenuEntry::Sep);
                 entries.push(MenuEntry::Header("Tags".into()));
             }
             for t in tags.list("") {
                 let name = t.s("name");
-                entries.push(MenuEntry::check(name.clone(), name == current, Act::choose(&key, name)));
+                entries.push(MenuEntry::check(
+                    name.clone(),
+                    name == current,
+                    Act::choose(&key, name),
+                ));
             }
         }
         let act = Act::menu(entries);
-        DropdownButton::new(ElementId::Name(format!("ref-{repo}").into()), current.to_string())
-            .h(px(28.0))
-            .px_2()
-            .min_w(px(140.0))
-            .text_size(px(13.0))
-            .bg(rgb(palette().button_bg))
-            .child(icon("branch", 14.0, palette().text_dim))
-            .on_press(move |_, window, cx| crate::hub::perform(act.clone(), window, cx))
-            .into_any_element()
+        DropdownButton::new(
+            ElementId::Name(format!("ref-{repo}").into()),
+            current.to_string(),
+        )
+        .h(px(28.0))
+        .px_2()
+        .min_w(px(140.0))
+        .text_size(px(13.0))
+        .bg(rgb(palette().button_bg))
+        .child(icon("branch", 14.0, palette().text_dim))
+        .on_press(move |_, window, cx| crate::hub::perform(act.clone(), window, cx))
+        .into_any_element()
     }
 
     pub fn repo(&mut self, repo: &str, tab: RepoTab, cx: &mut Context<Self>) -> AnyElement {
@@ -303,7 +366,11 @@ impl Hub {
             Load::Ready(info) => info,
             // GitLab's addresses don't say whether `a/b` is a project or a
             // subgroup; a group page shows when there's no project.
-            Load::Failed(_) if gitlab && self.fetch(&format!("/orgs/{repo}"), cx).ready().is_some() => return self.gl_group(repo, cx),
+            Load::Failed(_)
+                if gitlab && self.fetch(&format!("/orgs/{repo}"), cx).ready().is_some() =>
+            {
+                return self.gl_group(repo, cx)
+            }
             other => return widgets::placeholder(&other),
         };
         let header = self.repo_header(repo, &info, cx);
@@ -316,40 +383,134 @@ impl Hub {
         };
         let counts = self.issue_counts(repo, cx);
         let open = |key: &str| counts.as_ref().map(|c| c.i(&format!("{key}.totalCount")));
-        let mut items = vec![
-            TabItem::new("Code", "code", tab == RepoTab::Code, go(RepoTab::Code)),
-        ];
+        let mut items = vec![TabItem::new(
+            "Code",
+            "code",
+            tab == RepoTab::Code,
+            go(RepoTab::Code),
+        )];
         if info.b("has_issues") {
-            items.push(TabItem::new("Issues", "issue", tab == RepoTab::Issues, go(RepoTab::Issues)).count(open("openIssues")));
+            items.push(
+                TabItem::new(
+                    "Issues",
+                    "issue",
+                    tab == RepoTab::Issues,
+                    go(RepoTab::Issues),
+                )
+                .count(open("openIssues")),
+            );
         }
-        items.push(TabItem::new(crate::forge::prs_title(), "pr", tab == RepoTab::Pulls, go(RepoTab::Pulls)).count(open("openPulls")));
+        items.push(
+            TabItem::new(
+                crate::forge::prs_title(),
+                "pr",
+                tab == RepoTab::Pulls,
+                go(RepoTab::Pulls),
+            )
+            .count(open("openPulls")),
+        );
         if info.b("has_discussions") {
-            items.push(TabItem::new("Discussions", "discussion", tab == RepoTab::Discussions, go(RepoTab::Discussions)));
+            items.push(TabItem::new(
+                "Discussions",
+                "discussion",
+                tab == RepoTab::Discussions,
+                go(RepoTab::Discussions),
+            ));
         }
         if gitlab {
             items.extend([
-                TabItem::new("CI/CD", "play", tab == RepoTab::Actions, go(RepoTab::Actions)),
-                TabItem::new("Releases", "tag", tab == RepoTab::Releases, go(RepoTab::Releases)),
-                TabItem::new("Branches", "branch", tab == RepoTab::Branches, go(RepoTab::Branches)),
+                TabItem::new(
+                    "CI/CD",
+                    "play",
+                    tab == RepoTab::Actions,
+                    go(RepoTab::Actions),
+                ),
+                TabItem::new(
+                    "Releases",
+                    "tag",
+                    tab == RepoTab::Releases,
+                    go(RepoTab::Releases),
+                ),
+                TabItem::new(
+                    "Branches",
+                    "branch",
+                    tab == RepoTab::Branches,
+                    go(RepoTab::Branches),
+                ),
                 TabItem::new("Tags", "tag", tab == RepoTab::Tags, go(RepoTab::Tags)),
-                TabItem::new("Commits", "commit", tab == RepoTab::Commits, go(RepoTab::Commits)),
-                TabItem::new("Packages", "package", tab == RepoTab::Packages, go(RepoTab::Packages)),
-                TabItem::new("Insights", "graph", tab == RepoTab::Insights, go(RepoTab::Insights)),
+                TabItem::new(
+                    "Commits",
+                    "commit",
+                    tab == RepoTab::Commits,
+                    go(RepoTab::Commits),
+                ),
+                TabItem::new(
+                    "Packages",
+                    "package",
+                    tab == RepoTab::Packages,
+                    go(RepoTab::Packages),
+                ),
+                TabItem::new(
+                    "Insights",
+                    "graph",
+                    tab == RepoTab::Insights,
+                    go(RepoTab::Insights),
+                ),
             ]);
         } else {
             items.extend([
-            TabItem::new("Actions", "play", tab == RepoTab::Actions, go(RepoTab::Actions)),
-            TabItem::new("Projects", "project", tab == RepoTab::Projects, go(RepoTab::Projects)),
-            TabItem::new("Releases", "tag", tab == RepoTab::Releases, go(RepoTab::Releases)),
-            TabItem::new("Branches", "branch", tab == RepoTab::Branches, go(RepoTab::Branches)),
-            TabItem::new("Tags", "tag", tab == RepoTab::Tags, go(RepoTab::Tags)),
-            TabItem::new("Commits", "commit", tab == RepoTab::Commits, go(RepoTab::Commits)),
-            TabItem::new("Security", "shield", tab == RepoTab::Security, go(RepoTab::Security)),
-            TabItem::new("Insights", "graph", tab == RepoTab::Insights, go(RepoTab::Insights)),
+                TabItem::new(
+                    "Actions",
+                    "play",
+                    tab == RepoTab::Actions,
+                    go(RepoTab::Actions),
+                ),
+                TabItem::new(
+                    "Projects",
+                    "project",
+                    tab == RepoTab::Projects,
+                    go(RepoTab::Projects),
+                ),
+                TabItem::new(
+                    "Releases",
+                    "tag",
+                    tab == RepoTab::Releases,
+                    go(RepoTab::Releases),
+                ),
+                TabItem::new(
+                    "Branches",
+                    "branch",
+                    tab == RepoTab::Branches,
+                    go(RepoTab::Branches),
+                ),
+                TabItem::new("Tags", "tag", tab == RepoTab::Tags, go(RepoTab::Tags)),
+                TabItem::new(
+                    "Commits",
+                    "commit",
+                    tab == RepoTab::Commits,
+                    go(RepoTab::Commits),
+                ),
+                TabItem::new(
+                    "Security",
+                    "shield",
+                    tab == RepoTab::Security,
+                    go(RepoTab::Security),
+                ),
+                TabItem::new(
+                    "Insights",
+                    "graph",
+                    tab == RepoTab::Insights,
+                    go(RepoTab::Insights),
+                ),
             ]);
         }
         if admin {
-            items.push(TabItem::new("Settings", "settings", tab == RepoTab::Settings, go(RepoTab::Settings)));
+            items.push(TabItem::new(
+                "Settings",
+                "settings",
+                tab == RepoTab::Settings,
+                go(RepoTab::Settings),
+            ));
         }
         let default_branch = info.s("default_branch");
         let body = match tab {
@@ -359,7 +520,14 @@ impl Hub {
             RepoTab::Actions if gitlab => self.gl_ci(repo, &default_branch, cx),
             RepoTab::Settings if gitlab => self.gl_repo_settings(repo, cx),
             RepoTab::Packages => self.gl_packages(&crate::screens::gitlab::project_api(repo), cx),
-            RepoTab::Discussions | RepoTab::Projects | RepoTab::Security if gitlab => self.gl_elsewhere(&Route::Repo { repo: repo.to_string(), tab }, "That"),
+            RepoTab::Discussions | RepoTab::Projects | RepoTab::Security if gitlab => self
+                .gl_elsewhere(
+                    &Route::Repo {
+                        repo: repo.to_string(),
+                        tab,
+                    },
+                    "That",
+                ),
             RepoTab::Discussions => self.repo_discussions(repo, cx),
             RepoTab::Actions => self.repo_actions(repo, &default_branch, cx),
             RepoTab::Projects => self.repo_projects(repo, cx),
@@ -381,7 +549,11 @@ impl Hub {
     fn repo_header(&mut self, repo: &str, info: &Value, cx: &mut Context<Self>) -> AnyElement {
         let p = palette();
         let owner_avatar = self.avatar(&info.s("owner.avatar_url"), 24.0, cx);
-        let starred = self.fetch_check(&format!("/user/starred/{repo}"), cx).ready().map(|v| v.b("")).unwrap_or(false);
+        let starred = self
+            .fetch_check(&format!("/user/starred/{repo}"), cx)
+            .ready()
+            .map(|v| v.b(""))
+            .unwrap_or(false);
         let sub_path = format!("/repos/{repo}/subscription");
         let subscription = self.fetch_with(
             sub_path.clone(),
@@ -405,29 +577,51 @@ impl Hub {
             _ => "Watch",
         };
         // GitLab doesn't count watchers.
-        let watch_label = if gitlab { watching.to_string() } else { format!("{watching} · {}", json::count(info.i("subscribers_count"))) };
+        let watch_label = if gitlab {
+            watching.to_string()
+        } else {
+            format!("{watching} · {}", json::count(info.i("subscribers_count")))
+        };
         let watch_menu = Act::menu(vec![
             MenuEntry::check(
-                if gitlab { "Participate" } else { "Participating and @mentions" },
+                if gitlab {
+                    "Participate"
+                } else {
+                    "Participating and @mentions"
+                },
                 watching == "Watch",
-                Req::rest("DELETE", sub_path.clone()).ok("Watching participating only").inval(sub_path.clone()).act(),
+                Req::rest("DELETE", sub_path.clone())
+                    .ok("Watching participating only")
+                    .inval(sub_path.clone())
+                    .act(),
             ),
             MenuEntry::check(
                 if gitlab { "Watch" } else { "All activity" },
                 watching == "Watching",
-                Req::rest("PUT", sub_path.clone()).body(json!({ "subscribed": true })).ok("Watching all activity").inval(sub_path.clone()).act(),
+                Req::rest("PUT", sub_path.clone())
+                    .body(json!({ "subscribed": true }))
+                    .ok("Watching all activity")
+                    .inval(sub_path.clone())
+                    .act(),
             ),
             MenuEntry::check(
                 if gitlab { "Disabled" } else { "Ignore" },
                 watching == "Ignoring",
-                Req::rest("PUT", sub_path.clone()).body(json!({ "ignored": true })).ok("Ignoring this repository").inval(sub_path.clone()).act(),
+                Req::rest("PUT", sub_path.clone())
+                    .body(json!({ "ignored": true }))
+                    .ok("Ignoring this repository")
+                    .inval(sub_path.clone())
+                    .act(),
             ),
         ]);
-        let star = Req::rest(if starred { "DELETE" } else { "PUT" }, format!("/user/starred/{repo}"))
-            .ok(if starred { "Unstarred" } else { "Starred" })
-            .inval("/user/starred")
-            .inval(format!("/repos/{repo}"))
-            .act();
+        let star = Req::rest(
+            if starred { "DELETE" } else { "PUT" },
+            format!("/user/starred/{repo}"),
+        )
+        .ok(if starred { "Unstarred" } else { "Starred" })
+        .inval("/user/starred")
+        .inval(format!("/repos/{repo}"))
+        .act();
         let name = info.s("name");
         let https = info.s("clone_url");
         let ssh = info.s("ssh_url");
@@ -435,15 +629,27 @@ impl Hub {
             MenuEntry::Header("Clone".into()),
             MenuEntry::item(format!("Copy HTTPS  {https}"), Act::Copy(https.clone())),
             MenuEntry::item(format!("Copy SSH  {ssh}"), Act::Copy(ssh)),
-            MenuEntry::item(format!("Copy  {0} repo clone {repo}", crate::forge::cli()), Act::Copy(format!("{} repo clone {repo}", crate::forge::cli()))),
+            MenuEntry::item(
+                format!("Copy  {0} repo clone {repo}", crate::forge::cli()),
+                Act::Copy(format!("{} repo clone {repo}", crate::forge::cli())),
+            ),
             MenuEntry::Sep,
         ];
         if !gitlab {
-            clone.push(MenuEntry::item("Open with GitHub Desktop", Act::Url(format!("x-github-client://openRepo/{}", info.s("html_url")))));
+            clone.push(MenuEntry::item(
+                "Open with GitHub Desktop",
+                Act::Url(format!("x-github-client://openRepo/{}", info.s("html_url"))),
+            ));
         }
         clone.extend([
-            MenuEntry::item("Open with Visual Studio Code", Act::Url(format!("vscode://vscode.git/clone?url={}", enc(&https)))),
-            MenuEntry::item("Download ZIP", Act::Url(archive_url(repo, &info.s("default_branch"), "zip", false))),
+            MenuEntry::item(
+                "Open with Visual Studio Code",
+                Act::Url(format!("vscode://vscode.git/clone?url={}", enc(&https))),
+            ),
+            MenuEntry::item(
+                "Download ZIP",
+                Act::Url(archive_url(repo, &info.s("default_branch"), "zip", false)),
+            ),
         ]);
         if !gitlab {
             clone.extend([
@@ -462,28 +668,41 @@ impl Hub {
         let clone = Act::menu(clone);
         let owner = info.s("owner.login");
         let owner_route = if info.s("owner.type") == "Organization" {
-            Route::Org { login: owner.clone() }
+            Route::Org {
+                login: owner.clone(),
+            }
         } else {
-            Route::User { login: owner.clone() }
+            Route::User {
+                login: owner.clone(),
+            }
         };
         let mut topics = div().flex().flex_row().flex_wrap().gap_1();
         for t in info.list("topics") {
             let topic = t.as_str().unwrap_or("").to_string();
             topics = topics.child(
-                crate::ui::Chip::new(ElementId::Name(format!("topic-{topic}").into()), topic.clone())
-                    .colors(crate::ui::ChipColors {
-                        bg: if crate::ui::is_light() { 0xDDF4FF } else { 0x121D2F },
-                        hover: p.hover,
-                        text: p.accent_hover,
-                        selected_bg: p.selection_bg,
-                        selected_text: p.text,
-                    })
-                    .on_click(on(Act::run(move |hub, _, cx| {
-                        hub.choices.insert("search.kind".into(), "repositories".into());
-                        hub.set_field("search.q", format!("topic:{topic}"));
-                        hub.choices.insert("search.applied".into(), format!("topic:{topic}"));
-                        hub.go(Route::Search, cx);
-                    }))),
+                crate::ui::Chip::new(
+                    ElementId::Name(format!("topic-{topic}").into()),
+                    topic.clone(),
+                )
+                .colors(crate::ui::ChipColors {
+                    bg: if crate::ui::is_light() {
+                        0xDDF4FF
+                    } else {
+                        0x121D2F
+                    },
+                    hover: p.hover,
+                    text: p.accent_hover,
+                    selected_bg: p.selection_bg,
+                    selected_text: p.text,
+                })
+                .on_click(on(Act::run(move |hub, _, cx| {
+                    hub.choices
+                        .insert("search.kind".into(), "repositories".into());
+                    hub.set_field("search.q", format!("topic:{topic}"));
+                    hub.choices
+                        .insert("search.applied".into(), format!("topic:{topic}"));
+                    hub.go(Route::Search, cx);
+                }))),
             );
         }
         let visibility = info.s("visibility");
@@ -502,22 +721,55 @@ impl Hub {
                             .child(owner)
                             .on_click(on(Act::Go(owner_route))),
                     )
-                    .child(div().text_size(px(20.0)).text_color(rgb(p.text_faint)).child("/"))
-                    .child(div().text_size(px(20.0)).font_weight(FontWeight::SEMIBOLD).child(name.clone()))
+                    .child(
+                        div()
+                            .text_size(px(20.0))
+                            .text_color(rgb(p.text_faint))
+                            .child("/"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(20.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(name.clone()),
+                    )
                     .child(widgets::tag(
-                        if visibility.is_empty() { "public".to_string() } else { visibility },
+                        if visibility.is_empty() {
+                            "public".to_string()
+                        } else {
+                            visibility
+                        },
                         p.text_dim,
                     ))
-                    .when(info.b("archived"), |d| d.child(widgets::tag("Archived", widgets::yellow())))
-                    .when(info.b("is_template"), |d| d.child(widgets::tag("Template", p.text_dim)))
+                    .when(info.b("archived"), |d| {
+                        d.child(widgets::tag("Archived", widgets::yellow()))
+                    })
+                    .when(info.b("is_template"), |d| {
+                        d.child(widgets::tag("Template", p.text_dim))
+                    })
                     .child(widgets::spacer())
-                    .when(info.b("is_template"), |d| d.child(widgets::go_btn("use-template", "Use this template", template_form(repo))))
+                    .when(info.b("is_template"), |d| {
+                        d.child(widgets::go_btn(
+                            "use-template",
+                            "Use this template",
+                            template_form(repo),
+                        ))
+                    })
                     .child(widgets::ibtn("watch", "eye", watch_label, watch_menu))
-                    .child(widgets::ibtn("fork", "fork", format!("Fork · {}", json::count(info.i("forks_count"))), fork_form(repo, &name)))
+                    .child(widgets::ibtn(
+                        "fork",
+                        "fork",
+                        format!("Fork · {}", json::count(info.i("forks_count"))),
+                        fork_form(repo, &name),
+                    ))
                     .child(widgets::ibtn(
                         "star",
                         if starred { "star-fill" } else { "star" },
-                        format!("{} · {}", if starred { "Starred" } else { "Star" }, json::count(info.i("stargazers_count"))),
+                        format!(
+                            "{} · {}",
+                            if starred { "Starred" } else { "Star" },
+                            json::count(info.i("stargazers_count"))
+                        ),
                         star,
                     ))
                     .child(widgets::primary("clone", "Code ▾", clone)),
@@ -528,13 +780,20 @@ impl Hub {
                     widgets::row().child(widgets::dim("forked from")).child(
                         crate::ui::Link::new("parent", parent.clone())
                             .text_size(px(12.0))
-                            .on_click(on(Act::Go(Route::Repo { repo: parent, tab: RepoTab::Code }))),
+                            .on_click(on(Act::Go(Route::Repo {
+                                repo: parent,
+                                tab: RepoTab::Code,
+                            }))),
                     ),
                 )
             })
-            .when(!info.s("description").is_empty(), |d| d.child(div().text_color(rgb(p.text)).child(info.s("description"))))
+            .when(!info.s("description").is_empty(), |d| {
+                d.child(div().text_color(rgb(p.text)).child(info.s("description")))
+            })
             .when(!info.s("homepage").is_empty(), |d| {
-                d.child(crate::ui::Link::new("homepage", info.s("homepage")).url(info.s("homepage")))
+                d.child(
+                    crate::ui::Link::new("homepage", info.s("homepage")).url(info.s("homepage")),
+                )
             })
             .when(!info.list("topics").is_empty(), |d| d.child(topics))
             .into_any_element()
@@ -550,11 +809,16 @@ impl Hub {
                 .p_6()
                 .gap_2()
                 .child(widgets::h2("This repository is empty"))
-                .child(widgets::dim("Push an existing repository from the command line:"))
+                .child(widgets::dim(
+                    "Push an existing repository from the command line:",
+                ))
                 .child(crate::markdown::code_block(
                     "empty-help".into(),
                     "sh",
-                    &format!("git remote add origin {}\ngit branch -M main\ngit push -u origin main", info.s("clone_url")),
+                    &format!(
+                        "git remote add origin {}\ngit branch -M main\ngit push -u origin main",
+                        info.s("clone_url")
+                    ),
                 ))
                 .into_any_element();
         }
@@ -562,11 +826,27 @@ impl Hub {
         let readme = self.readme(repo, &git_ref, "", cx);
         let about = self.repo_about(repo, info, cx);
         let picker = self.ref_picker(repo, &git_ref, cx);
-        let branches = self.fetch(&format!("/repos/{repo}/branches?per_page=100"), cx).ready().map(|v| v.list("").len()).unwrap_or(0);
-        let tags = self.fetch(&format!("/repos/{repo}/tags?per_page=100"), cx).ready().map(|v| v.list("").len()).unwrap_or(0);
-        let mut latest_row = widgets::row().px_4().py_2().bg(rgb(palette().deep_bg)).border_b_1().border_color(rgb(palette().divider));
+        let branches = self
+            .fetch(&format!("/repos/{repo}/branches?per_page=100"), cx)
+            .ready()
+            .map(|v| v.list("").len())
+            .unwrap_or(0);
+        let tags = self
+            .fetch(&format!("/repos/{repo}/tags?per_page=100"), cx)
+            .ready()
+            .map(|v| v.list("").len())
+            .unwrap_or(0);
+        let mut latest_row = widgets::row()
+            .px_4()
+            .py_2()
+            .bg(rgb(palette().deep_bg))
+            .border_b_1()
+            .border_color(rgb(palette().divider));
         let head = self.commit_head(repo, &git_ref, cx);
-        let total = head.as_ref().map(|c| c.i("history.totalCount")).unwrap_or(0);
+        let total = head
+            .as_ref()
+            .map(|c| c.i("history.totalCount"))
+            .unwrap_or(0);
         if let Some(c) = head {
             let sha = c.s("oid");
             let authors = self.commit_authors("latest", c.list("authors.nodes"), cx);
@@ -582,8 +862,21 @@ impl Hub {
                         .text_color(rgb(palette().text_dim))
                         .child(c.s("messageHeadline")),
                 )
-                .children(super::pulls::ci_mark_el("latest-checks", &c.s("statusCheckRollup.state")))
-                .child(widgets::btn("latest-sha", sha.chars().take(7).collect::<String>(), Act::Go(Route::Commit { repo: repo.to_string(), sha })).h(px(22.0)))
+                .children(super::pulls::ci_mark_el(
+                    "latest-checks",
+                    &c.s("statusCheckRollup.state"),
+                ))
+                .child(
+                    widgets::btn(
+                        "latest-sha",
+                        sha.chars().take(7).collect::<String>(),
+                        Act::Go(Route::Commit {
+                            repo: repo.to_string(),
+                            sha,
+                        }),
+                    )
+                    .h(px(22.0)),
+                )
                 .child(widgets::dim(time::ago(&c.s("committedDate"))));
         }
         let repo_s = repo.to_string();
@@ -594,14 +887,37 @@ impl Hub {
             .child(
                 widgets::row()
                     .child(picker)
-                    .child(widgets::ibtn("branches-count", "branch", format!("{branches} branches"), Act::Go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Branches })))
-                    .child(widgets::ibtn("tags-count", "tag", format!("{tags} tags"), Act::Go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Tags })))
+                    .child(widgets::ibtn(
+                        "branches-count",
+                        "branch",
+                        format!("{branches} branches"),
+                        Act::Go(Route::Repo {
+                            repo: repo_s.clone(),
+                            tab: RepoTab::Branches,
+                        }),
+                    ))
+                    .child(widgets::ibtn(
+                        "tags-count",
+                        "tag",
+                        format!("{tags} tags"),
+                        Act::Go(Route::Repo {
+                            repo: repo_s.clone(),
+                            tab: RepoTab::Tags,
+                        }),
+                    ))
                     .child(widgets::spacer())
                     .child(widgets::ibtn(
                         "history",
                         "history",
-                        if total > 0 { format!("{} commits", thousands(total)) } else { "History".to_string() },
-                        Act::Go(Route::Repo { repo: repo_s, tab: RepoTab::Commits }),
+                        if total > 0 {
+                            format!("{} commits", thousands(total))
+                        } else {
+                            "History".to_string()
+                        },
+                        Act::Go(Route::Repo {
+                            repo: repo_s,
+                            tab: RepoTab::Commits,
+                        }),
                     )),
             )
             .child(widgets::card().child(latest_row).child(listing))
@@ -617,8 +933,18 @@ impl Hub {
     }
 
     /// A directory's entries, folders first.
-    pub fn directory(&mut self, repo: &str, git_ref: &str, path: &str, cx: &mut Context<Self>) -> AnyElement {
-        let api = format!("/repos/{repo}/contents/{}?ref={}", enc_path(path), enc(git_ref));
+    pub fn directory(
+        &mut self,
+        repo: &str,
+        git_ref: &str,
+        path: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let api = format!(
+            "/repos/{repo}/contents/{}?ref={}",
+            enc_path(path),
+            enc(git_ref)
+        );
         let listing = ready!(self.fetch(&api, cx));
         let mut entries: Vec<Value> = listing.list("").to_vec();
         entries.sort_by_key(|e| (e.s("type") != "dir", e.s("name").to_lowercase()));
@@ -627,7 +953,10 @@ impl Hub {
         let p = palette();
         let mut col = div().flex().flex_col();
         if !path.is_empty() {
-            let parent = path.rsplit_once('/').map(|(a, _)| a.to_string()).unwrap_or_default();
+            let parent = path
+                .rsplit_once('/')
+                .map(|(a, _)| a.to_string())
+                .unwrap_or_default();
             col = col.child(
                 widgets::list_row(
                     "up",
@@ -663,7 +992,10 @@ impl Hub {
             let last = last.get(&e.s("path"));
             let message = last.map(|c| {
                 let sha = c.s("oid");
-                let go = Act::Go(Route::Commit { repo: repo.to_string(), sha });
+                let go = Act::Go(Route::Commit {
+                    repo: repo.to_string(),
+                    sha,
+                });
                 div()
                     .id(ElementId::Name(format!("entry-commit-{i}").into()))
                     .flex_1()
@@ -697,18 +1029,30 @@ impl Hub {
                         Some(m) => m.into_any_element(),
                         None => div().flex_1().into_any_element(),
                     })
-                    .when_some(last, |d, c| d.child(widgets::faint(time::ago(&c.s("committedDate"))))),
+                    .when_some(last, |d, c| {
+                        d.child(widgets::faint(time::ago(&c.s("committedDate"))))
+                    }),
             );
         }
         col.into_any_element()
     }
 
     /// The README of a directory, rendered.
-    pub fn readme(&mut self, repo: &str, git_ref: &str, dir: &str, cx: &mut Context<Self>) -> AnyElement {
+    pub fn readme(
+        &mut self,
+        repo: &str,
+        git_ref: &str,
+        dir: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let api = if dir.is_empty() {
             format!("/repos/{repo}/readme?ref={}", enc(git_ref))
         } else {
-            format!("/repos/{repo}/readme/{}?ref={}", enc_path(dir), enc(git_ref))
+            format!(
+                "/repos/{repo}/readme/{}?ref={}",
+                enc_path(dir),
+                enc(git_ref)
+            )
         };
         let load = self.fetch_text(&api, "application/vnd.github.raw", cx);
         let text = match load {
@@ -718,7 +1062,11 @@ impl Hub {
         };
         let body = self.markdown(&format!("readme-{dir}"), &text, cx);
         widgets::card()
-            .child(widgets::card_header().child(icon("book", 16.0, palette().text_dim)).child(widgets::h3("README")))
+            .child(
+                widgets::card_header()
+                    .child(icon("book", 16.0, palette().text_dim))
+                    .child(widgets::h3("README")),
+            )
             .child(div().p_6().child(body))
             .into_any_element()
     }
@@ -729,12 +1077,20 @@ impl Hub {
         let (owner, name) = repo.split_once('/')?;
         let vars = json!({ "o": owner, "n": name, "r": rev });
         let data = self.fetch_gql(&format!("/repos/{repo}/commits"), COMMIT_HEAD, vars, cx);
-        data.ready().map(|v| v.at("repository.object").clone()).filter(|c| c.has("oid"))
+        data.ready()
+            .map(|v| v.at("repository.object").clone())
+            .filter(|c| c.has("oid"))
     }
 
     /// The last commit to touch each of `paths` at `git_ref`, by path.
     /// Asked for in batches so a big directory doesn't make one huge query.
-    fn last_commits(&mut self, repo: &str, git_ref: &str, paths: &[String], cx: &mut Context<Self>) -> HashMap<String, Value> {
+    fn last_commits(
+        &mut self,
+        repo: &str,
+        git_ref: &str,
+        paths: &[String],
+        cx: &mut Context<Self>,
+    ) -> HashMap<String, Value> {
         let mut found = HashMap::new();
         let Some((owner, name)) = repo.split_once('/') else {
             return found;
@@ -747,7 +1103,10 @@ impl Hub {
                 .collect();
             let query = format!("query($o: String!, $n: String!, $r: String!) {{ repository(owner: $o, name: $n) {{ object(expression: $r) {{ ... on Commit {{ {fields}}} }} }} }}");
             let vars = json!({ "o": owner, "n": name, "r": git_ref });
-            if let Some(data) = self.fetch_gql(&format!("/repos/{repo}/commits"), &query, vars, cx).ready() {
+            if let Some(data) = self
+                .fetch_gql(&format!("/repos/{repo}/commits"), &query, vars, cx)
+                .ready()
+            {
                 let commit = data.at("repository.object");
                 for (i, path) in chunk.iter().enumerate() {
                     if let Some(c) = commit.list(&format!("e{i}.nodes")).first() {
@@ -761,7 +1120,12 @@ impl Hub {
 
     /// A commit's authors as overlapping avatars and "a and b", each
     /// opening that person's profile.
-    pub fn commit_authors(&mut self, id: &str, authors: &[Value], cx: &mut Context<Self>) -> AnyElement {
+    pub fn commit_authors(
+        &mut self,
+        id: &str,
+        authors: &[Value],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let authors = distinct_authors(authors);
         widgets::row()
             .gap_2()
@@ -775,7 +1139,11 @@ impl Hub {
     pub fn author_avatars(&mut self, authors: &[Value], cx: &mut Context<Self>) -> AnyElement {
         let mut avatars = div().flex().flex_row().flex_none();
         for (i, a) in authors.iter().enumerate() {
-            let url = if a.has("user.avatarUrl") { a.s("user.avatarUrl") } else { a.s("avatarUrl") };
+            let url = if a.has("user.avatarUrl") {
+                a.s("user.avatarUrl")
+            } else {
+                a.s("avatarUrl")
+            };
             let avatar = self.avatar(&url, 20.0, cx);
             avatars = avatars.child(div().when(i > 0, |d| d.ml(px(-6.0))).child(avatar));
         }
@@ -786,14 +1154,22 @@ impl Hub {
         let p = palette();
         let repo_s = repo.to_string();
         let stat = |id: &str, icon_name: &str, text: String, act: Act| {
-            widgets::ibtn(ElementId::Name(id.to_string().into()), icon_name, text, act).h(px(26.0)).gap_1p5()
+            widgets::ibtn(ElementId::Name(id.to_string().into()), icon_name, text, act)
+                .h(px(26.0))
+                .gap_1p5()
         };
         let mut about = widgets::col()
             .gap_2()
             .child(widgets::h3("About"))
-            .when(!info.s("description").is_empty(), |d| d.child(div().child(info.s("description"))))
+            .when(!info.s("description").is_empty(), |d| {
+                d.child(div().child(info.s("description")))
+            })
             .when(info.has("license"), |d| {
-                d.child(widgets::icon_text("book", info.s("license.name"), p.text_dim))
+                d.child(widgets::icon_text(
+                    "book",
+                    info.s("license.name"),
+                    p.text_dim,
+                ))
             })
             .child(
                 div()
@@ -805,7 +1181,12 @@ impl Hub {
                         "stargazers",
                         "star",
                         format!("{} stars", json::count(info.i("stargazers_count"))),
-                        Act::choose(format!("insights.view:{repo_s}"), "stargazers").then_go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Insights }),
+                        Act::choose(format!("insights.view:{repo_s}"), "stargazers").then_go(
+                            Route::Repo {
+                                repo: repo_s.clone(),
+                                tab: RepoTab::Insights,
+                            },
+                        ),
                     ))
                     // GitLab doesn't count watchers.
                     .when(!crate::forge::is_gitlab(), |d| {
@@ -813,44 +1194,81 @@ impl Hub {
                             "watchers",
                             "eye",
                             format!("{} watching", json::count(info.i("subscribers_count"))),
-                            Act::choose(format!("insights.view:{repo_s}"), "watchers").then_go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Insights }),
+                            Act::choose(format!("insights.view:{repo_s}"), "watchers").then_go(
+                                Route::Repo {
+                                    repo: repo_s.clone(),
+                                    tab: RepoTab::Insights,
+                                },
+                            ),
                         ))
                     })
                     .child(stat(
                         "forks",
                         "fork",
                         format!("{} forks", json::count(info.i("forks_count"))),
-                        Act::choose(format!("insights.view:{repo_s}"), "forks").then_go(Route::Repo { repo: repo_s.clone(), tab: RepoTab::Insights }),
+                        Act::choose(format!("insights.view:{repo_s}"), "forks").then_go(
+                            Route::Repo {
+                                repo: repo_s.clone(),
+                                tab: RepoTab::Insights,
+                            },
+                        ),
                     )),
             );
 
         // Latest release.
-        if let Some(release) = self.fetch(&format!("/repos/{repo}/releases?per_page=1"), cx).ready().and_then(|v| v.list("").first().cloned()) {
-            about = about.child(div().h(px(1.0)).bg(rgb(p.divider))).child(widgets::h3("Latest release")).child(
-                widgets::ibtn(
-                    "latest-release",
-                    "tag",
-                    format!("{}  ·  {}", release.s("tag_name"), time::ago(&release.s("published_at"))),
-                    Act::Go(Route::Release { repo: repo_s.clone(), id: release.i("id") as u64 }),
-                )
-                .w_full()
-                .justify_start(),
-            );
+        if let Some(release) = self
+            .fetch(&format!("/repos/{repo}/releases?per_page=1"), cx)
+            .ready()
+            .and_then(|v| v.list("").first().cloned())
+        {
+            about = about
+                .child(div().h(px(1.0)).bg(rgb(p.divider)))
+                .child(widgets::h3("Latest release"))
+                .child(
+                    widgets::ibtn(
+                        "latest-release",
+                        "tag",
+                        format!(
+                            "{}  ·  {}",
+                            release.s("tag_name"),
+                            time::ago(&release.s("published_at"))
+                        ),
+                        Act::Go(Route::Release {
+                            repo: repo_s.clone(),
+                            id: release.i("id") as u64,
+                        }),
+                    )
+                    .w_full()
+                    .justify_start(),
+                );
         }
 
         // Languages, as a bar and a legend.
-        if let Some(langs) = self.fetch(&format!("/repos/{repo}/languages"), cx).ready().cloned() {
+        if let Some(langs) = self
+            .fetch(&format!("/repos/{repo}/languages"), cx)
+            .ready()
+            .cloned()
+        {
             if let Value::Object(map) = &*langs {
                 let total: i64 = map.values().filter_map(|v| v.as_i64()).sum();
                 if total > 0 {
-                    let mut bar = div().flex().flex_row().h(px(8.0)).rounded_full().overflow_hidden();
+                    let mut bar = div()
+                        .flex()
+                        .flex_row()
+                        .h(px(8.0))
+                        .rounded_full()
+                        .overflow_hidden();
                     let mut legend = div().flex().flex_row().flex_wrap().gap_x_3().gap_y_1();
-                    let mut sorted: Vec<(&String, i64)> = map.iter().map(|(k, v)| (k, v.as_i64().unwrap_or(0))).collect();
+                    let mut sorted: Vec<(&String, i64)> = map
+                        .iter()
+                        .map(|(k, v)| (k, v.as_i64().unwrap_or(0)))
+                        .collect();
                     sorted.sort_by(|a, b| b.1.cmp(&a.1));
                     for (name, bytes) in sorted.iter().take(8) {
                         let color = language_color(name);
                         let pct = *bytes as f32 * 100.0 / total as f32;
-                        bar = bar.child(div().h_full().w(gpui::relative(pct / 100.0)).bg(rgb(color)));
+                        bar =
+                            bar.child(div().h_full().w(gpui::relative(pct / 100.0)).bg(rgb(color)));
                         legend = legend.child(
                             widgets::row()
                                 .gap_1()
@@ -869,7 +1287,11 @@ impl Hub {
         }
 
         // Contributors.
-        if let Some(people) = self.fetch(&format!("/repos/{repo}/contributors?per_page=24"), cx).ready().cloned() {
+        if let Some(people) = self
+            .fetch(&format!("/repos/{repo}/contributors?per_page=24"), cx)
+            .ready()
+            .cloned()
+        {
             let mut grid = div().flex().flex_row().flex_wrap().gap_1();
             for (i, person) in people.list("").iter().enumerate() {
                 let avatar = self.avatar(&person.s("avatar_url"), 28.0, cx);
@@ -878,7 +1300,10 @@ impl Hub {
                     div()
                         .id(("contributor", i))
                         .cursor_pointer()
-                        .tooltip(crate::ui::tip(format!("{login} · {} commits", person.i("contributions")), None))
+                        .tooltip(crate::ui::tip(
+                            format!("{login} · {} commits", person.i("contributions")),
+                            None,
+                        ))
                         .child(avatar)
                         .on_click(on(Act::Go(Route::User { login }))),
                 );
@@ -902,12 +1327,21 @@ impl Hub {
             let protected = b.b("protected");
             let mut row = Row::new(name.clone())
                 .icon("branch", widgets::gray())
-                .meta(format!("Last commit {}", b.s("commit.sha").chars().take(7).collect::<String>()))
+                .meta(format!(
+                    "Last commit {}",
+                    b.s("commit.sha").chars().take(7).collect::<String>()
+                ))
                 .open(Act::run({
                     let (repo, name) = (repo_s.clone(), name.clone());
                     move |hub, _, cx| {
                         hub.choices.insert(format!("ref:{repo}"), name.clone());
-                        hub.go(Route::Repo { repo: repo.clone(), tab: RepoTab::Code }, cx);
+                        hub.go(
+                            Route::Repo {
+                                repo: repo.clone(),
+                                tab: RepoTab::Code,
+                            },
+                            cx,
+                        );
                     }
                 }));
             if is_default {
@@ -918,7 +1352,10 @@ impl Hub {
             }
             if !is_default {
                 row = row
-                    .action(format!("New {}", crate::forge::pr()), super::pulls::new_pull_form(&repo_s, &default_branch, &name))
+                    .action(
+                        format!("New {}", crate::forge::pr()),
+                        super::pulls::new_pull_form(&repo_s, &default_branch, &name),
+                    )
                     .action(
                         "Compare",
                         Act::Go(Route::Compare {
@@ -942,8 +1379,15 @@ impl Hub {
                 "Rename",
                 FormSpec::new(format!("Rename {name}"))
                     .submit("Rename branch")
-                    .field(Field::text("new_name", "New name").value(name.clone()).required())
-                    .rest("POST", format!("/repos/{repo_s}/branches/{}/rename", enc(&name)))
+                    .field(
+                        Field::text("new_name", "New name")
+                            .value(name.clone())
+                            .required(),
+                    )
+                    .rest(
+                        "POST",
+                        format!("/repos/{repo_s}/branches/{}/rename", enc(&name)),
+                    )
                     .ok("Branch renamed")
                     .inval(inval.clone())
                     .act(),
@@ -951,27 +1395,48 @@ impl Hub {
             if admin {
                 row = row.action(
                     "Protection rules…",
-                    if crate::forge::is_gitlab() { gitlab_protection_form(&repo_s, &name) } else { protection_form(&repo_s, &name) },
+                    if crate::forge::is_gitlab() {
+                        gitlab_protection_form(&repo_s, &name)
+                    } else {
+                        protection_form(&repo_s, &name)
+                    },
                 );
                 if protected {
                     row = row.action(
                         "Remove protection",
-                        Req::rest("DELETE", format!("/repos/{repo_s}/branches/{}/protection", enc(&name)))
-                            .ok("Protection removed")
-                            .inval(inval.clone())
-                            .act()
-                            .confirm("Remove protection?", format!("Anyone with write access will be able to push to {name}."), "Remove"),
+                        Req::rest(
+                            "DELETE",
+                            format!("/repos/{repo_s}/branches/{}/protection", enc(&name)),
+                        )
+                        .ok("Protection removed")
+                        .inval(inval.clone())
+                        .act()
+                        .confirm(
+                            "Remove protection?",
+                            format!("Anyone with write access will be able to push to {name}."),
+                            "Remove",
+                        ),
                     );
                 }
             }
             if !is_default {
                 row = row.danger(
                     "Delete branch",
-                    Req::rest("DELETE", format!("/repos/{repo_s}/git/refs/heads/{}", enc_path(&name)))
-                        .ok(format!("Deleted {name}"))
-                        .inval(inval)
-                        .act()
-                        .confirm("Delete branch?", format!("{name} will be deleted. Open {} from it will be closed.", crate::forge::prs()), "Delete"),
+                    Req::rest(
+                        "DELETE",
+                        format!("/repos/{repo_s}/git/refs/heads/{}", enc_path(&name)),
+                    )
+                    .ok(format!("Deleted {name}"))
+                    .inval(inval)
+                    .act()
+                    .confirm(
+                        "Delete branch?",
+                        format!(
+                            "{name} will be deleted. Open {} from it will be closed.",
+                            crate::forge::prs()
+                        ),
+                        "Delete",
+                    ),
                 );
             }
             row
@@ -980,7 +1445,16 @@ impl Hub {
         let list = self.list(&spec, cx);
         widgets::col()
             .gap_3()
-            .child(widgets::row().child(widgets::h2("Branches")).child(widgets::spacer()).child(widgets::go_btn("new-branch", "New branch", new_branch_form(repo, ""))))
+            .child(
+                widgets::row()
+                    .child(widgets::h2("Branches"))
+                    .child(widgets::spacer())
+                    .child(widgets::go_btn(
+                        "new-branch",
+                        "New branch",
+                        new_branch_form(repo, ""),
+                    )),
+            )
             .child(list)
             .into_any_element()
     }
@@ -1003,36 +1477,75 @@ impl Hub {
                     "Create release",
                     super::releases::release_form(&repo_s, None, &name),
                 )
-                .action("Download ZIP", Act::Url(archive_url(&repo_s, &name, "zip", true)))
-                .action("Download tar.gz", Act::Url(archive_url(&repo_s, &name, "tar.gz", true)))
-                .action("Commit", Act::Go(Route::Commit { repo: repo_s.clone(), sha }))
+                .action(
+                    "Download ZIP",
+                    Act::Url(archive_url(&repo_s, &name, "zip", true)),
+                )
+                .action(
+                    "Download tar.gz",
+                    Act::Url(archive_url(&repo_s, &name, "tar.gz", true)),
+                )
+                .action(
+                    "Commit",
+                    Act::Go(Route::Commit {
+                        repo: repo_s.clone(),
+                        sha,
+                    }),
+                )
                 .danger(
                     "Delete tag",
-                    Req::rest("DELETE", format!("/repos/{repo_s}/git/refs/tags/{}", enc_path(&name)))
-                        .ok(format!("Deleted tag {name}"))
-                        .inval(format!("/repos/{repo_s}/tags"))
-                        .act()
-                        .confirm("Delete tag?", format!("The tag {name} will be deleted. Releases that use it become drafts."), "Delete"),
+                    Req::rest(
+                        "DELETE",
+                        format!("/repos/{repo_s}/git/refs/tags/{}", enc_path(&name)),
+                    )
+                    .ok(format!("Deleted tag {name}"))
+                    .inval(format!("/repos/{repo_s}/tags"))
+                    .act()
+                    .confirm(
+                        "Delete tag?",
+                        format!(
+                            "The tag {name} will be deleted. Releases that use it become drafts."
+                        ),
+                        "Delete",
+                    ),
                 )
         })
         .empty("No tags.");
         let list = self.list(&spec, cx);
         widgets::col()
             .gap_3()
-            .child(widgets::row().child(widgets::h2("Tags")).child(widgets::spacer()).child(widgets::go_btn("new-tag", "New tag", new_tag_form(repo))))
+            .child(
+                widgets::row()
+                    .child(widgets::h2("Tags"))
+                    .child(widgets::spacer())
+                    .child(widgets::go_btn("new-tag", "New tag", new_tag_form(repo))),
+            )
             .child(list)
             .into_any_element()
     }
 
-    fn repo_commits(&mut self, repo: &str, default_branch: &str, cx: &mut Context<Self>) -> AnyElement {
+    fn repo_commits(
+        &mut self,
+        repo: &str,
+        default_branch: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let git_ref = self.current_ref(repo, default_branch);
         let picker = self.ref_picker(repo, &git_ref, cx);
         let path_field = format!("commits.path:{repo}");
         let author_field = format!("commits.author:{repo}");
         let applied_key = format!("commits.applied:{repo}");
-        let (fp, fa, ak) = (path_field.clone(), author_field.clone(), applied_key.clone());
+        let (fp, fa, ak) = (
+            path_field.clone(),
+            author_field.clone(),
+            applied_key.clone(),
+        );
         let apply = Act::run(move |hub, _, cx| {
-            let value = format!("{}\u{1}{}", hub.field_text(&fp).trim(), hub.field_text(&fa).trim());
+            let value = format!(
+                "{}\u{1}{}",
+                hub.field_text(&fp).trim(),
+                hub.field_text(&fa).trim()
+            );
             hub.choices.insert(ak.clone(), value);
             cx.notify();
         });
@@ -1050,17 +1563,33 @@ impl Hub {
         let repo_s = repo.to_string();
         let spec = ListSpec::new(api, move |c| commit_row(&repo_s, c)).empty("No commits match.");
         let list = self.list(&spec, cx);
-        let path_input = self.input(&path_field, "Path filter — Enter", cx).w(px(220.0));
-        let author_input = self.input(&author_field, "Author login or email — Enter", cx).w(px(220.0));
+        let path_input = self
+            .input(&path_field, "Path filter — Enter", cx)
+            .w(px(220.0));
+        let author_input = self
+            .input(&author_field, "Author login or email — Enter", cx)
+            .w(px(220.0));
         widgets::col()
             .gap_3()
-            .child(widgets::row().child(picker).child(path_input).child(author_input))
+            .child(
+                widgets::row()
+                    .child(picker)
+                    .child(path_input)
+                    .child(author_input),
+            )
             .child(list)
             .into_any_element()
     }
 
     /// A directory or a file at a ref.
-    pub fn tree(&mut self, repo: &str, git_ref: &str, path: &str, file: bool, cx: &mut Context<Self>) -> AnyElement {
+    pub fn tree(
+        &mut self,
+        repo: &str,
+        git_ref: &str,
+        path: &str,
+        file: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let crumbs = self.path_crumbs(repo, git_ref, path);
         if file {
             return self.file_view(repo, git_ref, path, crumbs, cx);
@@ -1082,43 +1611,65 @@ impl Hub {
             .text_size(px(15.0))
             .child(widgets::tag(git_ref.to_string(), p.text_dim))
             .child(
-                crate::ui::Link::new("crumb-root", repo.rsplit('/').next().unwrap_or(repo).to_string())
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .on_click(on(Act::Go(Route::Tree {
-                        repo: repo.to_string(),
-                        git_ref: git_ref.to_string(),
-                        path: String::new(),
-                        file: false,
-                    }))),
+                crate::ui::Link::new(
+                    "crumb-root",
+                    repo.rsplit('/').next().unwrap_or(repo).to_string(),
+                )
+                .font_weight(FontWeight::SEMIBOLD)
+                .on_click(on(Act::Go(Route::Tree {
+                    repo: repo.to_string(),
+                    git_ref: git_ref.to_string(),
+                    path: String::new(),
+                    file: false,
+                }))),
             );
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         for (i, part) in parts.iter().enumerate() {
             row = row.child(div().text_color(rgb(p.text_faint)).child("/"));
             if i + 1 == parts.len() {
-                row = row.child(div().font_weight(FontWeight::SEMIBOLD).child(part.to_string()));
+                row = row.child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(part.to_string()),
+                );
             } else {
                 row = row.child(
-                    crate::ui::Link::new(ElementId::Name(format!("crumb-{i}").into()), part.to_string()).on_click(on(Act::Go(
-                        Route::Tree {
-                            repo: repo.to_string(),
-                            git_ref: git_ref.to_string(),
-                            path: parts[..=i].join("/"),
-                            file: false,
-                        },
-                    ))),
+                    crate::ui::Link::new(
+                        ElementId::Name(format!("crumb-{i}").into()),
+                        part.to_string(),
+                    )
+                    .on_click(on(Act::Go(Route::Tree {
+                        repo: repo.to_string(),
+                        git_ref: git_ref.to_string(),
+                        path: parts[..=i].join("/"),
+                        file: false,
+                    }))),
                 );
             }
         }
         row.child(widgets::spacer())
-            .child(widgets::btn("copy-path", "Copy path", Act::Copy(path.to_string())))
+            .child(widgets::btn(
+                "copy-path",
+                "Copy path",
+                Act::Copy(path.to_string()),
+            ))
             .into_any_element()
     }
 
     /// A file, read-only: rendered Markdown, an image, or numbered lines.
-    fn file_view(&mut self, repo: &str, git_ref: &str, path: &str, crumbs: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+    fn file_view(
+        &mut self,
+        repo: &str,
+        git_ref: &str,
+        path: &str,
+        crumbs: AnyElement,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette();
         let lower = path.to_lowercase();
-        let is_image = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"].iter().any(|e| lower.ends_with(e));
+        let is_image = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"]
+            .iter()
+            .any(|e| lower.ends_with(e));
         let is_markdown = lower.ends_with(".md") || lower.ends_with(".markdown");
         let gitlab = crate::forge::is_gitlab();
         let raw_url = if gitlab {
@@ -1128,7 +1679,13 @@ impl Hub {
         };
         // GitLab's API serves a private project's file to the token too.
         let image_url = if gitlab {
-            format!("{}{}/repository/files/{}/raw?ref={}", crate::forge::web(), crate::screens::gitlab::project_api(repo), enc(path), enc(git_ref))
+            format!(
+                "{}{}/repository/files/{}/raw?ref={}",
+                crate::forge::web(),
+                crate::screens::gitlab::project_api(repo),
+                enc(path),
+                enc(git_ref)
+            )
         } else {
             raw_url.clone()
         };
@@ -1140,14 +1697,25 @@ impl Hub {
         let history = Act::run({
             let (repo, path) = (repo.to_string(), path.to_string());
             move |hub, _, cx| {
-                hub.choices.insert(format!("commits.applied:{repo}"), format!("{path}\u{1}"));
+                hub.choices
+                    .insert(format!("commits.applied:{repo}"), format!("{path}\u{1}"));
                 hub.set_field(&format!("commits.path:{repo}"), path.clone());
-                hub.go(Route::Repo { repo: repo.clone(), tab: RepoTab::Commits }, cx);
+                hub.go(
+                    Route::Repo {
+                        repo: repo.clone(),
+                        tab: RepoTab::Commits,
+                    },
+                    cx,
+                );
             }
         });
         let view_key = format!("file.view:{repo}:{path}");
         let view = self.choice(&view_key, if is_markdown { "preview" } else { "code" });
-        let api = format!("/repos/{repo}/contents/{}?ref={}", enc_path(path), enc(git_ref));
+        let api = format!(
+            "/repos/{repo}/contents/{}?ref={}",
+            enc_path(path),
+            enc(git_ref)
+        );
 
         let mut toolbar = widgets::row()
             .px_4()
@@ -1157,26 +1725,59 @@ impl Hub {
             .border_color(rgb(p.divider));
         if is_markdown {
             toolbar = toolbar.child(widgets::chips(vec![
-                ("Preview".into(), view == "preview", Act::choose(&view_key, "preview")),
-                ("Code".into(), view == "code", Act::choose(&view_key, "code")),
+                (
+                    "Preview".into(),
+                    view == "preview",
+                    Act::choose(&view_key, "preview"),
+                ),
+                (
+                    "Code".into(),
+                    view == "code",
+                    Act::choose(&view_key, "code"),
+                ),
             ]));
         }
 
         let body: AnyElement = if is_image {
             let image = self.image(&image_url, cx);
-            div().p_4().flex().justify_center().child(image).into_any_element()
+            div()
+                .p_4()
+                .flex()
+                .justify_center()
+                .child(image)
+                .into_any_element()
         } else {
             let text = match self.fetch_text(&api, "application/vnd.github.raw", cx) {
                 Load::Ready(v) => v.s(""),
-                other => return widgets::page().child(crumbs).child(widgets::placeholder(&other)).into_any_element(),
+                other => {
+                    return widgets::page()
+                        .child(crumbs)
+                        .child(widgets::placeholder(&other))
+                        .into_any_element()
+                }
             };
             let lines = text.lines().count();
-            toolbar = toolbar.child(widgets::dim(format!("{lines} lines  ·  {}", json::bytes(text.len() as i64))));
+            toolbar = toolbar.child(widgets::dim(format!(
+                "{lines} lines  ·  {}",
+                json::bytes(text.len() as i64)
+            )));
             let copy_text = text.clone();
-            toolbar = toolbar.child(widgets::spacer()).child(widgets::btn("copy-file", "Copy", Act::Copy(copy_text)));
+            toolbar = toolbar.child(widgets::spacer()).child(widgets::btn(
+                "copy-file",
+                "Copy",
+                Act::Copy(copy_text),
+            ));
             if is_markdown && view == "preview" {
                 let md = self.markdown(&format!("file-{path}"), &text, cx);
-                div().id("file-md").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroller("file-md")).p_6().child(md).into_any_element()
+                div()
+                    .id("file-md")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroller("file-md"))
+                    .p_6()
+                    .child(md)
+                    .into_any_element()
             } else {
                 numbered_lines(&text, path, self.list_scroller("file-lines"))
             }
@@ -1211,7 +1812,8 @@ impl Hub {
 /// Monospace lines with numbers, virtualised so large files stay quick.
 pub fn numbered_lines(text: &str, path: &str, scroll: gpui::UniformListScrollHandle) -> AnyElement {
     let p = palette();
-    let lines: std::rc::Rc<Vec<String>> = std::rc::Rc::new(text.lines().map(|l| l.replace('\t', "    ")).collect());
+    let lines: std::rc::Rc<Vec<String>> =
+        std::rc::Rc::new(text.lines().map(|l| l.replace('\t', "    ")).collect());
     let colours = crate::highlight::lines(crate::highlight::syntax_for(path), &lines, &[]);
     let block = format!("file:{path}");
     let count = lines.len();
@@ -1232,7 +1834,12 @@ pub fn numbered_lines(text: &str, path: &str, scroll: gpui::UniformListScrollHan
                             .text_color(rgb(p.text_faint))
                             .child((i + 1).to_string()),
                     )
-                    .child(crate::select::line(&block, &lines, i, colours.as_ref().map(|c| c[i].as_slice())))
+                    .child(crate::select::line(
+                        &block,
+                        &lines,
+                        i,
+                        colours.as_ref().map(|c| c[i].as_slice()),
+                    ))
             })
             .collect()
     })
@@ -1282,7 +1889,9 @@ pub fn language_color(name: &str) -> u32 {
         "WGSL" => 0x1A5E9A,
         _ => {
             // A stable colour from the name for everything else.
-            let h = name.bytes().fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32));
+            let h = name
+                .bytes()
+                .fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32));
             0x404040 | (h & 0x9F9F9F)
         }
     }

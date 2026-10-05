@@ -6,8 +6,8 @@
 //! release is and gets out of the way.
 
 use crate::hub::{Hub, Modal};
-use crate::update::{self, Progress, Update, UpdateStatus};
 use crate::ui::{palette, Button, ProgressBar};
+use crate::update::{self, Progress, Update, UpdateStatus};
 use crate::widgets::rgb;
 use gpui::{div, px, AnyElement, Context, IntoElement as _, ParentElement as _, Styled as _};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,7 +27,8 @@ impl Hub {
         }
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_secs(5)).await;
-            this.update(cx, |hub, cx| hub.run_update_check(true, cx)).ok();
+            this.update(cx, |hub, cx| hub.run_update_check(true, cx))
+                .ok();
         })
         .detach();
     }
@@ -67,11 +68,19 @@ impl Hub {
                         if !quiet || hub.modal.is_none() {
                             hub.modal = Some(Modal::Update { update });
                         } else {
-                            hub.toast(format!("VisualHub {} is available", update.version), false, cx);
+                            hub.toast(
+                                format!("VisualHub {} is available", update.version),
+                                false,
+                                cx,
+                            );
                         }
                     }
                     UpdateStatus::UpToDate if !quiet => {
-                        hub.toast(format!("VisualHub {} is up to date", update::current_version()), false, cx);
+                        hub.toast(
+                            format!("VisualHub {} is up to date", update::current_version()),
+                            false,
+                            cx,
+                        );
                     }
                     UpdateStatus::Failed(err) if !quiet => {
                         hub.toast(format!("Couldn't check for updates: {err}"), true, cx);
@@ -96,7 +105,10 @@ impl Hub {
         if self.update_progress.is_some() {
             return;
         }
-        self.update_progress = Some(Progress::Downloading { received: 0, total: installer.size });
+        self.update_progress = Some(Progress::Downloading {
+            received: 0,
+            total: installer.size,
+        });
         cx.notify();
 
         // The download runs on a background thread and counts bytes into
@@ -106,9 +118,13 @@ impl Hub {
         cx.spawn({
             let received = received.clone();
             async move |this, cx| loop {
-                cx.background_executor().timer(Duration::from_millis(200)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
                 let downloading = this.update(cx, |hub, cx| {
-                    let Some(Progress::Downloading { received: got, .. }) = hub.update_progress.as_mut() else {
+                    let Some(Progress::Downloading { received: got, .. }) =
+                        hub.update_progress.as_mut()
+                    else {
                         return false;
                     };
                     *got = received.load(Ordering::Relaxed);
@@ -132,7 +148,8 @@ impl Hub {
             let file = match fetched {
                 Ok(file) => file,
                 Err(err) => {
-                    this.update(cx, |hub, cx| hub.update_failed(&format!("{err:#}"), cx)).ok();
+                    this.update(cx, |hub, cx| hub.update_failed(&format!("{err:#}"), cx))
+                        .ok();
                     return;
                 }
             };
@@ -208,7 +225,9 @@ impl Hub {
             )));
         let bar = |fraction: f32| {
             // The card's width less its padding, which is `p_4` on both sides.
-            ProgressBar::new(fraction).w(px(DIALOG_WIDTH - 32.0)).h(px(6.0))
+            ProgressBar::new(fraction)
+                .w(px(DIALOG_WIDTH - 32.0))
+                .h(px(6.0))
         };
         modal = match (&installer, progress) {
             (_, Some(Progress::Downloading { received, total })) => modal
@@ -263,7 +282,9 @@ impl Hub {
                                 Button::new("update-install", "Update and restart")
                                     .h(px(28.0))
                                     .primary()
-                                    .on_click(cx.listener(move |hub, _, _, cx| hub.start_update(update.clone(), cx))),
+                                    .on_click(cx.listener(move |hub, _, _, cx| {
+                                        hub.start_update(update.clone(), cx)
+                                    })),
                             )
                     }
                     None => modal.action(

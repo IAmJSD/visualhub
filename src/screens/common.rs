@@ -2,17 +2,17 @@
 //! in a list, a comment with its reactions, and the comment composer.
 
 use crate::form::{Field, FormSpec};
-use crate::hub::{on, Act, Hub, MenuEntry, Req, Route, RepoTab, PullTab};
+use crate::hub::{on, Act, Hub, MenuEntry, PullTab, RepoTab, Req, Route};
 use crate::json::{self, Json as _};
 use crate::resource::Row;
 use crate::time;
+use crate::ui::{icon, palette, Button, IconButton};
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _,
-    Styled as _,
+    div, px, AnyElement, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, StatefulInteractiveElement as _, Styled as _,
 };
-use crate::ui::{icon, palette, Button, IconButton};
 use serde_json::{json, Value};
 
 /// "owner/name" (on GitLab, "group/sub/project") from any API URL or
@@ -26,7 +26,8 @@ pub fn issue_icon(item: &Value) -> (&'static str, u32) {
     let is_pr = item.has("pull_request") || item.has("merged_at") || item.has("head");
     let state = item.s("state");
     if is_pr {
-        let merged = item.has("pull_request.merged_at") || item.has("merged_at") || item.b("merged");
+        let merged =
+            item.has("pull_request.merged_at") || item.has("merged_at") || item.b("merged");
         if merged {
             ("pr-merged", widgets::purple())
         } else if state == "closed" {
@@ -73,7 +74,11 @@ pub fn issue_row(item: &Value, show_repo: bool) -> Row {
     let is_pr = item.has("pull_request") || item.has("head");
     let mut meta = format!(
         "{} opened {} by {}",
-        if is_pr { crate::forge::pr_ref(item.i("number")) } else { format!("#{}", item.i("number")) },
+        if is_pr {
+            crate::forge::pr_ref(item.i("number"))
+        } else {
+            format!("#{}", item.i("number"))
+        },
         time::ago(&item.s("created_at")),
         item.s("user.login")
     );
@@ -112,7 +117,10 @@ pub fn repo_row(repo: &Value) -> Row {
     }
     meta.push(format!("Updated {}", time::ago(&repo.s("pushed_at"))));
     let mut row = Row::new(full.clone())
-        .icon(if repo.b("fork") { "fork" } else { "repo" }, palette().text_dim)
+        .icon(
+            if repo.b("fork") { "fork" } else { "repo" },
+            palette().text_dim,
+        )
         .meta(meta.join("  ·  "))
         .body(repo.s("description"))
         .open(Act::Go(Route::Repo {
@@ -182,7 +190,13 @@ pub fn toggle_reaction(base: &str, content: &str, login: &str, invalidate: &str)
 }
 
 /// The reaction counts under a comment, each a toggle, and a picker.
-pub fn reactions_bar(id: &str, reactions: &Value, base: &str, login: &str, invalidate: &str) -> AnyElement {
+pub fn reactions_bar(
+    id: &str,
+    reactions: &Value,
+    base: &str,
+    login: &str,
+    invalidate: &str,
+) -> AnyElement {
     let p = palette();
     let mut bar = div().flex().flex_row().flex_wrap().gap_1().items_center();
     for (content, emoji) in REACTIONS {
@@ -293,11 +307,7 @@ impl Hub {
         }
 
         let header = widgets::card_header()
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(login.clone()),
-            )
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(login.clone()))
             .child(widgets::dim(format!(
                 "{verb} {}",
                 time::ago(&comment.s("created_at"))
@@ -307,10 +317,9 @@ impl Hub {
                 |d| d.child(widgets::faint("· edited")),
             )
             .child(widgets::spacer())
-            .when(
-                !association.is_empty() && association != "NONE",
-                |d| d.child(widgets::tag(association.to_lowercase(), p.text_dim)),
-            )
+            .when(!association.is_empty() && association != "NONE", |d| {
+                d.child(widgets::tag(association.to_lowercase(), p.text_dim))
+            })
             .child(
                 IconButton::new(ElementId::Name(format!("{id}-menu").into()), "kebab")
                     .size(24.0)
@@ -356,7 +365,11 @@ impl Hub {
         let who = widgets::row()
             .gap_2()
             .child(avatar)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(actor.s("login")))
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(actor.s("login")),
+            )
             .into_any_element();
         self.timeline_event_by(icon_name, color, who, text, when, extra)
     }
@@ -423,7 +436,9 @@ impl Hub {
             };
             div().min_h(px(130.0)).p_2().child(md).into_any_element()
         } else {
-            self.textarea(field, "Add your comment here…", cx).min_h(px(130.0)).into_any_element()
+            self.textarea(field, "Add your comment here…", cx)
+                .min_h(px(130.0))
+                .into_any_element()
         };
         let tab = |id: &str, label: &str, on_now: bool, value: &'static str| {
             div()
@@ -438,7 +453,10 @@ impl Hub {
                         .border_color(rgb(p.edge))
                         .font_weight(FontWeight::SEMIBOLD)
                 })
-                .when(!on_now, |d| d.text_color(rgb(p.text_dim)).hover(|s| s.text_color(rgb(p.text))))
+                .when(!on_now, |d| {
+                    d.text_color(rgb(p.text_dim))
+                        .hover(|s| s.text_color(rgb(p.text)))
+                })
                 .on_click(on(Act::choose(tab_key.clone(), value)))
                 .child(label.to_string())
         };
@@ -471,7 +489,9 @@ impl Hub {
                                     .pb_2()
                                     .gap_1()
                                     .child(icon("code", 13.0, p.text_dim))
-                                    .child(widgets::faint("Markdown is supported  ·  Ctrl+Enter to send")),
+                                    .child(widgets::faint(
+                                        "Markdown is supported  ·  Ctrl+Enter to send",
+                                    )),
                             ),
                     )
                     .child(
@@ -483,10 +503,14 @@ impl Hub {
                             .gap_2()
                             .children(extra)
                             .child(
-                                widgets::go_btn(ElementId::Name(format!("{field}-send").into()), "Comment", submit)
-                                    .h(px(32.0))
-                                    .px_4()
-                                    .text_size(px(13.0)),
+                                widgets::go_btn(
+                                    ElementId::Name(format!("{field}-send").into()),
+                                    "Comment",
+                                    submit,
+                                )
+                                .h(px(32.0))
+                                .px_4()
+                                .text_size(px(13.0)),
                             ),
                     ),
             )

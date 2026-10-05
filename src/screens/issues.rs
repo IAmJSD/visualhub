@@ -5,17 +5,20 @@ use super::common::{
     self, api_path, delete_comment, edit_comment, issue_row, post_comment, side_section,
     CommentActs,
 };
-use crate::picker::{PickItem, Picker};
 use crate::form::{DropOption, Field, FormSpec};
-use crate::hub::{on, Act, Hub, MenuEntry, Req, Route, RepoTab};
+use crate::hub::{on, Act, Hub, MenuEntry, RepoTab, Req, Route};
 use crate::json::{enc, Json as _};
+use crate::picker::{PickItem, Picker};
 use crate::ready;
 use crate::resource::{ListSpec, Row};
 use crate::time;
+use crate::ui::palette;
 use crate::widgets::{self, rgb};
 use gpui::prelude::FluentBuilder as _;
-use gpui::{div, px, AnyElement, Context, ElementId, FontWeight, IntoElement as _, ParentElement as _, Styled as _};
-use crate::ui::palette;
+use gpui::{
+    div, px, AnyElement, Context, ElementId, FontWeight, IntoElement as _, ParentElement as _,
+    Styled as _,
+};
 use serde_json::{json, Value};
 
 pub fn new_issue_form(repo: &str) -> Act {
@@ -26,16 +29,36 @@ pub fn new_issue_form(repo: &str) -> Act {
         .width(640.0)
         .field(Field::text("title", "Title").required())
         .field(Field::multiline("body", "Description").hint("Markdown is supported."))
-        .field(Field::dropdown("labels", "Labels", format!("/repos/{repo}/labels?per_page=100"), |l| {
-            DropOption::new(l.s("name"), l.s("name")).color(l.s("color")).detail(l.s("description"))
-        }))
-        .field(Field::dropdown("assignees", "Assignees", format!("/repos/{repo}/assignees?per_page=100"), |u| {
-            DropOption::new(u.s("login"), u.s("login")).avatar(u.s("avatar_url"))
-        }))
-        .field(Field::dropdown_one("milestone", "Milestone", format!("/repos/{repo}/milestones?state=open&per_page=100"), "No milestone", |m| {
-            let due = if m.has("due_on") { format!("Due {}", time::date(&m.s("due_on"))) } else { "No due date".to_string() };
-            DropOption::new(m.i("number"), m.s("title")).detail(due)
-        }))
+        .field(Field::dropdown(
+            "labels",
+            "Labels",
+            format!("/repos/{repo}/labels?per_page=100"),
+            |l| {
+                DropOption::new(l.s("name"), l.s("name"))
+                    .color(l.s("color"))
+                    .detail(l.s("description"))
+            },
+        ))
+        .field(Field::dropdown(
+            "assignees",
+            "Assignees",
+            format!("/repos/{repo}/assignees?per_page=100"),
+            |u| DropOption::new(u.s("login"), u.s("login")).avatar(u.s("avatar_url")),
+        ))
+        .field(Field::dropdown_one(
+            "milestone",
+            "Milestone",
+            format!("/repos/{repo}/milestones?state=open&per_page=100"),
+            "No milestone",
+            |m| {
+                let due = if m.has("due_on") {
+                    format!("Due {}", time::date(&m.s("due_on")))
+                } else {
+                    "No due date".to_string()
+                };
+                DropOption::new(m.i("number"), m.s("title")).detail(due)
+            },
+        ))
         .rest("POST", format!("/repos/{repo}/issues"))
         .ok("Issue created")
         .inval(format!("/repos/{repo}/issues"))
@@ -104,13 +127,32 @@ impl Hub {
         let query = format!("is:{kind} is:{state} {qualifier} archived:false");
         let spec = search_spec(&query, true);
         let list = self.list(&spec, cx);
-        let title = if kind == "pr" { crate::forge::prs_title() } else { "Issues" };
+        let title = if kind == "pr" {
+            crate::forge::prs_title()
+        } else {
+            "Issues"
+        };
         let mut states = vec![
-            ("Open".to_string(), state == "open", Act::choose(&state_key, "open")),
-            ("Closed".to_string(), state == "closed", Act::choose(&state_key, "closed")),
+            (
+                "Open".to_string(),
+                state == "open",
+                Act::choose(&state_key, "open"),
+            ),
+            (
+                "Closed".to_string(),
+                state == "closed",
+                Act::choose(&state_key, "closed"),
+            ),
         ];
         if kind == "pr" && crate::forge::is_gitlab() {
-            states.insert(1, ("Merged".to_string(), state == "merged", Act::choose(&state_key, "merged")));
+            states.insert(
+                1,
+                (
+                    "Merged".to_string(),
+                    state == "merged",
+                    Act::choose(&state_key, "merged"),
+                ),
+            );
         }
         widgets::page()
             .child(widgets::title(title))
@@ -136,19 +178,39 @@ impl Hub {
         let view = self.choice(&view_key, "list");
         let header = widgets::row()
             .child(widgets::chips(vec![
-                ("Issues".into(), view == "list", Act::choose(&view_key, "list")),
-                ("Labels".into(), view == "labels", Act::choose(&view_key, "labels")),
-                ("Milestones".into(), view == "milestones", Act::choose(&view_key, "milestones")),
+                (
+                    "Issues".into(),
+                    view == "list",
+                    Act::choose(&view_key, "list"),
+                ),
+                (
+                    "Labels".into(),
+                    view == "labels",
+                    Act::choose(&view_key, "labels"),
+                ),
+                (
+                    "Milestones".into(),
+                    view == "milestones",
+                    Act::choose(&view_key, "milestones"),
+                ),
             ]))
             .child(widgets::spacer());
         match view.as_str() {
             "labels" => {
                 let body = self.labels_view(repo, cx);
-                widgets::col().gap_3().child(header).child(body).into_any_element()
+                widgets::col()
+                    .gap_3()
+                    .child(header)
+                    .child(body)
+                    .into_any_element()
             }
             "milestones" => {
                 let body = self.milestones_view(repo, cx);
-                widgets::col().gap_3().child(header).child(body).into_any_element()
+                widgets::col()
+                    .gap_3()
+                    .child(header)
+                    .child(body)
+                    .into_any_element()
             }
             _ => {
                 let list = self.issue_list(repo, "issue", cx);
@@ -180,15 +242,15 @@ impl Hub {
         let (sort_field, direction) = sort.split_once('-').unwrap_or(("created", "desc"));
         let spec = if applied.trim().is_empty() {
             let path = if kind == "pr" {
-                format!(
-                    "/repos/{repo}/pulls?state={state}&sort={sort_field}&direction={direction}"
-                )
+                format!("/repos/{repo}/pulls?state={state}&sort={sort_field}&direction={direction}")
             } else {
                 let mut path = format!(
                     "/repos/{repo}/issues?state={state}&sort={sort_field}&direction={direction}"
                 );
                 if state == "merged" {
-                    path = format!("/repos/{repo}/issues?state=closed&sort={sort_field}&direction={direction}");
+                    path = format!(
+                        "/repos/{repo}/issues?state=closed&sort={sort_field}&direction={direction}"
+                    );
                 }
                 if !label.is_empty() {
                     path.push_str(&format!("&labels={}", enc(&label)));
@@ -217,7 +279,11 @@ impl Hub {
             })
             .filter(move |item| is_pr || !item.has("pull_request"))
             .empty(if kind == "pr" {
-                if crate::forge::is_gitlab() { "No merge requests match." } else { "No pull requests match." }
+                if crate::forge::is_gitlab() {
+                    "No merge requests match."
+                } else {
+                    "No pull requests match."
+                }
             } else {
                 "No issues match."
             })
@@ -245,7 +311,11 @@ impl Hub {
             }),
         );
         let search = self
-            .input(&query_field, "Filter, e.g. author:octocat bug in:title — Enter", cx)
+            .input(
+                &query_field,
+                "Filter, e.g. author:octocat bug in:title — Enter",
+                cx,
+            )
             .w(px(360.0));
 
         let labels_menu = {
@@ -254,7 +324,11 @@ impl Hub {
                 label.is_empty(),
                 Act::choose(&label_key, ""),
             )];
-            if let Some(labels) = self.fetch(&format!("/repos/{repo}/labels?per_page=100"), cx).ready().cloned() {
+            if let Some(labels) = self
+                .fetch(&format!("/repos/{repo}/labels?per_page=100"), cx)
+                .ready()
+                .cloned()
+            {
                 for l in labels.list("") {
                     let name = l.s("name");
                     entries.push(MenuEntry::check(
@@ -281,7 +355,10 @@ impl Hub {
         let list = self.list(&spec, cx);
         // "12 Open", "34 Closed", as github.com heads the list.
         let counts = self.issue_counts(repo, cx);
-        let counted = |label: &str, key: &str| match counts.as_ref().map(|c| c.i(&format!("{key}.totalCount"))) {
+        let counted = |label: &str, key: &str| match counts
+            .as_ref()
+            .map(|c| c.i(&format!("{key}.totalCount")))
+        {
             Some(n) => format!("{n} {label}"),
             None => label.to_string(),
         };
@@ -292,12 +369,31 @@ impl Hub {
             _ => ("openIssues", "closedIssues"),
         };
         let mut chips = vec![
-            (counted("Open", open_key), state == "open", Act::choose(&state_key, "open")),
-            (counted("Closed", closed_key), state == "closed", Act::choose(&state_key, "closed")),
-            ("All".to_string(), state == "all", Act::choose(&state_key, "all")),
+            (
+                counted("Open", open_key),
+                state == "open",
+                Act::choose(&state_key, "open"),
+            ),
+            (
+                counted("Closed", closed_key),
+                state == "closed",
+                Act::choose(&state_key, "closed"),
+            ),
+            (
+                "All".to_string(),
+                state == "all",
+                Act::choose(&state_key, "all"),
+            ),
         ];
         if gitlab_prs {
-            chips.insert(1, (counted("Merged", "mergedPulls"), state == "merged", Act::choose(&state_key, "merged")));
+            chips.insert(
+                1,
+                (
+                    counted("Merged", "mergedPulls"),
+                    state == "merged",
+                    Act::choose(&state_key, "merged"),
+                ),
+            );
         }
         widgets::col()
             .gap_3()
@@ -308,7 +404,11 @@ impl Hub {
                     .child(search)
                     .child(widgets::btn(
                         ElementId::Name(format!("{kind}-labels").into()),
-                        if label.is_empty() { "Label ▾".to_string() } else { format!("Label: {label} ▾") },
+                        if label.is_empty() {
+                            "Label ▾".to_string()
+                        } else {
+                            format!("Label: {label} ▾")
+                        },
                         labels_menu,
                     ))
                     .when(kind == "issue" || applied.is_empty(), |d| {
@@ -316,7 +416,11 @@ impl Hub {
                             ElementId::Name(format!("{kind}-sort").into()),
                             format!(
                                 "Sort: {} ▾",
-                                sorts.iter().find(|s| s.0 == sort).map(|s| s.1).unwrap_or("Newest")
+                                sorts
+                                    .iter()
+                                    .find(|s| s.0 == sort)
+                                    .map(|s| s.1)
+                                    .unwrap_or("Newest")
                             ),
                             sort_menu,
                         ))
@@ -339,7 +443,11 @@ impl Hub {
             };
             return widgets::page()
                 .child(widgets::dim("This is a pull request."))
-                .child(widgets::primary("open-pr", "Open the pull request", Act::Go(route)))
+                .child(widgets::primary(
+                    "open-pr",
+                    "Open the pull request",
+                    Act::Go(route),
+                ))
                 .into_any_element();
         }
         let header = self.issue_header(repo, &issue, false, cx);
@@ -387,15 +495,27 @@ impl Hub {
             ("Open", widgets::green_fill())
         };
         let kind = if is_pr { "pulls" } else { "issues" };
-        let edit = FormSpec::new(if is_pr { format!("Edit {}", crate::forge::pr()) } else { "Edit issue".to_string() })
-            .width(680.0)
-            .field(Field::text("title", "Title").value(issue.s("title")).required())
-            .field(Field::multiline("body", "Description").value(issue.s("body")).keep_empty())
-            .rest("PATCH", format!("/repos/{repo}/{kind}/{number}"))
-            .ok("Saved")
-            .inval(crate::forge::issue_api(repo, number, is_pr))
-            .inval(format!("/repos/{repo}/pulls/{number}"))
-            .act();
+        let edit = FormSpec::new(if is_pr {
+            format!("Edit {}", crate::forge::pr())
+        } else {
+            "Edit issue".to_string()
+        })
+        .width(680.0)
+        .field(
+            Field::text("title", "Title")
+                .value(issue.s("title"))
+                .required(),
+        )
+        .field(
+            Field::multiline("body", "Description")
+                .value(issue.s("body"))
+                .keep_empty(),
+        )
+        .rest("PATCH", format!("/repos/{repo}/{kind}/{number}"))
+        .ok("Saved")
+        .inval(crate::forge::issue_api(repo, number, is_pr))
+        .inval(format!("/repos/{repo}/pulls/{number}"))
+        .act();
         let byline = if is_pr {
             format!(
                 "{} wants to merge {} commits into {} from {}  ·  opened {}",
@@ -430,14 +550,18 @@ impl Hub {
                             .gap_2()
                             .text_size(px(24.0))
                             .child(issue.s("title"))
-                            .child(
-                                div()
-                                    .text_color(rgb(palette().text_dim))
-                                    .child(if is_pr { crate::forge::pr_ref(number) } else { format!("#{number}") }),
-                            ),
+                            .child(div().text_color(rgb(palette().text_dim)).child(if is_pr {
+                                crate::forge::pr_ref(number)
+                            } else {
+                                format!("#{number}")
+                            })),
                     )
                     .child(widgets::btn("edit-issue", "Edit", edit))
-                    .child(widgets::btn("copy-issue-link", "Copy link", Act::Copy(issue.s("html_url")))),
+                    .child(widgets::btn(
+                        "copy-issue-link",
+                        "Copy link",
+                        Act::Copy(issue.s("html_url")),
+                    )),
             )
             .child(
                 widgets::row()
@@ -448,7 +572,13 @@ impl Hub {
     }
 
     /// The body, then every comment and event, then the composer.
-    fn issue_timeline(&mut self, repo: &str, number: u64, issue: &Value, cx: &mut Context<Self>) -> AnyElement {
+    fn issue_timeline(
+        &mut self,
+        repo: &str,
+        number: u64,
+        issue: &Value,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let inval = format!("/repos/{repo}/issues/{number}");
         let me = self.login();
         let field = format!("comment:{repo}#{number}");
@@ -457,7 +587,11 @@ impl Hub {
             edit: Some(
                 FormSpec::new("Edit description")
                     .width(680.0)
-                    .field(Field::multiline("body", "Description").value(issue.s("body")).keep_empty())
+                    .field(
+                        Field::multiline("body", "Description")
+                            .value(issue.s("body"))
+                            .keep_empty(),
+                    )
                     .rest("PATCH", format!("/repos/{repo}/issues/{number}"))
                     .ok("Saved")
                     .inval(inval.clone())
@@ -471,11 +605,19 @@ impl Hub {
         };
         col = col.child(self.comment_card("issue-body", issue, "opened", body_acts, cx));
 
-        let spec = ListSpec::new(format!("/repos/{repo}/issues/{number}/timeline"), |_| Row::new(""));
+        let spec = ListSpec::new(format!("/repos/{repo}/issues/{number}/timeline"), |_| {
+            Row::new("")
+        });
         match self.fetch_list(&spec, cx) {
-            crate::resource::Fetched::Items { items, loading, more } => {
+            crate::resource::Fetched::Items {
+                items,
+                loading,
+                more,
+            } => {
                 for (i, event) in items.iter().enumerate() {
-                    if let Some(el) = self.timeline_item(repo, &format!("tl{i}"), event, &field, &inval, &me, cx) {
+                    if let Some(el) =
+                        self.timeline_item(repo, &format!("tl{i}"), event, &field, &inval, &me, cx)
+                    {
                         col = col.child(el);
                     }
                 }
@@ -528,17 +670,43 @@ impl Hub {
         };
         let extra = if open {
             vec![
-                widgets::icon_action("close-issue", "issue-closed", widgets::purple(), "Close as completed", close("completed", "Issue closed")).into_any_element(),
-                widgets::icon_action("close-np", "issue-skip", widgets::gray(), "Close as not planned", close("not_planned", "Issue closed")).into_any_element(),
+                widgets::icon_action(
+                    "close-issue",
+                    "issue-closed",
+                    widgets::purple(),
+                    "Close as completed",
+                    close("completed", "Issue closed"),
+                )
+                .into_any_element(),
+                widgets::icon_action(
+                    "close-np",
+                    "issue-skip",
+                    widgets::gray(),
+                    "Close as not planned",
+                    close("not_planned", "Issue closed"),
+                )
+                .into_any_element(),
             ]
         } else {
-            vec![widgets::icon_action("reopen-issue", "issue", widgets::green(), "Reopen issue", close("reopened", "Issue reopened")).into_any_element()]
+            vec![widgets::icon_action(
+                "reopen-issue",
+                "issue",
+                widgets::green(),
+                "Reopen issue",
+                close("reopened", "Issue reopened"),
+            )
+            .into_any_element()]
         };
-        let submit = post_comment(&field, &format!("/repos/{repo}/issues/{number}/comments"), &inval);
+        let submit = post_comment(
+            &field,
+            &format!("/repos/{repo}/issues/{number}/comments"),
+            &inval,
+        );
         if issue.b("locked") {
             col = col.child(widgets::dim("🔒 This conversation is locked."));
         }
-        col.child(self.composer(&field, submit, extra, cx)).into_any_element()
+        col.child(self.composer(&field, submit, extra, cx))
+            .into_any_element()
     }
 
     /// One entry of an issue or pull request timeline.
@@ -603,7 +771,10 @@ impl Hub {
                 // Its checks' mark, then its SHA, as github.com ends the line.
                 let sha_btn = widgets::row()
                     .gap_2()
-                    .children(crate::screens::pulls::ci_mark_el(ElementId::Name(format!("{id}-checks").into()), &info.checks))
+                    .children(crate::screens::pulls::ci_mark_el(
+                        ElementId::Name(format!("{id}-checks").into()),
+                        &info.checks,
+                    ))
                     .child(
                         widgets::btn(
                             ElementId::Name(format!("{id}-sha").into()),
@@ -622,7 +793,10 @@ impl Hub {
                     let who = widgets::row()
                         .gap_2()
                         .child(self.author_avatars(&people, cx))
-                        .child(crate::screens::repo::author_names(id, &people).font_weight(FontWeight::SEMIBOLD))
+                        .child(
+                            crate::screens::repo::author_names(id, &people)
+                                .font_weight(FontWeight::SEMIBOLD),
+                        )
                         .into_any_element();
                     return Some(self.timeline_event_by(
                         "commit",
@@ -645,8 +819,20 @@ impl Hub {
             }
             "labeled" | "unlabeled" => {
                 let chip = widgets::label_chip(&event.s("label.name"), &event.s("label.color"));
-                let verb = if kind == "labeled" { "added the label" } else { "removed the label" };
-                self.timeline_event("label", widgets::gray(), &actor, verb, &when, Some(chip.into_any_element()), cx)
+                let verb = if kind == "labeled" {
+                    "added the label"
+                } else {
+                    "removed the label"
+                };
+                self.timeline_event(
+                    "label",
+                    widgets::gray(),
+                    &actor,
+                    verb,
+                    &when,
+                    Some(chip.into_any_element()),
+                    cx,
+                )
             }
             "assigned" | "unassigned" => {
                 let who = event.s("assignee.login");
@@ -664,14 +850,33 @@ impl Hub {
                 } else {
                     "closed this".to_string()
                 };
-                self.timeline_event("issue-closed", widgets::purple(), &actor, text, &when, None, cx)
+                self.timeline_event(
+                    "issue-closed",
+                    widgets::purple(),
+                    &actor,
+                    text,
+                    &when,
+                    None,
+                    cx,
+                )
             }
-            "reopened" => self.timeline_event("issue", widgets::green(), &actor, "reopened this", &when, None, cx),
+            "reopened" => self.timeline_event(
+                "issue",
+                widgets::green(),
+                &actor,
+                "reopened this",
+                &when,
+                None,
+                cx,
+            ),
             "merged" => self.timeline_event(
                 "pr-merged",
                 widgets::purple(),
                 &actor,
-                format!("merged commit {}", event.s("commit_id").chars().take(7).collect::<String>()),
+                format!(
+                    "merged commit {}",
+                    event.s("commit_id").chars().take(7).collect::<String>()
+                ),
                 &when,
                 None,
                 cx,
@@ -680,7 +885,11 @@ impl Hub {
                 "pencil",
                 widgets::gray(),
                 &actor,
-                format!("changed the title {} → {}", event.s("rename.from"), event.s("rename.to")),
+                format!(
+                    "changed the title {} → {}",
+                    event.s("rename.from"),
+                    event.s("rename.to")
+                ),
                 &when,
                 None,
                 cx,
@@ -691,7 +900,11 @@ impl Hub {
                 &actor,
                 format!(
                     "{} the {} milestone",
-                    if kind == "milestoned" { "added this to" } else { "removed this from" },
+                    if kind == "milestoned" {
+                        "added this to"
+                    } else {
+                        "removed this from"
+                    },
                     event.s("milestone.title")
                 ),
                 &when,
@@ -702,7 +915,11 @@ impl Hub {
                 if kind == "locked" { "lock" } else { "unlock" },
                 widgets::gray(),
                 &actor,
-                if kind == "locked" { "locked this conversation" } else { "unlocked this conversation" },
+                if kind == "locked" {
+                    "locked this conversation"
+                } else {
+                    "unlocked this conversation"
+                },
                 &when,
                 None,
                 cx,
@@ -718,7 +935,15 @@ impl Hub {
                 )
                 .h(px(20.0))
                 .into_any_element();
-                self.timeline_event("link", widgets::gray(), &actor, "mentioned this in", &when, Some(link), cx)
+                self.timeline_event(
+                    "link",
+                    widgets::gray(),
+                    &actor,
+                    "mentioned this in",
+                    &when,
+                    Some(link),
+                    cx,
+                )
             }
             "referenced" => {
                 let sha = event.s("commit_id");
@@ -735,7 +960,15 @@ impl Hub {
                 )
                 .h(px(20.0))
                 .into_any_element();
-                self.timeline_event("commit", widgets::gray(), &actor, "referenced this in commit", &when, Some(link), cx)
+                self.timeline_event(
+                    "commit",
+                    widgets::gray(),
+                    &actor,
+                    "referenced this in commit",
+                    &when,
+                    Some(link),
+                    cx,
+                )
             }
             "review_requested" | "review_request_removed" => {
                 let who = if event.has("requested_reviewer") {
@@ -750,19 +983,108 @@ impl Hub {
                 };
                 self.timeline_event("eye", widgets::gray(), &actor, text, &when, None, cx)
             }
-            "head_ref_deleted" => self.timeline_event("branch", widgets::gray(), &actor, "deleted the head branch", &when, None, cx),
-            "head_ref_restored" => self.timeline_event("branch", widgets::gray(), &actor, "restored the head branch", &when, None, cx),
-            "head_ref_force_pushed" => self.timeline_event("branch", widgets::gray(), &actor, "force-pushed the head branch", &when, None, cx),
-            "ready_for_review" => self.timeline_event("eye", widgets::green(), &actor, "marked this ready for review", &when, None, cx),
-            "convert_to_draft" => self.timeline_event("pr-draft", widgets::gray(), &actor, "converted this to a draft", &when, None, cx),
-            "pinned" | "unpinned" => self.timeline_event("pin", widgets::gray(), &actor, format!("{kind} this issue"), &when, None, cx),
-            "transferred" => self.timeline_event("arrow-right", widgets::gray(), &actor, "transferred this issue", &when, None, cx),
-            "connected" | "disconnected" => self.timeline_event("link", widgets::gray(), &actor, format!("{kind} a pull request"), &when, None, cx),
-            "marked_as_duplicate" => self.timeline_event("copy", widgets::gray(), &actor, "marked this as a duplicate", &when, None, cx),
-            "added_to_project_v2" | "project_v2_item_status_changed" | "added_to_project" | "moved_columns_in_project" => {
-                self.timeline_event("project", widgets::gray(), &actor, "updated this in a project", &when, None, cx)
-            }
-            "deployed" => self.timeline_event("rocket", widgets::gray(), &actor, "deployed this", &when, None, cx),
+            "head_ref_deleted" => self.timeline_event(
+                "branch",
+                widgets::gray(),
+                &actor,
+                "deleted the head branch",
+                &when,
+                None,
+                cx,
+            ),
+            "head_ref_restored" => self.timeline_event(
+                "branch",
+                widgets::gray(),
+                &actor,
+                "restored the head branch",
+                &when,
+                None,
+                cx,
+            ),
+            "head_ref_force_pushed" => self.timeline_event(
+                "branch",
+                widgets::gray(),
+                &actor,
+                "force-pushed the head branch",
+                &when,
+                None,
+                cx,
+            ),
+            "ready_for_review" => self.timeline_event(
+                "eye",
+                widgets::green(),
+                &actor,
+                "marked this ready for review",
+                &when,
+                None,
+                cx,
+            ),
+            "convert_to_draft" => self.timeline_event(
+                "pr-draft",
+                widgets::gray(),
+                &actor,
+                "converted this to a draft",
+                &when,
+                None,
+                cx,
+            ),
+            "pinned" | "unpinned" => self.timeline_event(
+                "pin",
+                widgets::gray(),
+                &actor,
+                format!("{kind} this issue"),
+                &when,
+                None,
+                cx,
+            ),
+            "transferred" => self.timeline_event(
+                "arrow-right",
+                widgets::gray(),
+                &actor,
+                "transferred this issue",
+                &when,
+                None,
+                cx,
+            ),
+            "connected" | "disconnected" => self.timeline_event(
+                "link",
+                widgets::gray(),
+                &actor,
+                format!("{kind} a pull request"),
+                &when,
+                None,
+                cx,
+            ),
+            "marked_as_duplicate" => self.timeline_event(
+                "copy",
+                widgets::gray(),
+                &actor,
+                "marked this as a duplicate",
+                &when,
+                None,
+                cx,
+            ),
+            "added_to_project_v2"
+            | "project_v2_item_status_changed"
+            | "added_to_project"
+            | "moved_columns_in_project" => self.timeline_event(
+                "project",
+                widgets::gray(),
+                &actor,
+                "updated this in a project",
+                &when,
+                None,
+                cx,
+            ),
+            "deployed" => self.timeline_event(
+                "rocket",
+                widgets::gray(),
+                &actor,
+                "deployed this",
+                &when,
+                None,
+                cx,
+            ),
             // GitLab's system notes ("added ~bug label", "approved this
             // merge request") say what happened in their own words.
             "system_note" => {
@@ -793,7 +1115,13 @@ impl Hub {
     }
 
     /// Assignees, labels, milestone, and the issue's other actions.
-    pub fn issue_sidebar(&mut self, repo: &str, issue: &Value, is_pr: bool, cx: &mut Context<Self>) -> AnyElement {
+    pub fn issue_sidebar(
+        &mut self,
+        repo: &str,
+        issue: &Value,
+        is_pr: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let number = issue.i("number");
         let path = crate::forge::issue_api(repo, number, is_pr);
         let inval_issue = path.clone();
@@ -801,15 +1129,32 @@ impl Hub {
         let with_inval = move |req: Req| req.inval(inval_issue.clone()).inval(inval_pull.clone());
 
         // Assignees.
-        let current: Vec<String> = issue.list("assignees").iter().map(|a| a.s("login")).collect();
+        let current: Vec<String> = issue
+            .list("assignees")
+            .iter()
+            .map(|a| a.s("login"))
+            .collect();
         let mut assignee_picker = Picker::new("Assign up to 10 people", "Filter people…", true);
-        match self.fetch(&format!("/repos/{repo}/assignees?per_page=100"), cx).ready().cloned() {
+        match self
+            .fetch(&format!("/repos/{repo}/assignees?per_page=100"), cx)
+            .ready()
+            .cloned()
+        {
             Some(users) => {
                 for user in users.list("") {
                     let login = user.s("login");
                     let on_now = current.contains(&login);
-                    let req = |method: &'static str| with_inval(Req::rest(method, format!("{path}/assignees")).body(json!({ "assignees": [login] }))).act();
-                    assignee_picker = assignee_picker.item(PickItem::toggle(login.clone(), on_now, req("POST"), req("DELETE")).avatar(user.s("avatar_url")));
+                    let req = |method: &'static str| {
+                        with_inval(
+                            Req::rest(method, format!("{path}/assignees"))
+                                .body(json!({ "assignees": [login] })),
+                        )
+                        .act()
+                    };
+                    assignee_picker = assignee_picker.item(
+                        PickItem::toggle(login.clone(), on_now, req("POST"), req("DELETE"))
+                            .avatar(user.s("avatar_url")),
+                    );
                 }
             }
             None => assignee_picker.loading = true,
@@ -818,13 +1163,15 @@ impl Hub {
         if current.is_empty() {
             let me = self.login();
             assignees = assignees.child(
-                widgets::row()
-                    .child(widgets::dim("No one —"))
-                    .child(
-                        crate::ui::Link::new("assign-self", "assign yourself").on_click(on(
-                            with_inval(Req::rest("POST", format!("{path}/assignees")).body(json!({ "assignees": [me] }))).act(),
-                        )),
-                    ),
+                widgets::row().child(widgets::dim("No one —")).child(
+                    crate::ui::Link::new("assign-self", "assign yourself").on_click(on(
+                        with_inval(
+                            Req::rest("POST", format!("{path}/assignees"))
+                                .body(json!({ "assignees": [me] })),
+                        )
+                        .act(),
+                    )),
+                ),
             );
         }
         for a in issue.list("assignees").to_vec() {
@@ -833,16 +1180,31 @@ impl Hub {
         }
 
         // Labels.
-        let current_labels: Vec<String> = issue.list("labels").iter().map(|l| l.s("name")).collect();
+        let current_labels: Vec<String> =
+            issue.list("labels").iter().map(|l| l.s("name")).collect();
         let mut label_picker = Picker::new("Apply labels", "Filter labels…", true);
-        match self.fetch(&format!("/repos/{repo}/labels?per_page=100"), cx).ready().cloned() {
+        match self
+            .fetch(&format!("/repos/{repo}/labels?per_page=100"), cx)
+            .ready()
+            .cloned()
+        {
             Some(labels) => {
                 for l in labels.list("") {
                     let name = l.s("name");
                     let on_now = current_labels.contains(&name);
-                    let add = with_inval(Req::rest("POST", format!("{path}/labels")).body(json!({ "labels": [name] }))).act();
-                    let remove = with_inval(Req::rest("DELETE", format!("{path}/labels/{}", enc(&name)))).act();
-                    label_picker = label_picker.item(PickItem::toggle(name, on_now, add, remove).color(l.s("color")).detail(l.s("description")));
+                    let add = with_inval(
+                        Req::rest("POST", format!("{path}/labels"))
+                            .body(json!({ "labels": [name] })),
+                    )
+                    .act();
+                    let remove =
+                        with_inval(Req::rest("DELETE", format!("{path}/labels/{}", enc(&name))))
+                            .act();
+                    label_picker = label_picker.item(
+                        PickItem::toggle(name, on_now, add, remove)
+                            .color(l.s("color"))
+                            .detail(l.s("description")),
+                    );
                 }
             }
             None => label_picker.loading = true,
@@ -856,19 +1218,39 @@ impl Hub {
         }
 
         // Milestone.
-        let mut milestone_picker = Picker::new("Set milestone", "Filter milestones…", false).item(PickItem::new(
-            "No milestone",
-            !issue.has("milestone"),
-            with_inval(Req::rest("PATCH", path.clone()).body(json!({ "milestone": null }))).act(),
-        ));
-        match self.fetch(&format!("/repos/{repo}/milestones?state=open&per_page=100"), cx).ready().cloned() {
+        let mut milestone_picker =
+            Picker::new("Set milestone", "Filter milestones…", false).item(PickItem::new(
+                "No milestone",
+                !issue.has("milestone"),
+                with_inval(Req::rest("PATCH", path.clone()).body(json!({ "milestone": null })))
+                    .act(),
+            ));
+        match self
+            .fetch(
+                &format!("/repos/{repo}/milestones?state=open&per_page=100"),
+                cx,
+            )
+            .ready()
+            .cloned()
+        {
             Some(ms) => {
                 for m in ms.list("") {
                     let n = m.i("number");
-                    let due = if m.has("due_on") { format!("Due {}", crate::time::date(&m.s("due_on"))) } else { "No due date".to_string() };
+                    let due = if m.has("due_on") {
+                        format!("Due {}", crate::time::date(&m.s("due_on")))
+                    } else {
+                        "No due date".to_string()
+                    };
                     milestone_picker = milestone_picker.item(
-                        PickItem::new(m.s("title"), issue.i("milestone.number") == n, with_inval(Req::rest("PATCH", path.clone()).body(json!({ "milestone": n }))).act())
-                            .detail(due),
+                        PickItem::new(
+                            m.s("title"),
+                            issue.i("milestone.number") == n,
+                            with_inval(
+                                Req::rest("PATCH", path.clone()).body(json!({ "milestone": n })),
+                            )
+                            .act(),
+                        )
+                        .detail(due),
                     );
                 }
             }
@@ -877,7 +1259,11 @@ impl Hub {
         let milestone: AnyElement = if issue.has("milestone") {
             let m = issue.at("milestone");
             let total = m.i("open_issues") + m.i("closed_issues");
-            let done = if total > 0 { m.i("closed_issues") as f32 / total as f32 } else { 0.0 };
+            let done = if total > 0 {
+                m.i("closed_issues") as f32 / total as f32
+            } else {
+                0.0
+            };
             widgets::col()
                 .gap_1()
                 .child(m.s("title"))
@@ -890,14 +1276,21 @@ impl Hub {
         // Everything else.
         let locked = issue.b("locked");
         let lock = if locked {
-            with_inval(Req::rest("DELETE", format!("{path}/lock")).ok("Conversation unlocked")).act()
+            with_inval(Req::rest("DELETE", format!("{path}/lock")).ok("Conversation unlocked"))
+                .act()
         } else {
             FormSpec::new("Lock conversation")
                 .submit("Lock")
                 .field(Field::choice(
                     "lock_reason",
                     "Reason",
-                    &[("", "No reason"), ("off-topic", "Off-topic"), ("too heated", "Too heated"), ("resolved", "Resolved"), ("spam", "Spam")],
+                    &[
+                        ("", "No reason"),
+                        ("off-topic", "Off-topic"),
+                        ("too heated", "Too heated"),
+                        ("resolved", "Resolved"),
+                        ("spam", "Spam"),
+                    ],
                 ))
                 .rest("PUT", format!("{path}/lock"))
                 .map(|body, values| {
@@ -983,11 +1376,24 @@ impl Hub {
         let subscribe_url = if crate::forge::is_gitlab() {
             issue.s("html_url")
         } else {
-            format!("{}{}", crate::forge::web(), format!("/repos/{repo}/issues/{number}").replace("/repos", ""))
+            format!(
+                "{}{}",
+                crate::forge::web(),
+                format!("/repos/{repo}/issues/{number}").replace("/repos", "")
+            )
         };
         let mut actions = widgets::col().gap_1().child(
-            widgets::ibtn("lock", if locked { "unlock" } else { "lock" }, if locked { "Unlock conversation" } else { "Lock conversation" }, lock)
-                .w_full(),
+            widgets::ibtn(
+                "lock",
+                if locked { "unlock" } else { "lock" },
+                if locked {
+                    "Unlock conversation"
+                } else {
+                    "Lock conversation"
+                },
+                lock,
+            )
+            .w_full(),
         );
         if !is_pr {
             if !crate::forge::is_gitlab() {
@@ -996,25 +1402,63 @@ impl Hub {
                     .child(widgets::ibtn("unpin", "pin", "Unpin issue", unpin).w_full());
             }
             actions = actions
-                .child(widgets::ibtn("transfer", "arrow-right", if crate::forge::is_gitlab() { "Move issue" } else { "Transfer issue" }, transfer).w_full())
-                .child(widgets::ibtn(
-                    "branch-for-issue",
-                    "branch",
-                    "Create a branch for this issue",
-                    crate::screens::repo::new_branch_form(repo, &format!("{number}-{}", slug(&issue.s("title")))),
-                ).w_full())
+                .child(
+                    widgets::ibtn(
+                        "transfer",
+                        "arrow-right",
+                        if crate::forge::is_gitlab() {
+                            "Move issue"
+                        } else {
+                            "Transfer issue"
+                        },
+                        transfer,
+                    )
+                    .w_full(),
+                )
+                .child(
+                    widgets::ibtn(
+                        "branch-for-issue",
+                        "branch",
+                        "Create a branch for this issue",
+                        crate::screens::repo::new_branch_form(
+                            repo,
+                            &format!("{number}-{}", slug(&issue.s("title"))),
+                        ),
+                    )
+                    .w_full(),
+                )
                 .child(widgets::ibtn("delete-issue", "trash", "Delete issue", delete).w_full());
         }
         actions = actions.child(
-            widgets::ibtn("subscribe", "bell", "Notification settings…", Act::Url(subscribe_url))
-                .w_full(),
+            widgets::ibtn(
+                "subscribe",
+                "bell",
+                "Notification settings…",
+                Act::Url(subscribe_url),
+            )
+            .w_full(),
         );
 
         widgets::col()
             .gap_3()
-            .child(side_section("assignees", "Assignees", Some(assignee_picker.act()), assignees.into_any_element()))
-            .child(side_section("labels", "Labels", Some(label_picker.act()), labels.into_any_element()))
-            .child(side_section("milestone", "Milestone", Some(milestone_picker.act()), milestone))
+            .child(side_section(
+                "assignees",
+                "Assignees",
+                Some(assignee_picker.act()),
+                assignees.into_any_element(),
+            ))
+            .child(side_section(
+                "labels",
+                "Labels",
+                Some(label_picker.act()),
+                labels.into_any_element(),
+            ))
+            .child(side_section(
+                "milestone",
+                "Milestone",
+                Some(milestone_picker.act()),
+                milestone,
+            ))
             .child(actions)
             .into_any_element()
     }
@@ -1042,8 +1486,16 @@ impl Hub {
                 .action(
                     "Edit",
                     FormSpec::new(format!("Edit label {name}"))
-                        .field(Field::text("new_name", "Name").value(name.clone()).required())
-                        .field(Field::text("description", "Description").value(label.s("description")).keep_empty())
+                        .field(
+                            Field::text("new_name", "Name")
+                                .value(name.clone())
+                                .required(),
+                        )
+                        .field(
+                            Field::text("description", "Description")
+                                .value(label.s("description"))
+                                .keep_empty(),
+                        )
                         .field(Field::text("color", "Colour (hex, no #)").value(label.s("color")))
                         .rest("PATCH", lpath.clone())
                         .ok("Label saved")
@@ -1056,7 +1508,14 @@ impl Hub {
                         .ok("Label deleted")
                         .inval(inval)
                         .act()
-                        .confirm("Delete label?", format!("“{name}” will be removed from every issue and {}.", crate::forge::pr()), "Delete"),
+                        .confirm(
+                            "Delete label?",
+                            format!(
+                                "“{name}” will be removed from every issue and {}.",
+                                crate::forge::pr()
+                            ),
+                            "Delete",
+                        ),
                 )
                 .inline();
             row.labels = vec![(name, label.s("color"))];
@@ -1066,7 +1525,12 @@ impl Hub {
         let list = self.list(&spec, cx);
         widgets::col()
             .gap_3()
-            .child(widgets::row().child(widgets::h2("Labels")).child(widgets::spacer()).child(widgets::go_btn("new-label", "New label", create)))
+            .child(
+                widgets::row()
+                    .child(widgets::h2("Labels"))
+                    .child(widgets::spacer())
+                    .child(widgets::go_btn("new-label", "New label", create)),
+            )
             .child(list)
             .into_any_element()
     }
@@ -1092,19 +1556,37 @@ impl Hub {
             let inval = format!("/repos/{repo_s}/milestones");
             let open = m.i("open_issues");
             let closed = m.i("closed_issues");
-            let pct = if open + closed > 0 { closed * 100 / (open + closed) } else { 0 };
-            let due = if m.has("due_on") { format!("Due {}", time::date(&m.s("due_on"))) } else { "No due date".into() };
+            let pct = if open + closed > 0 {
+                closed * 100 / (open + closed)
+            } else {
+                0
+            };
+            let due = if m.has("due_on") {
+                format!("Due {}", time::date(&m.s("due_on")))
+            } else {
+                "No due date".into()
+            };
             let title = m.s("title");
-            let state_toggle = if m.s("state") == "open" { ("Close", "closed") } else { ("Reopen", "open") };
+            let state_toggle = if m.s("state") == "open" {
+                ("Close", "closed")
+            } else {
+                ("Reopen", "open")
+            };
             Row::new(title.clone())
                 .icon("milestone", widgets::gray())
-                .meta(format!("{due}  ·  {pct}% complete  ·  {open} open  ·  {closed} closed"))
+                .meta(format!(
+                    "{due}  ·  {pct}% complete  ·  {open} open  ·  {closed} closed"
+                ))
                 .body(m.s("description"))
                 .open(Act::run({
                     let repo = repo_s.clone();
                     move |hub, _, cx| {
-                        hub.choices.insert(format!("issues.view:{repo}"), "list".into());
-                        hub.choices.insert(format!("issue.applied:{repo}"), format!("milestone:\"{title}\""));
+                        hub.choices
+                            .insert(format!("issues.view:{repo}"), "list".into());
+                        hub.choices.insert(
+                            format!("issue.applied:{repo}"),
+                            format!("milestone:\"{title}\""),
+                        );
                         cx.notify();
                     }
                 }))
@@ -1113,7 +1595,11 @@ impl Hub {
                     FormSpec::new("Edit milestone")
                         .field(Field::text("title", "Title").value(m.s("title")).required())
                         .field(Field::text("due_on", "Due date").value(m.s("due_on")))
-                        .field(Field::multiline("description", "Description").value(m.s("description")).keep_empty())
+                        .field(
+                            Field::multiline("description", "Description")
+                                .value(m.s("description"))
+                                .keep_empty(),
+                        )
                         .rest("PATCH", mpath.clone())
                         .ok("Milestone saved")
                         .inval(inval.clone())
@@ -1133,7 +1619,11 @@ impl Hub {
                         .ok("Milestone deleted")
                         .inval(inval)
                         .act()
-                        .confirm("Delete milestone?", "Issues in it will be left without a milestone.", "Delete"),
+                        .confirm(
+                            "Delete milestone?",
+                            "Issues in it will be left without a milestone.",
+                            "Delete",
+                        ),
                 )
         })
         .empty("No milestones.");
@@ -1143,8 +1633,16 @@ impl Hub {
             .child(
                 widgets::row()
                     .child(widgets::chips(vec![
-                        ("Open".into(), state == "open", Act::choose(&state_key, "open")),
-                        ("Closed".into(), state == "closed", Act::choose(&state_key, "closed")),
+                        (
+                            "Open".into(),
+                            state == "open",
+                            Act::choose(&state_key, "open"),
+                        ),
+                        (
+                            "Closed".into(),
+                            state == "closed",
+                            Act::choose(&state_key, "closed"),
+                        ),
                     ]))
                     .child(widgets::spacer())
                     .child(widgets::go_btn("new-milestone", "New milestone", create)),

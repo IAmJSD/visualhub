@@ -37,7 +37,12 @@ fn speed(offset: f32) -> f32 {
 }
 
 impl Hub {
-    pub fn autoscroll_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn autoscroll_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if event.button != MouseButton::Middle {
             return;
         }
@@ -53,7 +58,9 @@ impl Hub {
         });
         cx.notify();
         cx.spawn_in(window, async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_millis(16)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(16))
+                .await;
             match this.update(cx, |hub, cx| hub.autoscroll_tick(cx)) {
                 Ok(true) => {}
                 _ => break,
@@ -64,7 +71,9 @@ impl Hub {
 
     /// One frame's worth of scrolling; false once it has stopped.
     fn autoscroll_tick(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(a) = &self.autoscroll else { return false };
+        let Some(a) = &self.autoscroll else {
+            return false;
+        };
         let d = a.pointer - a.origin;
         let (dx, dy) = (speed(f32::from(d.x)), speed(f32::from(d.y)));
         if dx == 0.0 && dy == 0.0 {
@@ -83,7 +92,9 @@ impl Hub {
                 (dy != 0.0 && max.height > px(0.0)) || (dx != 0.0 && max.width > px(0.0))
             })
             .min_by(|a, b| {
-                let area = |h: &ScrollHandle| f32::from(h.bounds().size.width) * f32::from(h.bounds().size.height);
+                let area = |h: &ScrollHandle| {
+                    f32::from(h.bounds().size.width) * f32::from(h.bounds().size.height)
+                };
                 area(a).total_cmp(&area(b))
             });
         if let Some(handle) = target {
@@ -103,14 +114,21 @@ impl Hub {
     /// so middle-click scrolling can find it.
     pub fn scroller(&mut self, key: &str) -> ScrollHandle {
         let frame = self.frame;
-        let entry = self.scrollers.entry(key.to_string()).or_insert_with(|| (ScrollHandle::new(), frame));
+        let entry = self
+            .scrollers
+            .entry(key.to_string())
+            .or_insert_with(|| (ScrollHandle::new(), frame));
         entry.1 = frame;
         entry.0.clone()
     }
 
     /// [`Hub::scroller`] for a `uniform_list`.
     pub fn list_scroller(&mut self, key: &str) -> UniformListScrollHandle {
-        let handle = self.list_scrollers.entry(key.to_string()).or_insert_with(UniformListScrollHandle::new).clone();
+        let handle = self
+            .list_scrollers
+            .entry(key.to_string())
+            .or_insert_with(UniformListScrollHandle::new)
+            .clone();
         let base = handle.0.borrow().base_handle.clone();
         self.scrollers.insert(key.to_string(), (base, self.frame));
         handle
@@ -128,7 +146,9 @@ impl Hub {
     }
 
     pub fn autoscroll_up(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
-        if event.button == MouseButton::Middle && self.autoscroll.as_ref().is_some_and(|a| a.dragged) {
+        if event.button == MouseButton::Middle
+            && self.autoscroll.as_ref().is_some_and(|a| a.dragged)
+        {
             self.autoscroll = None;
             cx.notify();
         }

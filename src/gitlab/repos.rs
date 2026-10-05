@@ -15,16 +15,28 @@ pub fn route(a: &Ask, repo: &str, rest: &[&str]) -> Result<Value> {
     let m = a.method;
     match rest {
         [] => project(a, repo),
-        ["issues", ..] | ["pulls", ..] | ["merge_requests", ..] => super::issues::route(a, repo, rest),
-        ["assignees"] => Ok(shape::users(c, get(c, &format!("{p}/users?{}", a.paging()))?.list(""))),
+        ["issues", ..] | ["pulls", ..] | ["merge_requests", ..] => {
+            super::issues::route(a, repo, rest)
+        }
+        ["assignees"] => Ok(shape::users(
+            c,
+            get(c, &format!("{p}/users?{}", a.paging()))?.list(""),
+        )),
         ["labels"] if m == "GET" => {
             let list = get(c, &format!("{p}/labels?{}", a.paging()))?;
-            Ok(Value::Array(list.list("").iter().map(shape::label).collect()))
+            Ok(Value::Array(
+                list.list("").iter().map(shape::label).collect(),
+            ))
         }
         ["labels"] => {
             c.memo.forget(&format!("labels:{repo}"));
             let body = json!({ "name": a.field("name"), "color": format!("#{}", a.field("color").as_str().unwrap_or("ededed")), "description": a.field("description") });
-            Ok(shape::label(&call(c, "POST", &format!("{p}/labels"), Some(&body))?))
+            Ok(shape::label(&call(
+                c,
+                "POST",
+                &format!("{p}/labels"),
+                Some(&body),
+            )?))
         }
         ["labels", name] => {
             c.memo.forget(&format!("labels:{repo}"));
@@ -44,13 +56,23 @@ pub fn route(a: &Ask, repo: &str, rest: &[&str]) -> Result<Value> {
             Ok(shape::label(&call(c, "PUT", &path, Some(&body))?))
         }
         ["milestones"] if m == "GET" => milestones(a, repo),
-        ["milestones"] => Ok(shape::milestone(&call(c, "POST", &format!("{p}/milestones"), Some(&milestone_body(a)))?)),
+        ["milestones"] => Ok(shape::milestone(&call(
+            c,
+            "POST",
+            &format!("{p}/milestones"),
+            Some(&milestone_body(a)),
+        )?)),
         ["milestones", id] => {
             let path = format!("{p}/milestones/{id}");
             if m == "DELETE" {
                 return call(c, "DELETE", &path, None);
             }
-            Ok(shape::milestone(&call(c, "PUT", &path, Some(&milestone_body(a)))?))
+            Ok(shape::milestone(&call(
+                c,
+                "PUT",
+                &path,
+                Some(&milestone_body(a)),
+            )?))
         }
         ["contents", path @ ..] => contents(a, repo, &path.join("/")),
         ["branches"] => {
@@ -59,7 +81,10 @@ pub fn route(a: &Ask, repo: &str, rest: &[&str]) -> Result<Value> {
         }
         ["branches", name @ .., "protection"] => protect(a, repo, &name.join("/")),
         ["branches", name @ .., "rename"] => rename_branch(a, repo, &name.join("/")),
-        ["branches", name @ ..] => Ok(branch(&get(c, &format!("{p}/repository/branches/{}", enc(&name.join("/"))))?)),
+        ["branches", name @ ..] => Ok(branch(&get(
+            c,
+            &format!("{p}/repository/branches/{}", enc(&name.join("/"))),
+        )?)),
         ["tags"] => {
             let list = get(c, &format!("{p}/repository/tags?{}", a.paging()))?;
             Ok(Value::Array(list.list("").iter().map(|t| json!({ "name": t.s("name"), "commit": { "sha": t.s("commit.id") }, "message": t.s("message") })).collect()))
@@ -68,17 +93,41 @@ pub fn route(a: &Ask, repo: &str, rest: &[&str]) -> Result<Value> {
             let reference = a.field("ref").as_str().unwrap_or("").to_string();
             let sha = a.field("sha").clone();
             if let Some(tag) = reference.strip_prefix("refs/tags/") {
-                call(c, "POST", &format!("{p}/repository/tags"), Some(&json!({ "tag_name": tag, "ref": sha })))?;
+                call(
+                    c,
+                    "POST",
+                    &format!("{p}/repository/tags"),
+                    Some(&json!({ "tag_name": tag, "ref": sha })),
+                )?;
             } else {
                 let name = reference.trim_start_matches("refs/heads/");
-                call(c, "POST", &format!("{p}/repository/branches"), Some(&json!({ "branch": name, "ref": sha })))?;
+                call(
+                    c,
+                    "POST",
+                    &format!("{p}/repository/branches"),
+                    Some(&json!({ "branch": name, "ref": sha })),
+                )?;
             }
             Ok(json!({ "ref": reference, "object": { "sha": sha } }))
         }
-        ["git", "refs", "heads", name @ ..] => call(c, "DELETE", &format!("{p}/repository/branches/{}", enc(&name.join("/"))), None),
-        ["git", "refs", "tags", name @ ..] => call(c, "DELETE", &format!("{p}/repository/tags/{}", enc(&name.join("/"))), None),
+        ["git", "refs", "heads", name @ ..] => call(
+            c,
+            "DELETE",
+            &format!("{p}/repository/branches/{}", enc(&name.join("/"))),
+            None,
+        ),
+        ["git", "refs", "tags", name @ ..] => call(
+            c,
+            "DELETE",
+            &format!("{p}/repository/tags/{}", enc(&name.join("/"))),
+            None,
+        ),
         ["git", "trees", sha] => {
-            let list = get_all(c, &format!("{p}/repository/tree?recursive=true&ref={}", enc(sha)), 50)?;
+            let list = get_all(
+                c,
+                &format!("{p}/repository/tree?recursive=true&ref={}", enc(sha)),
+                50,
+            )?;
             let tree: Vec<Value> = list.iter().map(|e| json!({ "path": e.s("path"), "type": e.s("type"), "sha": e.s("id"), "mode": e.s("mode") })).collect();
             Ok(json!({ "sha": sha, "tree": tree, "truncated": list.len() >= 5000 }))
         }
@@ -86,7 +135,8 @@ pub fn route(a: &Ask, repo: &str, rest: &[&str]) -> Result<Value> {
         ["commits", sha] => commit(c, repo, sha),
         ["commits", sha, "comments"] => commit_comments(a, repo, sha),
         ["commits", sha, "discussions", discussion, "notes", note] => {
-            let path = format!("{p}/repository/commits/{sha}/discussions/{discussion}/notes/{note}");
+            let path =
+                format!("{p}/repository/commits/{sha}/discussions/{discussion}/notes/{note}");
             match m {
                 "DELETE" => call(c, "DELETE", &path, None),
                 _ => call(c, "PUT", &path, Some(&json!({ "body": a.field("body") }))),
@@ -103,13 +153,22 @@ pub fn route(a: &Ask, repo: &str, rest: &[&str]) -> Result<Value> {
             let mut out = serde_json::Map::new();
             if let Value::Object(map) = &langs {
                 for (name, share) in map {
-                    out.insert(name.clone(), json!((share.as_f64().unwrap_or(0.0) * 100.0).round() as i64));
+                    out.insert(
+                        name.clone(),
+                        json!((share.as_f64().unwrap_or(0.0) * 100.0).round() as i64),
+                    );
                 }
             }
             Ok(Value::Object(out))
         }
         ["contributors"] => {
-            let list = get(c, &format!("{p}/repository/contributors?order_by=commits&sort=desc&{}", a.paging()))?;
+            let list = get(
+                c,
+                &format!(
+                    "{p}/repository/contributors?order_by=commits&sort=desc&{}",
+                    a.paging()
+                ),
+            )?;
             let emails: Vec<String> = list.list("").iter().map(|p| p.s("email")).collect();
             let faces = avatars(c, &emails);
             Ok(Value::Array(
@@ -119,26 +178,49 @@ pub fn route(a: &Ask, repo: &str, rest: &[&str]) -> Result<Value> {
                     .collect(),
             ))
         }
-        ["forks"] if m == "GET" => Ok(shape::projects(c, get(c, &format!("{p}/forks?order_by=star_count&{}", a.paging()))?.list(""))),
+        ["forks"] if m == "GET" => Ok(shape::projects(
+            c,
+            get(c, &format!("{p}/forks?order_by=star_count&{}", a.paging()))?.list(""),
+        )),
         ["forks"] => {
             let mut body = json!({});
-            if let Some(owner) = a.field("organization").as_str().filter(|o| !o.trim().is_empty()) {
+            if let Some(owner) = a
+                .field("organization")
+                .as_str()
+                .filter(|o| !o.trim().is_empty())
+            {
                 body["namespace_path"] = json!(owner.trim());
             }
             if let Some(name) = a.field("name").as_str().filter(|n| !n.trim().is_empty()) {
                 body["name"] = json!(name.trim());
                 body["path"] = json!(name.trim());
             }
-            Ok(shape::project(c, &call(c, "POST", &format!("{p}/fork"), Some(&body))?))
+            Ok(shape::project(
+                c,
+                &call(c, "POST", &format!("{p}/fork"), Some(&body))?,
+            ))
         }
         ["stargazers"] => {
             let list = get(c, &format!("{p}/starrers?{}", a.paging()))?;
-            Ok(Value::Array(list.list("").iter().map(|s| shape::user(c, s.at("user"))).collect()))
+            Ok(Value::Array(
+                list.list("")
+                    .iter()
+                    .map(|s| shape::user(c, s.at("user")))
+                    .collect(),
+            ))
         }
         ["subscribers"] => Ok(json!([])),
         ["subscription"] => subscription(a, repo),
         ["topics"] => call(c, "PUT", &p, Some(&json!({ "topics": a.field("names") }))),
-        ["transfer"] => Ok(shape::project(c, &call(c, "PUT", &format!("{p}/transfer"), Some(&json!({ "namespace": a.field("new_owner") })))?)),
+        ["transfer"] => Ok(shape::project(
+            c,
+            &call(
+                c,
+                "PUT",
+                &format!("{p}/transfer"),
+                Some(&json!({ "namespace": a.field("new_owner") })),
+            )?,
+        )),
         ["collaborators"] => {
             let list = get(c, &format!("{p}/members/all?{}", a.paging()))?;
             Ok(Value::Array(
@@ -158,8 +240,18 @@ pub fn route(a: &Ask, repo: &str, rest: &[&str]) -> Result<Value> {
                 return call(c, "DELETE", &format!("{p}/members/{id}"), None);
             }
             let level = access_level(a.field("permission").as_str().unwrap_or("push"));
-            match call(c, "PUT", &format!("{p}/members/{id}"), Some(&json!({ "access_level": level }))) {
-                Err(e) if api::status_of(&e) == Some(404) => call(c, "POST", &format!("{p}/members"), Some(&json!({ "user_id": id, "access_level": level }))),
+            match call(
+                c,
+                "PUT",
+                &format!("{p}/members/{id}"),
+                Some(&json!({ "access_level": level })),
+            ) {
+                Err(e) if api::status_of(&e) == Some(404) => call(
+                    c,
+                    "POST",
+                    &format!("{p}/members"),
+                    Some(&json!({ "user_id": id, "access_level": level })),
+                ),
                 other => other,
             }
         }
@@ -169,12 +261,20 @@ pub fn route(a: &Ask, repo: &str, rest: &[&str]) -> Result<Value> {
         }
         ["keys"] => {
             let body = json!({ "title": a.field("title"), "key": a.field("key"), "can_push": !a.field("read_only").as_bool().unwrap_or(true) });
-            Ok(deploy_key(&call(c, "POST", &format!("{p}/deploy_keys"), Some(&body))?))
+            Ok(deploy_key(&call(
+                c,
+                "POST",
+                &format!("{p}/deploy_keys"),
+                Some(&body),
+            )?))
         }
         ["keys", id] => call(c, "DELETE", &format!("{p}/deploy_keys/{id}"), None),
         ["actions", "jobs", id, "rerun"] => call(c, "POST", &format!("{p}/jobs/{id}/retry"), None),
         ["check-runs", _, "annotations"] => Ok(json!([])),
-        _ => Err(missing(&format!("equivalent of a repository's {}", rest.join("/")))),
+        _ => Err(missing(&format!(
+            "equivalent of a repository's {}",
+            rest.join("/")
+        ))),
     }
 }
 
@@ -187,18 +287,28 @@ pub fn access_level(permission: &str) -> i64 {
     }
 }
 
-
 fn project(a: &Ask, repo: &str) -> Result<Value> {
     let c = a.c;
     let p = proj(repo);
     match a.method {
-        "GET" => Ok(shape::project(c, &get(c, &format!("{p}?license=true&statistics=true"))?)),
+        "GET" => Ok(shape::project(
+            c,
+            &get(c, &format!("{p}?license=true&statistics=true"))?,
+        )),
         "DELETE" => call(c, "DELETE", &p, None),
         _ => {
             // What the shared screens change: the default branch, the
             // visibility, archiving, the name and description.
             if let Some(archived) = a.field("archived").as_bool() {
-                return Ok(shape::project(c, &call(c, "POST", &format!("{p}/{}", if archived { "archive" } else { "unarchive" }), None)?));
+                return Ok(shape::project(
+                    c,
+                    &call(
+                        c,
+                        "POST",
+                        &format!("{p}/{}", if archived { "archive" } else { "unarchive" }),
+                        None,
+                    )?,
+                ));
             }
             let mut body = json!({});
             for key in ["name", "description", "default_branch"] {
@@ -258,12 +368,27 @@ fn protect(a: &Ask, repo: &str, name: &str) -> Result<Value> {
 fn rename_branch(a: &Ask, repo: &str, old: &str) -> Result<Value> {
     let c = a.c;
     let p = proj(repo);
-    let new = a.field("new_name").as_str().unwrap_or("").trim().to_string();
-    call(c, "POST", &format!("{p}/repository/branches"), Some(&json!({ "branch": new, "ref": old })))?;
+    let new = a
+        .field("new_name")
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    call(
+        c,
+        "POST",
+        &format!("{p}/repository/branches"),
+        Some(&json!({ "branch": new, "ref": old })),
+    )?;
     if get(c, &p)?.s("default_branch") == old {
         call(c, "PUT", &p, Some(&json!({ "default_branch": new })))?;
     }
-    call(c, "DELETE", &format!("{p}/repository/branches/{}", enc(old)), None)?;
+    call(
+        c,
+        "DELETE",
+        &format!("{p}/repository/branches/{}", enc(old)),
+        None,
+    )?;
     Ok(json!({ "name": new }))
 }
 
@@ -297,9 +422,17 @@ fn milestones(a: &Ask, repo: &str) -> Result<Value> {
     let list = list.list("").to_vec();
     // Progress: how many of each milestone's issues are closed.
     let counts = parallel(&list, |m| {
-        get(c, &format!("{p}/issues_statistics?milestone={}", enc(&m.s("title"))))
-            .map(|s| (s.i("statistics.counts.opened"), s.i("statistics.counts.closed")))
-            .unwrap_or((0, 0))
+        get(
+            c,
+            &format!("{p}/issues_statistics?milestone={}", enc(&m.s("title"))),
+        )
+        .map(|s| {
+            (
+                s.i("statistics.counts.opened"),
+                s.i("statistics.counts.closed"),
+            )
+        })
+        .unwrap_or((0, 0))
     });
     Ok(Value::Array(
         list.iter()
@@ -317,7 +450,15 @@ fn milestones(a: &Ask, repo: &str) -> Result<Value> {
 /// A directory's entries, folders and files as GitHub lists them.
 fn tree(c: &Client, repo: &str, path: &str, git_ref: &str) -> Result<Vec<Value>> {
     let p = proj(repo);
-    let list = get_all(c, &format!("{p}/repository/tree?path={}&ref={}", enc(path), enc(git_ref)), 20)?;
+    let list = get_all(
+        c,
+        &format!(
+            "{p}/repository/tree?path={}&ref={}",
+            enc(path),
+            enc(git_ref)
+        ),
+        20,
+    )?;
     let web = format!("{}/{repo}/-", c.web);
     Ok(list
         .iter()
@@ -344,7 +485,15 @@ fn contents(a: &Ask, repo: &str, path: &str) -> Result<Value> {
         Err(e) if api::status_of(&e) != Some(404) => return Err(e),
         _ => {}
     }
-    let f = get(c, &format!("{}/repository/files/{}?ref={}", proj(repo), enc(path), enc(&git_ref)))?;
+    let f = get(
+        c,
+        &format!(
+            "{}/repository/files/{}?ref={}",
+            proj(repo),
+            enc(path),
+            enc(&git_ref)
+        ),
+    )?;
     Ok(json!({
         "type": "file",
         "name": f.s("file_name"),
@@ -366,18 +515,38 @@ pub fn text(a: &Ask, repo: &str, rest: &[&str]) -> Result<String> {
         ["readme", dir @ ..] => {
             let dir = dir.join("/");
             let entries = tree(c, repo, &dir, &git_ref)?;
-            let names: Vec<String> = entries.iter().filter(|e| e.s("type") == "file").map(|e| e.s("name")).collect();
+            let names: Vec<String> = entries
+                .iter()
+                .filter(|e| e.s("type") == "file")
+                .map(|e| e.s("name"))
+                .collect();
             let pick = names
                 .iter()
                 .find(|n| n.eq_ignore_ascii_case("readme.md"))
-                .or_else(|| names.iter().find(|n| n.to_lowercase().starts_with("readme.")))
+                .or_else(|| {
+                    names
+                        .iter()
+                        .find(|n| n.to_lowercase().starts_with("readme."))
+                })
                 .or_else(|| names.iter().find(|n| n.eq_ignore_ascii_case("readme")))
                 .ok_or_else(|| missing("README here"))?;
-            if dir.is_empty() { pick.clone() } else { format!("{dir}/{pick}") }
+            if dir.is_empty() {
+                pick.clone()
+            } else {
+                format!("{dir}/{pick}")
+            }
         }
         _ => return Err(missing("text at that path")),
     };
-    c.raw_text(&format!("{}/repository/files/{}/raw?ref={}", proj(repo), enc(&path), enc(&git_ref)), "*/*")
+    c.raw_text(
+        &format!(
+            "{}/repository/files/{}/raw?ref={}",
+            proj(repo),
+            enc(&path),
+            enc(&git_ref)
+        ),
+        "*/*",
+    )
 }
 
 fn commits(a: &Ask, repo: &str) -> Result<Value> {
@@ -399,20 +568,28 @@ fn commits(a: &Ask, repo: &str) -> Result<Value> {
 pub fn shape_commits(c: &Client, repo: &str, list: &[Value]) -> Value {
     let emails: Vec<String> = list.iter().map(|v| v.s("author_email")).collect();
     let faces = avatars(c, &emails);
-    Value::Array(list.iter().map(|v| shape::commit(repo, v, faces.get(&v.s("author_email")))).collect())
+    Value::Array(
+        list.iter()
+            .map(|v| shape::commit(repo, v, faces.get(&v.s("author_email"))))
+            .collect(),
+    )
 }
 
 /// One commit, its changes, and whether its signature checks out.
 pub fn commit(c: &Client, repo: &str, sha: &str) -> Result<Value> {
     let p = proj(repo);
-    let v = get(c, &format!("{p}/repository/commits/{}?stats=true", enc(sha)))?;
+    let v = get(
+        c,
+        &format!("{p}/repository/commits/{}?stats=true", enc(sha)),
+    )?;
     let full = v.s("id");
     let faces = avatars(c, &[v.s("author_email")]);
     let mut shaped = shape::commit(repo, &v, faces.get(&v.s("author_email")));
     let diffs = get_all(c, &format!("{p}/repository/commits/{full}/diff"), 10)?;
     shaped["files"] = Value::Array(diffs.iter().map(shape::file).collect());
     if let Ok(signature) = get(c, &format!("{p}/repository/commits/{full}/signature")) {
-        shaped["commit"]["verification"]["verified"] = json!(signature.s("verification_status") == "verified");
+        shaped["commit"]["verification"]["verified"] =
+            json!(signature.s("verification_status") == "verified");
     }
     shaped["last_pipeline"] = v.at("last_pipeline").clone();
     Ok(shaped)
@@ -424,7 +601,12 @@ fn commit_comments(a: &Ask, repo: &str, sha: &str) -> Result<Value> {
     let c = a.c;
     let p = proj(repo);
     if a.method == "POST" {
-        return call(c, "POST", &format!("{p}/repository/commits/{sha}/discussions"), Some(&json!({ "body": a.field("body") })));
+        return call(
+            c,
+            "POST",
+            &format!("{p}/repository/commits/{sha}/discussions"),
+            Some(&json!({ "body": a.field("body") })),
+        );
     }
     let threads = get_all(c, &format!("{p}/repository/commits/{sha}/discussions"), 5)?;
     let web = format!("{}/{repo}/-/commit/{sha}", c.web);
@@ -453,7 +635,14 @@ fn commit_comments(a: &Ask, repo: &str, sha: &str) -> Result<Value> {
 
 /// The newest pipeline that ran for `sha`, if any did.
 pub fn pipeline_for(c: &Client, repo: &str, sha: &str) -> Result<Option<Value>> {
-    let list = get(c, &format!("{}/pipelines?sha={}&per_page=1&order_by=id&sort=desc", proj(repo), enc(sha)))?;
+    let list = get(
+        c,
+        &format!(
+            "{}/pipelines?sha={}&per_page=1&order_by=id&sort=desc",
+            proj(repo),
+            enc(sha)
+        ),
+    )?;
     Ok(list.list("").first().cloned())
 }
 
@@ -462,7 +651,15 @@ pub fn check_runs(c: &Client, repo: &str, sha: &str) -> Result<Value> {
     let Some(pipeline) = pipeline_for(c, repo, sha)? else {
         return Ok(json!({ "total_count": 0, "check_runs": [] }));
     };
-    let jobs = get_all(c, &format!("{}/pipelines/{}/jobs?include_retried=false", proj(repo), pipeline.i("id")), 5)?;
+    let jobs = get_all(
+        c,
+        &format!(
+            "{}/pipelines/{}/jobs?include_retried=false",
+            proj(repo),
+            pipeline.i("id")
+        ),
+        5,
+    )?;
     let runs: Vec<Value> = jobs.iter().map(shape::check_run).collect();
     Ok(json!({ "total_count": runs.len(), "check_runs": runs, "pipeline": pipeline }))
 }
@@ -470,7 +667,14 @@ pub fn check_runs(c: &Client, repo: &str, sha: &str) -> Result<Value> {
 /// Statuses other services set on a commit (CI's own jobs are its check
 /// runs).
 fn statuses(c: &Client, repo: &str, sha: &str) -> Result<Value> {
-    let list = get(c, &format!("{}/repository/commits/{}/statuses?per_page=100&all=false", proj(repo), enc(sha)))?;
+    let list = get(
+        c,
+        &format!(
+            "{}/repository/commits/{}/statuses?per_page=100&all=false",
+            proj(repo),
+            enc(sha)
+        ),
+    )?;
     let statuses: Vec<Value> = list
         .list("")
         .iter()
@@ -485,7 +689,10 @@ fn statuses(c: &Client, repo: &str, sha: &str) -> Result<Value> {
             json!({ "context": s.s("name"), "state": state, "description": s.s("description"), "target_url": s.s("target_url") })
         })
         .collect();
-    let state = if statuses.iter().any(|s| s.s("state") == "failure" || s.s("state") == "error") {
+    let state = if statuses
+        .iter()
+        .any(|s| s.s("state") == "failure" || s.s("state") == "error")
+    {
         "failure"
     } else if statuses.iter().any(|s| s.s("state") == "pending") {
         "pending"
@@ -498,10 +705,24 @@ fn statuses(c: &Client, repo: &str, sha: &str) -> Result<Value> {
 fn compare(c: &Client, repo: &str, range: &str) -> Result<Value> {
     let (base, head) = range.split_once("...").unwrap_or((range, "HEAD"));
     let p = proj(repo);
-    let ahead = get(c, &format!("{p}/repository/compare?from={}&to={}&straight=false", enc(base), enc(head)))?;
-    let behind = get(c, &format!("{p}/repository/compare?from={}&to={}&straight=false", enc(head), enc(base)))
-        .map(|v| v.list("commits").len())
-        .unwrap_or(0);
+    let ahead = get(
+        c,
+        &format!(
+            "{p}/repository/compare?from={}&to={}&straight=false",
+            enc(base),
+            enc(head)
+        ),
+    )?;
+    let behind = get(
+        c,
+        &format!(
+            "{p}/repository/compare?from={}&to={}&straight=false",
+            enc(head),
+            enc(base)
+        ),
+    )
+    .map(|v| v.list("commits").len())
+    .unwrap_or(0);
     let commits = ahead.list("commits");
     let status = match (commits.len(), behind) {
         (0, 0) => "identical",
@@ -544,26 +765,51 @@ fn releases(a: &Ask, repo: &str, rest: &[&str]) -> Result<Value> {
     match rest {
         [] if m == "GET" => {
             let list = get(c, &format!("{p}/releases?{}", a.paging()))?;
-            Ok(Value::Array(list.list("").iter().map(|r| shape::release(c, repo, r)).collect()))
+            Ok(Value::Array(
+                list.list("")
+                    .iter()
+                    .map(|r| shape::release(c, repo, r))
+                    .collect(),
+            ))
         }
         [] => {
             let mut body = release_body();
             body["tag_name"] = a.field("tag_name").clone();
-            if let Some(target) = a.field("target_commitish").as_str().filter(|t| !t.is_empty()) {
+            if let Some(target) = a
+                .field("target_commitish")
+                .as_str()
+                .filter(|t| !t.is_empty())
+            {
                 body["ref"] = json!(target);
             } else {
                 body["ref"] = json!(get(c, &p)?.s("default_branch"));
             }
-            Ok(shape::release(c, repo, &call(c, "POST", &format!("{p}/releases"), Some(&body))?))
+            Ok(shape::release(
+                c,
+                repo,
+                &call(c, "POST", &format!("{p}/releases"), Some(&body))?,
+            ))
         }
-        ["latest"] => Ok(shape::release(c, repo, &get(c, &format!("{p}/releases/permalink/latest"))?)),
+        ["latest"] => Ok(shape::release(
+            c,
+            repo,
+            &get(c, &format!("{p}/releases/permalink/latest"))?,
+        )),
         ["assets", id] => {
             let id: i64 = id.parse().unwrap_or(0);
             let release = get_all(c, &format!("{p}/releases"), 5)?
                 .into_iter()
                 .find(|r| r.list("assets.links").iter().any(|l| l.i("id") == id))
                 .ok_or_else(|| missing("asset by that number"))?;
-            call(c, "DELETE", &format!("{p}/releases/{}/assets/links/{id}", enc(&release.s("tag_name"))), None)
+            call(
+                c,
+                "DELETE",
+                &format!(
+                    "{p}/releases/{}/assets/links/{id}",
+                    enc(&release.s("tag_name"))
+                ),
+                None,
+            )
         }
         [id] => {
             let release = find_release(c, repo, id)?;
@@ -571,10 +817,16 @@ fn releases(a: &Ask, repo: &str, rest: &[&str]) -> Result<Value> {
             match m {
                 "GET" => Ok(shape::release(c, repo, &release)),
                 "DELETE" => call(c, "DELETE", &path, None),
-                _ => Ok(shape::release(c, repo, &call(c, "PUT", &path, Some(&release_body()))?)),
+                _ => Ok(shape::release(
+                    c,
+                    repo,
+                    &call(c, "PUT", &path, Some(&release_body()))?,
+                )),
             }
         }
-        [id, "assets"] => Ok(shape::release(c, repo, &find_release(c, repo, id)?).at("assets").clone()),
+        [id, "assets"] => Ok(shape::release(c, repo, &find_release(c, repo, id)?)
+            .at("assets")
+            .clone()),
         _ => Err(missing("reactions on releases")),
     }
 }
@@ -589,12 +841,19 @@ fn subscription(a: &Ask, repo: &str) -> Result<Value> {
             match level.as_str() {
                 "watch" => Ok(json!({ "subscribed": true, "ignored": false })),
                 "disabled" => Ok(json!({ "subscribed": false, "ignored": true })),
-                _ => Err(anyhow::Error::new(api::Status { code: 404, message: "Not watching".into() })),
+                _ => Err(anyhow::Error::new(api::Status {
+                    code: 404,
+                    message: "Not watching".into(),
+                })),
             }
         }
         "DELETE" => call(c, "PUT", &format!("{path}?level=participating"), None),
         _ => {
-            let level = if a.field("ignored").as_bool() == Some(true) { "disabled" } else { "watch" };
+            let level = if a.field("ignored").as_bool() == Some(true) {
+                "disabled"
+            } else {
+                "watch"
+            };
             call(c, "PUT", &format!("{path}?level={level}"), None)
         }
     }
@@ -607,13 +866,27 @@ fn deploy_key(k: &Value) -> Value {
 /// Whether the signed-in user starred `repo`.
 pub fn starred(c: &Client, repo: &str) -> Result<bool> {
     let name = crate::forge::split_repo(repo).1;
-    let found = get(c, &format!("/projects?starred=true&simple=true&per_page=100&search={}", enc(name)))?;
-    Ok(found.list("").iter().any(|p| p.s("path_with_namespace").eq_ignore_ascii_case(repo)))
+    let found = get(
+        c,
+        &format!(
+            "/projects?starred=true&simple=true&per_page=100&search={}",
+            enc(name)
+        ),
+    )?;
+    Ok(found
+        .list("")
+        .iter()
+        .any(|p| p.s("path_with_namespace").eq_ignore_ascii_case(repo)))
 }
 
 /// Star or unstar, as GitHub's `PUT`/`DELETE /user/starred/{repo}`.
 pub fn star(c: &Client, repo: &str, on: bool) -> Result<Value> {
-    let reply = c.raw("POST", &format!("{}/{}", proj(repo), if on { "star" } else { "unstar" }), None, None)?;
+    let reply = c.raw(
+        "POST",
+        &format!("{}/{}", proj(repo), if on { "star" } else { "unstar" }),
+        None,
+        None,
+    )?;
     // 304: it already was.
     if reply.status >= 400 {
         return Err(api::failure(&reply));
@@ -625,8 +898,20 @@ pub fn star(c: &Client, repo: &str, on: bool) -> Result<Value> {
 /// names.
 pub fn label_colors(c: &Client, repo: &str) -> HashMap<String, String> {
     c.memo
-        .get_or(&format!("labels:{repo}"), MINUTE, || get(c, &format!("{}/labels?per_page=100", proj(repo))))
-        .map(|list| list.list("").iter().map(|l| (l.s("name"), l.s("color").trim_start_matches('#').to_string())).collect())
+        .get_or(&format!("labels:{repo}"), MINUTE, || {
+            get(c, &format!("{}/labels?per_page=100", proj(repo)))
+        })
+        .map(|list| {
+            list.list("")
+                .iter()
+                .map(|l| {
+                    (
+                        l.s("name"),
+                        l.s("color").trim_start_matches('#').to_string(),
+                    )
+                })
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -636,6 +921,9 @@ mod tests {
     fn roles_map_both_ways() {
         assert_eq!(super::access_level("push"), 30);
         assert_eq!(super::shape::role_name(40), "Maintainer");
-        assert_eq!(super::shape::role_name(super::access_level("pull")), "Reporter");
+        assert_eq!(
+            super::shape::role_name(super::access_level("pull")),
+            "Reporter"
+        );
     }
 }

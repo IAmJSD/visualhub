@@ -51,7 +51,14 @@ pub fn user(c: &Client, u: &Value) -> Value {
     if u.is_null() || !u.has("username") {
         return Value::Null;
     }
-    let company = [u.s("organization"), u.s("work_information"), u.s("job_title")].into_iter().find(|s| !s.is_empty()).unwrap_or_default();
+    let company = [
+        u.s("organization"),
+        u.s("work_information"),
+        u.s("job_title"),
+    ]
+    .into_iter()
+    .find(|s| !s.is_empty())
+    .unwrap_or_default();
     json!({
         "login": u.s("username"),
         "id": u.i("id"),
@@ -74,7 +81,12 @@ pub fn user(c: &Client, u: &Value) -> Value {
 }
 
 pub fn users(c: &Client, list: &[Value]) -> Value {
-    Value::Array(list.iter().map(|u| user(c, u)).filter(|u| !u.is_null()).collect())
+    Value::Array(
+        list.iter()
+            .map(|u| user(c, u))
+            .filter(|u| !u.is_null())
+            .collect(),
+    )
 }
 
 /// A group as an organization.
@@ -99,7 +111,8 @@ pub fn group(c: &Client, g: &Value) -> Value {
 /// The highest access the signed-in user has to a project: 10 guest, 20
 /// reporter, 30 developer, 40 maintainer, 50 owner.
 pub fn access(p: &Value) -> i64 {
-    p.i("permissions.project_access.access_level").max(p.i("permissions.group_access.access_level"))
+    p.i("permissions.project_access.access_level")
+        .max(p.i("permissions.group_access.access_level"))
 }
 
 pub fn project(c: &Client, p: &Value) -> Value {
@@ -220,7 +233,12 @@ pub fn repo_of(item: &Value) -> String {
 }
 
 /// What both kinds have: number, title, people, labels, dates.
-fn issuelike(c: &Client, repo: &str, v: &Value, colors: &HashMap<String, String>) -> Map<String, Value> {
+fn issuelike(
+    c: &Client,
+    repo: &str,
+    v: &Value,
+    colors: &HashMap<String, String>,
+) -> Map<String, Value> {
     let up = v.i("upvotes");
     let down = v.i("downvotes");
     let value = json!({
@@ -277,14 +295,24 @@ fn merge_state(v: &Value) -> (&'static str, &'static str) {
         "conflict" | "broken_status" => ("dirty", ""),
         "need_rebase" => ("behind", ""),
         "draft_status" => ("draft", ""),
-        "ci_must_pass" => ("blocked", "The pipeline must succeed before this can merge."),
+        "ci_must_pass" => (
+            "blocked",
+            "The pipeline must succeed before this can merge.",
+        ),
         "ci_still_running" => ("blocked", "The pipeline is still running."),
         "discussions_not_resolved" => ("blocked", "All threads must be resolved."),
         "not_approved" => ("blocked", "It needs the approvals its rules ask for."),
         "requested_changes" => ("blocked", "A reviewer has asked for changes."),
-        "blocked_status" | "merge_request_blocked" => ("blocked", "Another merge request must merge first."),
-        "jira_association_missing" => ("blocked", "The title or description must name a Jira issue."),
-        "status_checks_must_pass" | "external_status_checks" => ("blocked", "External status checks must pass."),
+        "blocked_status" | "merge_request_blocked" => {
+            ("blocked", "Another merge request must merge first.")
+        }
+        "jira_association_missing" => (
+            "blocked",
+            "The title or description must name a Jira issue.",
+        ),
+        "status_checks_must_pass" | "external_status_checks" => {
+            ("blocked", "External status checks must pass.")
+        }
         "security_policy_violations" => ("blocked", "A security policy blocks merging."),
         "locked_paths" | "locked_lfs_files" => ("blocked", "It changes locked files."),
         "title_regex" => ("blocked", "The title doesn't match the project's rules."),
@@ -295,14 +323,28 @@ fn merge_state(v: &Value) -> (&'static str, &'static str) {
     }
 }
 
-pub fn mr(c: &Client, repo: &str, v: &Value, colors: &HashMap<String, String>, source: &str) -> Value {
+pub fn mr(
+    c: &Client,
+    repo: &str,
+    v: &Value,
+    colors: &HashMap<String, String>,
+    source: &str,
+) -> Value {
     let mut map = issuelike(c, repo, v, colors);
     let n = v.i("iid");
     let merged = v.s("state") == "merged";
     let (mergeable_state, blocker) = merge_state(v);
     let branch = v.s("source_branch");
-    let source = if source.is_empty() { repo.to_string() } else { source.to_string() };
-    let label = if source == repo { branch.clone() } else { format!("{source}:{branch}") };
+    let source = if source.is_empty() {
+        repo.to_string()
+    } else {
+        source.to_string()
+    };
+    let label = if source == repo {
+        branch.clone()
+    } else {
+        format!("{source}:{branch}")
+    };
     let extra = json!({
         "url": format!("/repos/{repo}/pulls/{n}"),
         "node_id": format!("gl:mr:{repo}!{n}"),
@@ -377,11 +419,19 @@ pub const REACTIONS: [(&str, &str); 8] = [
 ];
 
 pub fn reaction_name(github: &str) -> &str {
-    REACTIONS.iter().find(|(g, _)| *g == github).map(|(_, l)| *l).unwrap_or(github)
+    REACTIONS
+        .iter()
+        .find(|(g, _)| *g == github)
+        .map(|(_, l)| *l)
+        .unwrap_or(github)
 }
 
 pub fn reaction_content(gitlab: &str) -> &str {
-    REACTIONS.iter().find(|(_, l)| *l == gitlab).map(|(g, _)| *g).unwrap_or(gitlab)
+    REACTIONS
+        .iter()
+        .find(|(_, l)| *l == gitlab)
+        .map(|(g, _)| *g)
+        .unwrap_or(gitlab)
 }
 
 /// Award emoji as a reaction list and as GitHub's counts.
@@ -528,7 +578,10 @@ pub fn snippet(c: &Client, s: &Value, contents: &HashMap<String, String>) -> Val
     let listed: Vec<(String, String)> = if s.list("files").is_empty() {
         vec![(s.s("file_name"), s.s("raw_url"))]
     } else {
-        s.list("files").iter().map(|f| (f.s("path"), f.s("raw_url"))).collect()
+        s.list("files")
+            .iter()
+            .map(|f| (f.s("path"), f.s("raw_url")))
+            .collect()
     };
     for (name, raw) in listed {
         if name.is_empty() {
@@ -565,15 +618,22 @@ pub fn snippet(c: &Client, s: &Value, contents: &HashMap<String, String>) -> Val
 pub fn event(c: &Client, e: &Value, repo: &str) -> Option<Value> {
     let action = e.s("action_name");
     let target = e.s("target_type");
-    let actor = json!({ "login": e.s("author.username"), "avatar_url": abs(c, &e.s("author.avatar_url")) });
+    let actor =
+        json!({ "login": e.s("author.username"), "avatar_url": abs(c, &e.s("author.avatar_url")) });
     let number = e.i("target_iid");
     let title = e.s("target_title");
     let (kind, payload) = if e.has("push_data") {
         let p = e.at("push_data");
         let reference = p.s("ref");
         match p.s("action").as_str() {
-            "created" => ("CreateEvent", json!({ "ref_type": p.s("ref_type"), "ref": reference })),
-            "removed" => ("DeleteEvent", json!({ "ref_type": p.s("ref_type"), "ref": reference })),
+            "created" => (
+                "CreateEvent",
+                json!({ "ref_type": p.s("ref_type"), "ref": reference }),
+            ),
+            "removed" => (
+                "DeleteEvent",
+                json!({ "ref_type": p.s("ref_type"), "ref": reference }),
+            ),
             _ => (
                 "PushEvent",
                 json!({
@@ -588,12 +648,24 @@ pub fn event(c: &Client, e: &Value, repo: &str) -> Option<Value> {
             "opened" | "closed" | "reopened" => action.clone(),
             _ => return None,
         };
-        ("IssuesEvent", json!({ "action": action, "issue": { "number": number, "title": title } }))
+        (
+            "IssuesEvent",
+            json!({ "action": action, "issue": { "number": number, "title": title } }),
+        )
     } else if target == "MergeRequest" {
         match action.as_str() {
-            "approved" => ("PullRequestReviewEvent", json!({ "pull_request": { "number": number, "title": title } })),
-            "accepted" => ("PullRequestEvent", json!({ "action": "closed", "number": number, "pull_request": { "title": title, "merged": true } })),
-            "opened" | "closed" | "reopened" => ("PullRequestEvent", json!({ "action": action, "number": number, "pull_request": { "title": title, "merged": false } })),
+            "approved" => (
+                "PullRequestReviewEvent",
+                json!({ "pull_request": { "number": number, "title": title } }),
+            ),
+            "accepted" => (
+                "PullRequestEvent",
+                json!({ "action": "closed", "number": number, "pull_request": { "title": title, "merged": true } }),
+            ),
+            "opened" | "closed" | "reopened" => (
+                "PullRequestEvent",
+                json!({ "action": action, "number": number, "pull_request": { "title": title, "merged": false } }),
+            ),
             _ => return None,
         }
     } else if e.has("note") {
@@ -601,15 +673,30 @@ pub fn event(c: &Client, e: &Value, repo: &str) -> Option<Value> {
         let on = note.s("noteable_type");
         let n = note.i("noteable_iid");
         match on.as_str() {
-            "Issue" => ("IssueCommentEvent", json!({ "issue": { "number": n, "title": title }, "comment": { "body": note.s("body") } })),
-            "MergeRequest" => ("IssueCommentEvent", json!({ "issue": { "number": n, "title": title, "pull_request": {} }, "comment": { "body": note.s("body") } })),
-            "Commit" => ("CommitCommentEvent", json!({ "comment": { "body": note.s("body") } })),
+            "Issue" => (
+                "IssueCommentEvent",
+                json!({ "issue": { "number": n, "title": title }, "comment": { "body": note.s("body") } }),
+            ),
+            "MergeRequest" => (
+                "IssueCommentEvent",
+                json!({ "issue": { "number": n, "title": title, "pull_request": {} }, "comment": { "body": note.s("body") } }),
+            ),
+            "Commit" => (
+                "CommitCommentEvent",
+                json!({ "comment": { "body": note.s("body") } }),
+            ),
             _ => return None,
         }
     } else if action == "created" && target.is_empty() {
-        ("CreateEvent", json!({ "ref_type": "repository", "description": "" }))
+        (
+            "CreateEvent",
+            json!({ "ref_type": "repository", "description": "" }),
+        )
     } else if action == "joined" {
-        ("MemberEvent", json!({ "action": "joined", "member": { "login": e.s("author.username") } }))
+        (
+            "MemberEvent",
+            json!({ "action": "joined", "member": { "login": e.s("author.username") } }),
+        )
     } else if target == "WikiPage::Meta" || target == "WikiPage" {
         ("GollumEvent", json!({}))
     } else {
@@ -630,13 +717,21 @@ mod tests {
     use super::*;
 
     fn client() -> Client {
-        Client::new(&crate::forge::Account::new(crate::forge::Forge::GitLab, "gitlab.example.com", ""))
+        Client::new(&crate::forge::Account::new(
+            crate::forge::Forge::GitLab,
+            "gitlab.example.com",
+            "",
+        ))
     }
 
     #[test]
     fn merge_requests_read_as_pull_requests() {
         let c = client();
-        crate::forge::set_current(&crate::forge::Account::new(crate::forge::Forge::GitLab, "gitlab.example.com", ""));
+        crate::forge::set_current(&crate::forge::Account::new(
+            crate::forge::Forge::GitLab,
+            "gitlab.example.com",
+            "",
+        ));
         let v = json!({
             "iid": 7, "title": "Draft: speed", "state": "opened", "draft": true,
             "author": { "username": "ada", "avatar_url": "/uploads/a.png" },
@@ -649,22 +744,40 @@ mod tests {
         assert_eq!(pr.i("number"), 7);
         assert_eq!(pr.s("state"), "open");
         assert_eq!(pr.s("user.login"), "ada");
-        assert_eq!(pr.s("user.avatar_url"), "https://gitlab.example.com/uploads/a.png");
+        assert_eq!(
+            pr.s("user.avatar_url"),
+            "https://gitlab.example.com/uploads/a.png"
+        );
         assert_eq!(pr.s("labels.0.color"), "d73a4a");
         assert_eq!(pr.s("head.label"), "fast");
         assert_eq!(pr.s("mergeable_state"), "draft");
         assert_eq!(pr.i("changed_files"), 1000);
         assert!(pr.has("pull_request"));
         assert!(!pr.has("merged_at"));
-        assert_eq!(crate::screens::common::issue_route(&pr), crate::hub::Route::Pull { repo: "g/sub/p".into(), number: 7, tab: crate::hub::PullTab::Conversation });
+        assert_eq!(
+            crate::screens::common::issue_route(&pr),
+            crate::hub::Route::Pull {
+                repo: "g/sub/p".into(),
+                number: 7,
+                tab: crate::hub::PullTab::Conversation
+            }
+        );
     }
 
     #[test]
     fn diffs_count_their_lines() {
-        let f = file(&json!({ "new_path": "a.rs", "old_path": "a.rs", "diff": "@@ -1,2 +1,2 @@\n-a\n+b\n c\n" }));
-        assert_eq!((f.i("additions"), f.i("deletions"), f.s("status").as_str()), (1, 1, "modified"));
+        let f = file(
+            &json!({ "new_path": "a.rs", "old_path": "a.rs", "diff": "@@ -1,2 +1,2 @@\n-a\n+b\n c\n" }),
+        );
+        assert_eq!(
+            (f.i("additions"), f.i("deletions"), f.s("status").as_str()),
+            (1, 1, "modified")
+        );
         assert_eq!(rollup("failed"), "FAILURE");
         assert_eq!(ci_status("running"), ("in_progress", ""));
-        assert_eq!(repo_of(&json!({ "references": { "full": "a/b/c!4" } })), "a/b/c");
+        assert_eq!(
+            repo_of(&json!({ "references": { "full": "a/b/c!4" } })),
+            "a/b/c"
+        );
     }
 }
