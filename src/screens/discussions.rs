@@ -462,22 +462,9 @@ fn comment_delete(id: &str, scope: &str) -> Act {
     .confirm("Delete comment?", "This cannot be undone.", "Delete")
 }
 
-/// GitHub sends category emoji as `:shortcode:`; show the common ones.
+/// GitHub sends category emoji as `:shortcode:`.
 fn emoji(code: &str) -> String {
-    match code {
-        ":speech_balloon:" => "💬",
-        ":bulb:" => "💡",
-        ":pray:" => "🙏",
-        ":raised_hands:" => "🙌",
-        ":ballot_box:" => "🗳️",
-        ":mega:" => "📣",
-        ":hammer_and_wrench:" => "🛠️",
-        ":question:" => "❓",
-        ":tada:" => "🎉",
-        ":rocket:" => "🚀",
-        ":bug:" => "🐛",
-        ":books:" => "📚",
-        _ => "•",
-    }
-    .to_string()
+    emojis::get_by_shortcode(code.trim_matches(':'))
+        .map_or("•", |e| e.as_str())
+        .to_string()
 }

@@ -31,6 +31,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 sha2 = "0.10"
 # GitLab names a diff's lines by their path's SHA-1.
 sha1_smol = "1"
+# Emoji by shortcode (":tada:"), as GitHub and GitLab name them.
+emojis = "0.9"
 
 [build-dependencies]
 # The Windows executable's icon; only used when building for Windows.
