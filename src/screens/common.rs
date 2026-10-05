@@ -80,7 +80,7 @@ pub fn issue_row(item: &Value, show_repo: bool) -> Row {
             format!("#{}", item.i("number"))
         },
         time::ago(&item.s("created_at")),
-        item.s("user.login")
+        shown_name(item.at("user"))
     );
     if show_repo && !repo.is_empty() {
         meta = format!("{repo}  ·  {meta}");
@@ -178,6 +178,18 @@ pub const REACTIONS: [(&str, &str); 8] = [
 
 /// Add `content` to the reactions at `base`, or take it back if this user
 /// already reacted with it.
+/// The name to show for someone: their login, except for a bot that has
+/// a display name, which says more (GitLab's token bots are logged in as
+/// `project_12_bot_3f…`).
+pub fn shown_name(user: &Value) -> String {
+    let name = user.s("name");
+    if user.s("type") == "Bot" && !name.is_empty() {
+        name
+    } else {
+        user.s("login")
+    }
+}
+
 pub fn toggle_reaction(base: &str, content: &str, login: &str, invalidate: &str) -> Act {
     let (base, content, login) = (base.to_string(), content.to_string(), login.to_string());
     Req::custom(move |client| {
@@ -377,7 +389,7 @@ impl Hub {
             .child(
                 div()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(actor.s("login")),
+                    .child(shown_name(actor)),
             )
             .into_any_element();
         self.timeline_event_by(icon_name, color, who, text, when, extra)

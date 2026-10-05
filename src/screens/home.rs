@@ -254,12 +254,15 @@ fn event_row(e: &Value) -> Row {
     } else {
         format!("{repo}  ·  {ago}")
     };
-    Row::new(format!("{} {text}", e.s("actor.login")))
-        .avatar(e.s("actor.avatar_url"))
-        .icon(icon, widgets::gray())
-        .meta(meta)
-        .body(body)
-        .open(open)
+    Row::new(format!(
+        "{} {text}",
+        crate::screens::common::shown_name(e.at("actor"))
+    ))
+    .avatar(e.s("actor.avatar_url"))
+    .icon(icon, widgets::gray())
+    .meta(meta)
+    .body(body)
+    .open(open)
 }
 
 /// The page a notification is about.

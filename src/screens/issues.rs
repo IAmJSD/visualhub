@@ -269,7 +269,7 @@ impl Hub {
                         "{} opened {} by {}  ·  {} → {}",
                         crate::forge::pr_ref(item.i("number")),
                         time::ago(&item.s("created_at")),
-                        item.s("user.login"),
+                        common::shown_name(item.at("user")),
                         item.s("head.label"),
                         item.s("base.ref")
                     ));
@@ -519,7 +519,7 @@ impl Hub {
         let byline = if is_pr {
             format!(
                 "{} wants to merge {} commits into {} from {}  ·  opened {}",
-                issue.s("user.login"),
+                common::shown_name(issue.at("user")),
                 issue.i("commits"),
                 issue.s("base.ref"),
                 issue.s("head.label"),
@@ -528,7 +528,7 @@ impl Hub {
         } else {
             format!(
                 "{} opened this issue {}  ·  {} comments",
-                issue.s("user.login"),
+                common::shown_name(issue.at("user")),
                 time::ago(&issue.s("created_at")),
                 issue.i("comments")
             )

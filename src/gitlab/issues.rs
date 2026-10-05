@@ -333,6 +333,7 @@ fn item(a: &Ask, repo: &str, kind: Kind, n: i64, tail: &[&str]) -> Result<Value>
                 &format!("{base}/notes?sort=asc&order_by=created_at&{}", a.paging()),
             )?;
             let page = item_url(c, repo, kind, n);
+            super::learn_bots(c, notes.list(""));
             Ok(Value::Array(
                 notes
                     .list("")
@@ -455,6 +456,7 @@ fn timeline(a: &Ask, repo: &str, kind: Kind, n: i64) -> Result<Value> {
     )?;
     let notes = notes.list("").to_vec();
     let page = item_url(c, repo, kind, n);
+    super::learn_bots(c, &notes);
     // Each comment's reactions; GitLab gives them one comment at a time.
     let awards = parallel(&notes, |note| {
         if note.b("system") {
@@ -522,6 +524,11 @@ fn review_comments(c: &Client, repo: &str, n: i64) -> Result<Value> {
         10,
     )?;
     let page = item_url(c, repo, Kind::Mr, n);
+    let notes: Vec<Value> = threads
+        .iter()
+        .flat_map(|t| t.list("notes").iter().cloned())
+        .collect();
+    super::learn_bots(c, &notes);
     let mut out = Vec::new();
     for thread in &threads {
         let notes = thread.list("notes");

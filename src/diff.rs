@@ -721,7 +721,9 @@ impl Hub {
                     .gap_1()
                     .child(
                         widgets::row()
-                            .child(widgets::h3(comment.s("user.login")))
+                            .child(widgets::h3(crate::screens::common::shown_name(
+                                comment.at("user"),
+                            )))
                             .when(
                                 comment.has("start_line")
                                     && comment.i("start_line") != comment.i("line"),

@@ -47,6 +47,27 @@ fn or_null(s: String) -> Value {
     }
 }
 
+/// Whether someone is a bot: GitLab says so on newer instances, and
+/// names the users behind project and group access tokens and service
+/// accounts after them (`project_12_bot_3f…`).
+fn is_bot(c: &Client, u: &Value) -> bool {
+    // What `learn_bots` found out, when the object itself doesn't say.
+    let learned = || {
+        c.memo
+            .get_or(&format!("bot:{}", u.i("id")), super::DAY, || {
+                anyhow::bail!("not asked")
+            })
+            .is_ok_and(|v| v.as_bool() == Some(true))
+    };
+    let name = u.s("username");
+    let token_bot = ["project_", "group_"].iter().any(|kind| {
+        name.strip_prefix(kind)
+            .and_then(|rest| rest.split_once("_bot"))
+            .is_some_and(|(id, _)| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+    });
+    u.b("bot") || token_bot || name.starts_with("service_account_") || learned()
+}
+
 pub fn user(c: &Client, u: &Value) -> Value {
     if u.is_null() || !u.has("username") {
         return Value::Null;
@@ -65,7 +86,7 @@ pub fn user(c: &Client, u: &Value) -> Value {
         "name": u.s("name"),
         "avatar_url": abs(c, &u.s("avatar_url")),
         "html_url": u.s("web_url"),
-        "type": "User",
+        "type": if is_bot(c, u) { "Bot" } else { "User" },
         "bio": u.s("bio"),
         "location": u.s("location"),
         "company": company,
@@ -618,8 +639,7 @@ pub fn snippet(c: &Client, s: &Value, contents: &HashMap<String, String>) -> Val
 pub fn event(c: &Client, e: &Value, repo: &str) -> Option<Value> {
     let action = e.s("action_name");
     let target = e.s("target_type");
-    let actor =
-        json!({ "login": e.s("author.username"), "avatar_url": abs(c, &e.s("author.avatar_url")) });
+    let actor = user(c, e.at("author"));
     let number = e.i("target_iid");
     let title = e.s("target_title");
     let (kind, payload) = if e.has("push_data") {
@@ -749,6 +769,7 @@ mod tests {
             "https://gitlab.example.com/uploads/a.png"
         );
         assert_eq!(pr.s("labels.0.color"), "d73a4a");
+        assert_eq!(pr.s("user.type"), "User");
         assert_eq!(pr.s("head.label"), "fast");
         assert_eq!(pr.s("mergeable_state"), "draft");
         assert_eq!(pr.i("changed_files"), 1000);
@@ -762,6 +783,22 @@ mod tests {
                 tab: crate::hub::PullTab::Conversation
             }
         );
+    }
+
+    #[test]
+    fn bots_are_told_apart() {
+        let c = client();
+        let bot = |u: Value| user(&c, &u).s("type") == "Bot";
+        assert!(bot(
+            json!({ "username": "project_278964_bot_3f9a", "name": "Danger" })
+        ));
+        assert!(bot(
+            json!({ "username": "group_9_bot", "name": "Renovate" })
+        ));
+        assert!(bot(json!({ "username": "service_account_group_9_x" })));
+        assert!(bot(json!({ "username": "gitlab-bot", "bot": true })));
+        assert!(!bot(json!({ "username": "project_x_bot_1" })));
+        assert!(!bot(json!({ "username": "ada", "bot": false })));
     }
 
     #[test]

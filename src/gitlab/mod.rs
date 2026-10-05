@@ -69,6 +69,7 @@ impl Memo {
 
 pub const MINUTE: Duration = Duration::from_secs(60);
 pub const HOUR: Duration = Duration::from_secs(3600);
+pub const DAY: Duration = Duration::from_secs(24 * 3600);
 
 /// A GitHub-style request, taken apart.
 pub struct Ask<'a> {
@@ -278,6 +279,25 @@ pub fn project_path(c: &Client, id: i64) -> String {
         })
         .map(|v| v.s(""))
         .unwrap_or_default()
+}
+
+/// Which of the authors of `items` are bots. Only GitLab's own user page
+/// says so (lists, notes and searches leave it out), so each is asked
+/// once a day, all at once, and [`shape::user`] reads the answers back.
+pub fn learn_bots(c: &Client, items: &[Value]) {
+    let mut ids: Vec<i64> = Vec::new();
+    for item in items {
+        let author = item.at("author");
+        let id = author.i("id");
+        if id > 0 && !author.at("bot").is_boolean() && !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    parallel(&ids, |id| {
+        let _ = c.memo.get_or(&format!("bot:{id}"), DAY, || {
+            Ok(json!(get(c, &format!("/users/{id}"))?.b("bot")))
+        });
+    });
 }
 
 /// Avatars for commit emails, which GitLab can look up but not attach.

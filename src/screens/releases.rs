@@ -1,7 +1,7 @@
 //! Releases: the list, one release with its notes and assets, and the
 //! form that drafts, publishes or edits one.
 
-use super::common::reactions_bar;
+use super::common::{reactions_bar, shown_name};
 use crate::form::{Field, FormSpec};
 use crate::hub::{Act, Hub, RepoTab, Req, Route};
 use crate::json::{self, Json as _};
@@ -282,7 +282,7 @@ impl Hub {
             .child(
                 widgets::row()
                     .child(avatar)
-                    .child(widgets::h3(r.s("author.login")))
+                    .child(widgets::h3(shown_name(r.at("author"))))
                     .child(widgets::dim(format!(
                         "released this {}",
                         time::ago(&r.s("published_at"))
