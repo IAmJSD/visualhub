@@ -81,7 +81,9 @@ pub fn selected_text() -> Option<String> {
                 out.push('\n');
             }
         }
-        Some(out)
+        // The thin spaces that pad inline code in Markdown aren't the
+        // text's own.
+        Some(out.replace('\u{2009}', ""))
     })
 }
 
