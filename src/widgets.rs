@@ -205,8 +205,10 @@ pub fn page() -> Div {
         .flex()
         .flex_col()
         .gap_4()
-        .w_full()
-        .max_w(px(1180.0))
+        // Not w_full + max_w: with that, children are measured against the
+        // unclamped width, so a wrapping tab strip reserves too few rows.
+        .w(px(1180.0))
+        .max_w_full()
         .mx_auto()
         .px_6()
         .py_5()
