@@ -950,6 +950,7 @@ impl Hub {
             .min_w_0()
             .child(
                 widgets::row()
+                    .flex_wrap()
                     .child(picker)
                     .child(widgets::ibtn(
                         "branches-count",
