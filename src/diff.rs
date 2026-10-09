@@ -108,6 +108,9 @@ pub struct ReviewTarget {
     pub repo: String,
     pub number: u64,
     pub commit: String,
+    /// Lines take comments. Off where the forge can only place them on
+    /// the whole pull request's diff, not one commit's.
+    pub comments: bool,
 }
 
 fn colors(kind: Kind) -> (Option<u32>, Option<u32>) {
@@ -566,6 +569,8 @@ impl Hub {
             drag.is_some_and(|(a, b)| a.min(b) <= i && i <= a.max(b))
                 || commenting.is_some_and(|(a, b)| a <= i && i <= b)
         };
+        // From here on, the target only if its lines take comments.
+        let review = review.filter(|t| t.comments);
         // On a touch screen a drag scrolls, so lines only take taps there.
         let draggable = review.is_some() && !crate::ui::touch();
         let mut body = div()

@@ -5,13 +5,13 @@
 use super::common::{post_comment, side_section, CommentActs};
 use crate::diff::ReviewTarget;
 use crate::form::{Field, FormSpec};
-use crate::hub::{Act, Hub, MenuEntry, PullTab, RepoTab, Req, Route};
+use crate::hub::{on, Act, Hub, Load, MenuEntry, PullTab, RepoTab, Req, Route};
 use crate::json::{first_line, Json as _};
 use crate::picker::{PickItem, Picker};
 use crate::ready;
 use crate::resource::{Fetched, ListSpec, Row};
 use crate::time;
-use crate::ui::{icon, palette};
+use crate::ui::{icon, palette, Button, IconButton};
 use crate::widgets::{self, rgb, TabItem};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -1315,11 +1315,126 @@ impl Hub {
     }
 
     fn pull_commits(&mut self, repo: &str, number: u64, cx: &mut Context<Self>) -> AnyElement {
+        // Files changed, showing one commit's changes.
+        let review = move |repo: &str, sha: String| {
+            let key = format!("pr.commit:{repo}#{number}");
+            let route = Route::Pull {
+                repo: repo.to_string(),
+                number,
+                tab: PullTab::Files,
+            };
+            Act::run(move |hub, _, cx| {
+                hub.choices.insert(key.clone(), sha.clone());
+                hub.go(route.clone(), cx);
+            })
+        };
         let repo_s = repo.to_string();
         let spec = ListSpec::new(format!("/repos/{repo}/pulls/{number}/commits"), move |c| {
-            commit_row(&repo_s, c)
+            commit_row(&repo_s, c).action("Review its changes", review(&repo_s, c.s("sha")))
         });
-        self.list(&spec, cx)
+        let list = self.list(&spec, cx);
+        let first = self
+            .pr_commits(repo, number, cx)
+            .0
+            .first()
+            .map(|c| c.s("sha"));
+        widgets::col()
+            .gap_3()
+            .child(
+                widgets::row()
+                    .child(widgets::dim(
+                        "Step through the changes one commit at a time, rather than all at once.",
+                    ))
+                    .child(widgets::spacer())
+                    .child(
+                        widgets::btn(
+                            "review-by-commit",
+                            "Review commit by commit",
+                            first
+                                .clone()
+                                .map(|sha| review(repo, sha))
+                                .unwrap_or(Act::None),
+                        )
+                        .disabled(first.is_none()),
+                    ),
+            )
+            .child(list)
+            .into_any_element()
+    }
+
+    /// A pull request's commits, oldest first, as far as they've loaded;
+    /// whether a page is loading; and, when there's a further page, the
+    /// list whose page to turn for it. GitHub lists the oldest first, so
+    /// pages load as they're wanted. GitLab and Bitbucket list the newest
+    /// first, so every page loads before any shows.
+    fn pr_commits(
+        &mut self,
+        repo: &str,
+        number: u64,
+        cx: &mut Context<Self>,
+    ) -> (Vec<Value>, bool, Option<String>) {
+        // The Commits tab's own list, so the two share their pages.
+        let spec = ListSpec::new(format!("/repos/{repo}/pulls/{number}/commits"), |_| {
+            Row::new("")
+        });
+        let github = crate::forge::is_github();
+        loop {
+            match self.fetch_list(&spec, cx) {
+                Fetched::Items {
+                    more: true,
+                    loading: false,
+                    ..
+                } if !github => {
+                    let next = self.page(&spec.id) + 1;
+                    self.pages.insert(spec.id.clone(), next);
+                }
+                Fetched::Items { loading: true, .. } if !github => return (Vec::new(), true, None),
+                Fetched::Items {
+                    mut items,
+                    loading,
+                    more,
+                } => {
+                    if !github {
+                        items.reverse();
+                    }
+                    return (items, loading, more.then(|| spec.id.clone()));
+                }
+                Fetched::Failed(_) => return (Vec::new(), false, None),
+            }
+        }
+    }
+
+    /// The Files tab's commit picker: all commits, or any one, growing as
+    /// it scrolls.
+    fn commit_picker(
+        &mut self,
+        repo: &str,
+        number: u64,
+        key: &str,
+        n: i64,
+        cx: &mut Context<Self>,
+    ) -> Picker {
+        let (commits, loading, more) = self.pr_commits(repo, number, cx);
+        let sha = self.choice(key, "");
+        let choose = |sha: String| Act::choose(key.to_string(), sha);
+        let mut picker = Picker::new("Show changes from", "Filter commits…", false).item(
+            PickItem::new("All commits", sha.is_empty(), choose(String::new()))
+                .detail(format!("{n} commits, as one diff")),
+        );
+        for (i, c) in commits.iter().enumerate() {
+            let short: String = c.s("sha").chars().take(7).collect();
+            picker = picker.item(
+                PickItem::new(
+                    first_line(&c.s("commit.message")),
+                    c.s("sha") == sha,
+                    choose(c.s("sha")),
+                )
+                .detail(format!("{} of {n} · {short}", i + 1)),
+            );
+        }
+        picker.loading = loading;
+        picker.more = more;
+        picker
     }
 
     fn pull_files(
@@ -1329,9 +1444,26 @@ impl Hub {
         pr: &Value,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let spec = ListSpec::new(format!("/repos/{repo}/pulls/{number}/files"), |_| {
-            Row::new("")
-        });
+        // The whole pull request's changes, or one commit's: "" or its SHA.
+        let commit_key = format!("pr.commit:{repo}#{number}");
+        let sha = self.choice(&commit_key, "");
+        let (mut commits, _, more) = self.pr_commits(repo, number, cx);
+        let mut at = commits.iter().position(|c| c.s("sha") == sha);
+        // Page on until the chosen commit has loaded, and the one after it,
+        // so the next is a click away.
+        if let Some(id) = more.filter(|_| !sha.is_empty()) {
+            if at.is_none_or(|i| i + 1 == commits.len()) {
+                let next = self.page(&id) + 1;
+                self.pages.insert(id, next);
+                commits = self.pr_commits(repo, number, cx).0;
+                at = commits.iter().position(|c| c.s("sha") == sha);
+            }
+        }
+        let total = pr.i("commits").max(commits.len() as i64);
+        let picker = {
+            let (repo, key) = (repo.to_string(), commit_key.clone());
+            Picker::live(move |hub, cx| hub.commit_picker(&repo, number, &key, total, cx))
+        };
         let comments = self
             .fetch(
                 &format!("/repos/{repo}/pulls/{number}/comments?per_page=100"),
@@ -1340,34 +1472,74 @@ impl Hub {
             .ready()
             .map(|v| v.list("").to_vec())
             .unwrap_or_default();
+        // On one commit, the comments left on its own diff. Only GitHub's
+        // say which commit they were left on, or can be left on one.
+        let comments = if sha.is_empty() {
+            comments
+        } else {
+            commit_comments(&comments, &sha)
+        };
         let target = ReviewTarget {
             repo: repo.to_string(),
             number,
-            commit: pr.s("head.sha"),
+            commit: if sha.is_empty() {
+                pr.s("head.sha")
+            } else {
+                sha.clone()
+            },
+            comments: sha.is_empty() || crate::forge::is_github(),
+        };
+        let hint = if target.comments {
+            "Click a line to leave a review comment on it, or shift-click two lines to comment on the lines between."
+        } else {
+            "Comments go on the whole diff here: pick All commits to leave one."
         };
         let header = widgets::row()
-            .child(widgets::dim(
-                "Click a line to leave a review comment on it, or shift-click two lines to comment on the lines between.",
+            .child(commit_bar(
+                repo,
+                &commit_key,
+                &commits,
+                at,
+                !sha.is_empty(),
+                total,
+                picker,
             ))
-            .child(widgets::spacer())
+            .child(div().flex_1().min_w_0().child(widgets::dim(hint)))
             .child(widgets::primary(
                 "review-top",
                 "Review changes",
                 review_form(repo, number),
             ));
-        // Every page, without asking: the tree needs the whole list.
-        let (files, loading) = loop {
-            match self.fetch_list(&spec, cx) {
-                Fetched::Items {
-                    more: true,
-                    loading: false,
-                    ..
-                } => {
-                    let next = self.page(&spec.id) + 1;
-                    self.pages.insert(spec.id.clone(), next);
+        let (files, loading) = if sha.is_empty() {
+            let spec = ListSpec::new(format!("/repos/{repo}/pulls/{number}/files"), |_| {
+                Row::new("")
+            });
+            // Every page, without asking: the tree needs the whole list.
+            loop {
+                match self.fetch_list(&spec, cx) {
+                    Fetched::Items {
+                        more: true,
+                        loading: false,
+                        ..
+                    } => {
+                        let next = self.page(&spec.id) + 1;
+                        self.pages.insert(spec.id.clone(), next);
+                    }
+                    Fetched::Items { items, loading, .. } => break (items, loading),
+                    Fetched::Failed(error) => {
+                        return widgets::col()
+                            .gap_3()
+                            .child(header)
+                            .child(widgets::error_box(&error))
+                            .into_any_element()
+                    }
                 }
-                Fetched::Items { items, loading, .. } => break (items, loading),
-                Fetched::Failed(error) => {
+            }
+        } else {
+            match self.fetch(&format!("/repos/{repo}/commits/{sha}"), cx) {
+                Load::Ready(c) => (c.list("files").to_vec(), false),
+                Load::Loading => (Vec::new(), true),
+                Load::Failed(error) => {
                     return widgets::col()
                         .gap_3()
                         .child(header)
@@ -1381,7 +1553,11 @@ impl Hub {
                 widgets::loading()
             } else {
                 widgets::card()
-                    .child(widgets::empty("No files changed."))
+                    .child(widgets::empty(if sha.is_empty() {
+                        "No files changed."
+                    } else {
+                        "This commit changes no files."
+                    }))
                     .into_any_element()
             };
             return widgets::col()
@@ -1547,7 +1723,11 @@ impl Hub {
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("{} files", pr.i("changed_files"))),
+                            .child(if sha.is_empty() {
+                                format!("{} files", pr.i("changed_files"))
+                            } else {
+                                format!("{} files", files.len())
+                            }),
                     )
                     .child(widgets::spacer())
                     .child(widgets::faint(format!(
@@ -1591,8 +1771,9 @@ impl Hub {
                 "Next file",
                 order.get(position + 1).map(|&i| &files[i]),
             ));
+        let short: String = sha.chars().take(12).collect();
         let diff = self.diff_file(
-            &format!("prf{number}-{selected}"),
+            &format!("prf{number}@{short}-{selected}"),
             file,
             Some(&target),
             &comments_on(&name),
@@ -1600,7 +1781,7 @@ impl Hub {
         );
 
         // A fresh handle per file, so each starts at its top.
-        let diff_scroll = self.scroller(&format!("pr-diff:{name}"));
+        let diff_scroll = self.scroller(&format!("pr-diff:{short}:{name}"));
         widgets::col()
             .gap_3()
             .flex_1()
@@ -1721,6 +1902,106 @@ impl Hub {
             .child(files)
             .into_any_element()
     }
+}
+
+/// The Files tab's choice of what to show: every commit's changes, or
+/// one commit's, with buttons to step through them in order.
+fn commit_bar(
+    repo: &str,
+    key: &str,
+    commits: &[Value],
+    at: Option<usize>,
+    one: bool,
+    n: i64,
+    picker: Act,
+) -> AnyElement {
+    let p = palette();
+    let choose = |sha: String| Act::choose(key.to_string(), sha);
+    let short = |c: &Value| c.s("sha").chars().take(7).collect::<String>();
+    let label = match at {
+        Some(i) => format!("Commit {} of {n}", i + 1),
+        None if one => "One commit".to_string(),
+        None => "All commits".to_string(),
+    };
+    let step =
+        |id: &'static str, icon_name: &'static str, tip: &'static str, to: Option<&Value>| {
+            IconButton::new(id, icon_name)
+                .size(28.0)
+                .icon_size(14.0)
+                .color(p.text)
+                .tooltip(tip, None)
+                .disabled(to.is_none())
+                .on_click(on(to.map(|c| choose(c.s("sha"))).unwrap_or(Act::None)))
+        };
+    // From all commits, "next" starts at the first.
+    let (prev, next) = match at {
+        Some(i) => (
+            i.checked_sub(1).and_then(|i| commits.get(i)),
+            commits.get(i + 1),
+        ),
+        None => (None, if one { None } else { commits.first() }),
+    };
+    let mut bar = widgets::row()
+        .gap_1()
+        .flex_none()
+        .child(widgets::dropdown_btn(
+            "pr-commit",
+            Some(icon("commit", 14.0, p.text_dim).into_any_element()),
+            label,
+            picker,
+        ))
+        .child(step(
+            "pr-commit-prev",
+            "chevron-left",
+            "Previous commit",
+            prev,
+        ))
+        .child(step("pr-commit-next", "chevron-right", "Next commit", next));
+    if let Some(c) = at.map(|i| &commits[i]) {
+        let headline = first_line(&c.s("commit.message"));
+        bar = bar.child(
+            Button::new("pr-commit-open", "")
+                .h(px(28.0))
+                .px_2()
+                .gap_2()
+                .max_w(px(360.0))
+                .tooltip(headline.clone(), Some("Open this commit".into()))
+                .child(
+                    div()
+                        .font_family(widgets::MONO)
+                        .text_size(px(12.0))
+                        .child(short(c)),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .text_ellipsis()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .child(headline),
+                )
+                .on_click(on(Act::Go(Route::Commit {
+                    repo: repo.to_string(),
+                    sha: c.s("sha"),
+                }))),
+        );
+    }
+    bar.into_any_element()
+}
+
+/// The review comments left on commit `sha`'s own diff, placed by the
+/// lines they were left on rather than where those lines are now.
+fn commit_comments(comments: &[Value], sha: &str) -> Vec<Value> {
+    comments
+        .iter()
+        .filter(|c| c.s("original_commit_id") == sha && c.has("original_line"))
+        .map(|c| {
+            let mut c = c.clone();
+            c["line"] = c["original_line"].clone();
+            c["start_line"] = c["original_start_line"].clone();
+            c
+        })
+        .collect()
 }
 
 /// A commit as a list row.
@@ -2020,8 +2301,25 @@ fn tree_order(tree: &FileTree) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::Checks;
+    use super::{commit_comments, Checks};
+    use crate::json::Json as _;
     use serde_json::json;
+
+    #[test]
+    fn commit_comments_sit_where_they_were_left() {
+        let comments = [
+            json!({ "id": 1, "original_commit_id": "aaa", "original_line": 4, "original_start_line": 2, "line": 9 }),
+            json!({ "id": 2, "original_commit_id": "bbb", "original_line": 7, "line": 7 }),
+            json!({ "id": 3, "original_commit_id": "aaa", "original_line": null, "line": null }),
+        ];
+        let on_a = commit_comments(&comments, "aaa");
+        assert_eq!(on_a.len(), 1);
+        assert_eq!(
+            (on_a[0].i("id"), on_a[0].i("line"), on_a[0].i("start_line")),
+            (1, 4, 2)
+        );
+        assert!(commit_comments(&comments, "ccc").is_empty());
+    }
 
     #[test]
     fn checks_count_what_passed() {
