@@ -149,7 +149,7 @@ fn pull_checks(c: &Client, repo: &str, query: &str) -> Result<Value> {
     let found = parallel(&numbers, |(_, n)| {
         let path = format!("{}/merge_requests/{n}", proj(repo));
         let Ok(mr) = get(c, &path) else {
-            return (Value::Null, Value::Null);
+            return (Value::Null, Value::Null, String::new());
         };
         let approvals = if query.contains("reviewDecision") {
             get(c, &format!("{path}/approvals")).unwrap_or(Value::Null)
@@ -159,13 +159,14 @@ fn pull_checks(c: &Client, repo: &str, query: &str) -> Result<Value> {
         (
             rollup(c, repo, mr.at("head_pipeline")),
             review_decision(&mr, &approvals),
+            mr.s("sha"),
         )
     });
     let mut repository = Map::new();
-    for ((alias, _), (rollup, review)) in numbers.iter().zip(found) {
+    for ((alias, _), (rollup, review, sha)) in numbers.iter().zip(found) {
         repository.insert(
             alias.clone(),
-            json!({ "reviewDecision": review, "commits": { "nodes": [{ "commit": { "statusCheckRollup": rollup } }] } }),
+            json!({ "reviewDecision": review, "commits": { "nodes": [{ "commit": { "oid": sha, "statusCheckRollup": rollup } }] } }),
         );
     }
     Ok(json!({ "repository": repository }))

@@ -179,6 +179,10 @@ pub struct Checks {
     pub state: String,
     pub passed: i64,
     pub total: i64,
+    /// The repository and commit they ran on, when known, so the mark
+    /// can list them.
+    pub repo: String,
+    pub sha: String,
 }
 
 impl Checks {
@@ -199,7 +203,16 @@ impl Checks {
             passed: count("checkRunCountsByState", &["SUCCESS", "NEUTRAL", "SKIPPED"])
                 + count("statusContextCountsByState", &["SUCCESS"]),
             total: rollup.i("contexts.checkRunCount") + rollup.i("contexts.statusContextCount"),
+            ..Checks::default()
         }
+    }
+
+    /// The checks of commit `sha` in `repo`: a mark that lists them when
+    /// clicked.
+    pub fn on(mut self, repo: impl Into<String>, sha: impl Into<String>) -> Self {
+        self.repo = repo.into();
+        self.sha = sha.into();
+        self
     }
 }
 
@@ -219,7 +232,8 @@ pub fn ci_mark(state: &str) -> Option<(&'static str, u32, &'static str)> {
 }
 
 /// [`ci_mark`] drawn, with what it means on hover, and with `counts` how
-/// many checks passed (`5 / 5`).
+/// many checks passed (`5 / 5`). When the commit is known, a click lists
+/// its checks, as github.com does.
 pub fn ci_mark_el(
     id: impl Into<gpui::ElementId>,
     checks: &Checks,
@@ -231,6 +245,21 @@ pub fn ci_mark_el(
     } else {
         tip.to_string()
     };
+    let open = (!checks.repo.is_empty() && !checks.sha.is_empty()).then(|| {
+        let (repo, sha, state) = (
+            checks.repo.clone(),
+            checks.sha.clone(),
+            checks.state.clone(),
+        );
+        Act::run(move |hub, _, cx| {
+            hub.modal = Some(crate::hub::Modal::Checks {
+                repo: repo.clone(),
+                sha: sha.clone(),
+                state: state.clone(),
+            });
+            cx.notify();
+        })
+    });
     Some(
         div()
             .id(id.into())
@@ -247,8 +276,85 @@ pub fn ci_mark_el(
                     checks.passed, checks.total
                 )))
             })
+            .when_some(open, |d, act| {
+                // The press stops here, so a row the mark sits in
+                // doesn't open too.
+                d.cursor_pointer()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(crate::hub::on(act))
+            })
             .into_any_element(),
     )
+}
+
+/// How a commit's check runs went: the mark, its colour, a title and a
+/// count of each kind, as github.com heads them.
+fn check_summary(runs: &[Value]) -> (&'static str, u32, String, String) {
+    let ok = runs
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.s("conclusion").as_str(),
+                "success" | "skipped" | "neutral"
+            )
+        })
+        .count();
+    let bad = runs
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.s("conclusion").as_str(),
+                "failure" | "timed_out" | "cancelled" | "action_required"
+            )
+        })
+        .count();
+    let pending = runs.len() - ok - bad;
+    if runs.is_empty() {
+        (
+            "dot",
+            widgets::gray(),
+            "No checks reported".to_string(),
+            "This commit has no status checks.".to_string(),
+        )
+    } else if bad > 0 {
+        (
+            "close",
+            widgets::red(),
+            "Some checks were not successful".to_string(),
+            format!("{bad} failing, {pending} pending, {ok} successful checks"),
+        )
+    } else if pending > 0 {
+        (
+            "clock",
+            widgets::yellow(),
+            "Some checks haven't completed yet".to_string(),
+            format!("{pending} pending, {ok} successful checks"),
+        )
+    } else {
+        (
+            "check",
+            widgets::green(),
+            "All checks have passed".to_string(),
+            format!("{ok} successful check{}", if ok == 1 { "" } else { "s" }),
+        )
+    }
+}
+
+/// A commit status (the older API some CI posts to) as a check run, so
+/// it lists with them.
+fn status_as_run(s: &Value) -> Value {
+    let (status, conclusion) = match s.s("state").as_str() {
+        "success" => ("completed", "success"),
+        "failure" | "error" => ("completed", "failure"),
+        _ => ("pending", ""),
+    };
+    json!({
+        "name": s.s("context"),
+        "status": status,
+        "conclusion": conclusion,
+        "details_url": s.s("target_url"),
+        "app": { "name": s.s("description") },
+    })
 }
 
 impl Hub {
@@ -576,60 +682,20 @@ impl Hub {
             &format!("/repos/{repo}/commits/{sha}/check-runs?per_page=100"),
             cx,
         );
-        let (ok, bad, pending) = checks
+        let runs: Vec<Value> = checks
             .ready()
-            .map(|v| {
-                let runs = v.list("check_runs");
-                let ok = runs
-                    .iter()
-                    .filter(|r| {
-                        matches!(
-                            r.s("conclusion").as_str(),
-                            "success" | "skipped" | "neutral"
-                        )
-                    })
-                    .count();
-                let bad = runs
-                    .iter()
-                    .filter(|r| {
-                        matches!(
-                            r.s("conclusion").as_str(),
-                            "failure" | "timed_out" | "cancelled" | "action_required"
-                        )
-                    })
-                    .count();
-                (ok, bad, runs.len() - ok - bad)
+            .map(|v| v.list("check_runs").to_vec())
+            .unwrap_or_default();
+        let bad = runs
+            .iter()
+            .filter(|r| {
+                matches!(
+                    r.s("conclusion").as_str(),
+                    "failure" | "timed_out" | "cancelled" | "action_required"
+                )
             })
-            .unwrap_or((0, 0, 0));
-        let (check_icon, check_color, check_title, check_sub) = if ok + bad + pending == 0 {
-            (
-                "dot",
-                widgets::gray(),
-                "No checks reported".to_string(),
-                "This commit has no status checks.".to_string(),
-            )
-        } else if bad > 0 {
-            (
-                "close",
-                widgets::red(),
-                "Some checks were not successful".to_string(),
-                format!("{bad} failing, {pending} pending, {ok} successful checks"),
-            )
-        } else if pending > 0 {
-            (
-                "clock",
-                widgets::yellow(),
-                "Some checks haven't completed yet".to_string(),
-                format!("{pending} pending, {ok} successful checks"),
-            )
-        } else {
-            (
-                "check",
-                widgets::green(),
-                "All checks have passed".to_string(),
-                format!("{ok} successful check{}", if ok == 1 { "" } else { "s" }),
-            )
-        };
+            .count();
+        let (check_icon, check_color, check_title, check_sub) = check_summary(&runs);
 
         let state = pr.s("mergeable_state");
         // GitLab says why it can't merge in its own words.
@@ -1012,10 +1078,6 @@ impl Hub {
             }
             cx.notify();
         });
-        let runs: Vec<Value> = checks
-            .ready()
-            .map(|v| v.list("check_runs").to_vec())
-            .unwrap_or_default();
         card = card
             .border_color(rgb(if mergeable && bad == 0 {
                 widgets::green()
@@ -1038,83 +1100,12 @@ impl Hub {
                 )),
             ));
         if expanded {
-            // Failing first, then running, then the rest, by name.
-            let rank = |c: &Value| match (c.s("status").as_str(), c.s("conclusion").as_str()) {
-                (
-                    _,
-                    "failure" | "timed_out" | "cancelled" | "action_required" | "startup_failure",
-                ) => 0,
-                ("completed", _) => 2,
-                _ => 1,
-            };
-            let mut runs = runs;
-            runs.sort_by(|a, b| {
-                rank(a)
-                    .cmp(&rank(b))
-                    .then_with(|| a.s("name").cmp(&b.s("name")))
-            });
-            let mut list = div()
-                .id("merge-check-list")
-                .flex()
-                .flex_col()
+            let list = self
+                .check_list("merge-check", repo, runs, false)
                 .max_h(px(360.0))
-                .overflow_y_scroll()
-                .track_scroll(&self.scroller("merge-check-list"))
                 .bg(rgb(p.deep_bg))
                 .border_b_1()
                 .border_color(rgb(p.divider));
-            // One line each: mark, name, where it ran and how long, and
-            // the links.
-            for (i, run) in runs.iter().enumerate() {
-                let (mark, color) = status_icon(&run.s("status"), &run.s("conclusion"));
-                let took = time::span(&run.s("started_at"), &run.s("completed_at"));
-                let summary = match (run.s("conclusion").as_str(), took.is_empty()) {
-                    ("", _) => run.s("status").replace('_', " "),
-                    (c, true) => c.to_string(),
-                    (c, false) => format!("{c} in {took}"),
-                };
-                let row = check_row(repo, run);
-                let rerun = row.actions.into_iter().find(|a| a.label == "Re-run");
-                list = list.child(
-                    div()
-                        .id(("merge-check", i))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .h(px(32.0))
-                        .px_4()
-                        .text_size(px(12.0))
-                        .hover(|s| s.bg(rgb(p.hover)))
-                        .child(icon(mark, 14.0, color))
-                        .child(
-                            div()
-                                .flex_none()
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .child(run.s("name")),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_color(rgb(p.text_dim))
-                                .text_ellipsis()
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .child(format!("{}  ·  {summary}", run.s("app.name"))),
-                        )
-                        .when_some(rerun, |d, a| {
-                            d.child(
-                                crate::ui::Link::new(("merge-check-rerun", i), "Re-run")
-                                    .on_click(crate::hub::on(a.act)),
-                            )
-                        })
-                        .child(
-                            crate::ui::Link::new(("merge-check-details", i), "Details")
-                                .on_click(crate::hub::on(row.open)),
-                        ),
-                );
-            }
             card = card.child(list);
         }
         card = card.child(status(
@@ -1808,6 +1799,188 @@ impl Hub {
             .into_any_element()
     }
 
+    /// Check runs one to a line, failing first, then running, then the
+    /// rest, by name: mark, name, where it ran and how long, and the
+    /// links. In a dialog (`in_modal`), following a link closes it.
+    fn check_list(
+        &mut self,
+        id: &str,
+        repo: &str,
+        mut runs: Vec<Value>,
+        in_modal: bool,
+    ) -> gpui::Stateful<gpui::Div> {
+        let p = palette();
+        let rank = |c: &Value| match (c.s("status").as_str(), c.s("conclusion").as_str()) {
+            (_, "failure" | "timed_out" | "cancelled" | "action_required" | "startup_failure") => 0,
+            ("completed", _) => 2,
+            _ => 1,
+        };
+        runs.sort_by(|a, b| {
+            rank(a)
+                .cmp(&rank(b))
+                .then_with(|| a.s("name").cmp(&b.s("name")))
+        });
+        let list_id = format!("{id}-list");
+        let mut list = div()
+            .id(gpui::ElementId::Name(list_id.clone().into()))
+            .flex()
+            .flex_col()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroller(&list_id));
+        let leave = |act: Act| {
+            if !in_modal {
+                return act;
+            }
+            Act::run(move |hub, window, cx| {
+                hub.close_modal(cx);
+                hub.perform(act.clone(), window, cx);
+            })
+        };
+        for (i, run) in runs.iter().enumerate() {
+            let (mark, color) = status_icon(&run.s("status"), &run.s("conclusion"));
+            let took = time::span(&run.s("started_at"), &run.s("completed_at"));
+            let summary = match (run.s("conclusion").as_str(), took.is_empty()) {
+                ("", _) => run.s("status").replace('_', " "),
+                (c, true) => c.to_string(),
+                (c, false) => format!("{c} in {took}"),
+            };
+            let app = run.s("app.name");
+            let row = check_row(repo, run);
+            let rerun = row.actions.into_iter().find(|a| a.label == "Re-run");
+            let name = |part: &str| gpui::ElementId::Name(format!("{id}-{part}-{i}").into());
+            list = list.child(
+                div()
+                    .id(name("row"))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .h(px(32.0))
+                    .px_4()
+                    .text_size(px(12.0))
+                    .hover(|s| s.bg(rgb(p.hover)))
+                    .child(icon(mark, 14.0, color))
+                    .child(
+                        div()
+                            .flex_none()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(run.s("name")),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_color(rgb(p.text_dim))
+                            .text_ellipsis()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(if app.is_empty() {
+                                summary
+                            } else {
+                                format!("{app}  ·  {summary}")
+                            }),
+                    )
+                    .when_some(rerun, |d, a| {
+                        d.child(
+                            crate::ui::Link::new(name("rerun"), "Re-run")
+                                .on_click(crate::hub::on(a.act)),
+                        )
+                    })
+                    .when(!matches!(row.open, Act::Url(ref u) if u.is_empty()), |d| {
+                        d.child(
+                            crate::ui::Link::new(name("details"), "Details")
+                                .on_click(crate::hub::on(leave(row.open))),
+                        )
+                    }),
+            );
+        }
+        list
+    }
+
+    /// What the dialog a commit's checks mark opens says: how they went
+    /// (its title), and each one, as github.com shows it. `state` is the
+    /// mark's, for the title until the runs are in.
+    pub fn checks_dialog(
+        &mut self,
+        repo: &str,
+        sha: &str,
+        state: &str,
+        cx: &mut Context<Self>,
+    ) -> (String, AnyElement) {
+        let p = palette();
+        let runs_path = format!("/repos/{repo}/commits/{sha}/check-runs?per_page=100");
+        let runs = self.fetch(&runs_path, cx).ready().cloned();
+        // GitHub counts commit statuses among the checks too; elsewhere
+        // they are the same jobs again.
+        let statuses = crate::forge::is_github()
+            .then(|| {
+                self.fetch(&format!("/repos/{repo}/commits/{sha}/status"), cx)
+                    .ready()
+                    .cloned()
+            })
+            .flatten();
+        let mut all: Vec<Value> = runs
+            .as_ref()
+            .map(|v| v.list("check_runs").to_vec())
+            .unwrap_or_default();
+        if let Some(statuses) = &statuses {
+            all.extend(statuses.list("statuses").iter().map(status_as_run));
+        }
+        let loaded = runs.is_some() && (statuses.is_some() || !crate::forge::is_github());
+        let (title, sub) = if loaded {
+            let (_, _, title, sub) = check_summary(&all);
+            (title, sub)
+        } else {
+            (
+                ci_mark(state)
+                    .map(|(_, _, t)| t.to_string())
+                    .unwrap_or_else(|| "Checks".to_string()),
+                String::new(),
+            )
+        };
+        // Keep running checks moving while they show.
+        if all.iter().any(|r| r.s("status") != "completed") {
+            self.poll(
+                &[
+                    format!("/repos/{repo}/commits/{sha}/check-runs"),
+                    format!("/repos/{repo}/commits/{sha}/status"),
+                ],
+                10,
+                cx,
+            );
+        }
+        let body = if !loaded {
+            div()
+                .p_4()
+                .flex()
+                .justify_center()
+                .child(crate::ui::Spinner::new("checks-loading").size(16.0))
+                .into_any_element()
+        } else {
+            self.check_list("checks-dialog", repo, all, true)
+                .max_h(px(420.0))
+                .border_t_1()
+                .border_b_1()
+                .border_color(rgb(p.divider))
+                .bg(rgb(p.deep_bg))
+                .into_any_element()
+        };
+        let short: String = sha.chars().take(7).collect();
+        let head = widgets::dim(if sub.is_empty() {
+            format!("On {short}")
+        } else {
+            format!("{sub} on {short}")
+        });
+        (
+            title,
+            widgets::col()
+                .gap_3()
+                .child(head)
+                .child(body)
+                .into_any_element(),
+        )
+    }
+
     pub fn pull_checks(&mut self, repo: &str, sha: &str, cx: &mut Context<Self>) -> AnyElement {
         let repo_s = repo.to_string();
         let runs = ListSpec::new(
@@ -2058,7 +2231,7 @@ impl Hub {
         let head = self.commit_head(repo, sha, cx);
         let checks = head
             .as_ref()
-            .map(|h| Checks::from_rollup(h.at("statusCheckRollup")))
+            .map(|h| Checks::from_rollup(h.at("statusCheckRollup")).on(repo, sha))
             .unwrap_or_default();
         let authors = match head {
             Some(head) => self.commit_authors("commit", head.list("authors.nodes"), cx),

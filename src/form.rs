@@ -709,6 +709,25 @@ impl Hub {
                 let update = update.clone();
                 Some(self.update_dialog(&update, cx))
             }
+            Modal::Checks { repo, sha, state } => {
+                let (repo, sha, state) = (repo.clone(), sha.clone(), state.clone());
+                let (title, body) = self.checks_dialog(&repo, &sha, &state, cx);
+                Some(
+                    self.dismissable(title, cx)
+                        .width(640.0)
+                        .text_size(px(13.0))
+                        .p_4()
+                        .gap_3()
+                        .child(body)
+                        .action(div().flex_1())
+                        .action(
+                            Button::new("checks-close", "Close")
+                                .h(px(28.0))
+                                .on_click(cx.listener(|hub, _, _, cx| hub.close_modal(cx))),
+                        )
+                        .into_any_element(),
+                )
+            }
             Modal::Confirm {
                 title,
                 message,

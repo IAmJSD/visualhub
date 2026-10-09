@@ -927,7 +927,7 @@ impl Hub {
                 )
                 .children(super::pulls::ci_mark_el(
                     "latest-checks",
-                    &super::pulls::Checks::from_rollup(c.at("statusCheckRollup")),
+                    &super::pulls::Checks::from_rollup(c.at("statusCheckRollup")).on(repo, &sha),
                     false,
                 ))
                 .child(

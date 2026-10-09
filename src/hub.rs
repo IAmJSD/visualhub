@@ -668,6 +668,13 @@ pub enum Modal {
     },
     /// A newer release, offered by the update check.
     Update { update: crate::update::Update },
+    /// The checks on commit `sha`, opened from its mark; `state` is how
+    /// the mark said they went.
+    Checks {
+        repo: String,
+        sha: String,
+        state: String,
+    },
 }
 
 pub struct MenuState {
@@ -1696,6 +1703,7 @@ impl Hub {
             Some(Modal::Form { busy: true, .. })
             | Some(Modal::Confirm { busy: true, .. })
             | Some(Modal::Update { .. })
+            | Some(Modal::Checks { .. })
             | None => return,
             Some(Modal::Form { spec, .. }) => Some(spec.clone()),
             Some(Modal::Confirm { .. }) => None,

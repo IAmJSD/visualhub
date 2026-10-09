@@ -160,14 +160,17 @@ fn pull_checks(c: &Client, repo: &str, query: &str) -> Result<Value> {
     let numbers = numbered(query, ": pullRequest(number: ");
     let found = parallel(&numbers, |(_, n)| {
         get(c, &format!("{}/pullrequests/{n}", repo_api(repo)))
-            .map(|pr| checks(c, repo, &pr.s("source.commit.hash")))
-            .unwrap_or(Value::Null)
+            .map(|pr| {
+                let sha = pr.s("source.commit.hash");
+                (checks(c, repo, &sha), sha)
+            })
+            .unwrap_or((Value::Null, String::new()))
     });
     let mut repository = Map::new();
-    for ((alias, _), rollup) in numbers.iter().zip(found) {
+    for ((alias, _), (rollup, sha)) in numbers.iter().zip(found) {
         repository.insert(
             alias.clone(),
-            json!({ "commits": { "nodes": [{ "commit": { "statusCheckRollup": rollup } }] } }),
+            json!({ "commits": { "nodes": [{ "commit": { "oid": sha, "statusCheckRollup": rollup } }] } }),
         );
     }
     Ok(json!({ "repository": repository }))

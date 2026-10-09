@@ -435,7 +435,7 @@ impl Hub {
                 .iter()
                 .enumerate()
                 .map(|(n, number)| {
-                    format!("p{n}: pullRequest(number: {number}) {{ reviewDecision commits(last: 1) {{ nodes {{ commit {{ {ROLLUP} }} }} }} }} ")
+                    format!("p{n}: pullRequest(number: {number}) {{ reviewDecision commits(last: 1) {{ nodes {{ commit {{ oid {ROLLUP} }} }} }} }} ")
                 })
                 .collect();
             let query = format!("query($o: String!, $n: String!) {{ repository(owner: $o, name: $n) {{ {fields}}} }}");
@@ -451,7 +451,10 @@ impl Hub {
                 let head = data
                     .list(&format!("repository.p{n}.commits.nodes"))
                     .first()
-                    .map(|c| Checks::from_rollup(c.at("commit.statusCheckRollup")))
+                    .map(|c| {
+                        Checks::from_rollup(c.at("commit.statusCheckRollup"))
+                            .on(repo, c.s("commit.oid"))
+                    })
                     .unwrap_or_default();
                 self.keep_checks_live(&format!("/repos/{repo}/pulls"), &head, cx);
                 let review = data.s(&format!("repository.p{n}.reviewDecision"));
@@ -502,7 +505,8 @@ impl Hub {
                             commit.list("authors.nodes"),
                         ),
                         checks: {
-                            let checks = Checks::from_rollup(commit.at("statusCheckRollup"));
+                            let checks =
+                                Checks::from_rollup(commit.at("statusCheckRollup")).on(repo, sha);
                             self.keep_checks_live(&format!("/repos/{repo}/commits"), &checks, cx);
                             checks
                         },
