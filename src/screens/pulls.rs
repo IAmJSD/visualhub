@@ -1333,22 +1333,11 @@ impl Hub {
             commit_row(&repo_s, c).action("Review its changes", review(&repo_s, c.s("sha")))
         });
         let list = self.list(&spec, cx);
-        // The oldest commit: GitHub lists it first, GitLab and Bitbucket last.
         let first = self
-            .fetch(
-                &format!("/repos/{repo}/pulls/{number}/commits?per_page=100"),
-                cx,
-            )
-            .ready()
-            .and_then(|v| {
-                let list = v.list("");
-                if crate::forge::is_github() {
-                    list.first()
-                } else {
-                    list.last()
-                }
-                .map(|c| c.s("sha"))
-            });
+            .pr_commits(repo, number, cx)
+            .0
+            .first()
+            .map(|c| c.s("sha"));
         widgets::col()
             .gap_3()
             .child(
@@ -1373,6 +1362,81 @@ impl Hub {
             .into_any_element()
     }
 
+    /// A pull request's commits, oldest first, as far as they've loaded;
+    /// whether a page is loading; and, when there's a further page, the
+    /// list whose page to turn for it. GitHub lists the oldest first, so
+    /// pages load as they're wanted. GitLab and Bitbucket list the newest
+    /// first, so every page loads before any shows.
+    fn pr_commits(
+        &mut self,
+        repo: &str,
+        number: u64,
+        cx: &mut Context<Self>,
+    ) -> (Vec<Value>, bool, Option<String>) {
+        // The Commits tab's own list, so the two share their pages.
+        let spec = ListSpec::new(format!("/repos/{repo}/pulls/{number}/commits"), |_| {
+            Row::new("")
+        });
+        let github = crate::forge::is_github();
+        loop {
+            match self.fetch_list(&spec, cx) {
+                Fetched::Items {
+                    more: true,
+                    loading: false,
+                    ..
+                } if !github => {
+                    let next = self.page(&spec.id) + 1;
+                    self.pages.insert(spec.id.clone(), next);
+                }
+                Fetched::Items { loading: true, .. } if !github => return (Vec::new(), true, None),
+                Fetched::Items {
+                    mut items,
+                    loading,
+                    more,
+                } => {
+                    if !github {
+                        items.reverse();
+                    }
+                    return (items, loading, more.then(|| spec.id.clone()));
+                }
+                Fetched::Failed(_) => return (Vec::new(), false, None),
+            }
+        }
+    }
+
+    /// The Files tab's commit picker: all commits, or any one, growing as
+    /// it scrolls.
+    fn commit_picker(
+        &mut self,
+        repo: &str,
+        number: u64,
+        key: &str,
+        n: i64,
+        cx: &mut Context<Self>,
+    ) -> Picker {
+        let (commits, loading, more) = self.pr_commits(repo, number, cx);
+        let sha = self.choice(key, "");
+        let choose = |sha: String| Act::choose(key.to_string(), sha);
+        let mut picker = Picker::new("Show changes from", "Filter commits…", false).item(
+            PickItem::new("All commits", sha.is_empty(), choose(String::new()))
+                .detail(format!("{n} commits, as one diff")),
+        );
+        for (i, c) in commits.iter().enumerate() {
+            let short: String = c.s("sha").chars().take(7).collect();
+            picker = picker.item(
+                PickItem::new(
+                    first_line(&c.s("commit.message")),
+                    c.s("sha") == sha,
+                    choose(c.s("sha")),
+                )
+                .detail(format!("{} of {n} · {short}", i + 1)),
+            );
+        }
+        picker.loading = loading;
+        picker.more = more;
+        picker
+    }
+
     fn pull_files(
         &mut self,
         repo: &str,
@@ -1383,19 +1447,23 @@ impl Hub {
         // The whole pull request's changes, or one commit's: "" or its SHA.
         let commit_key = format!("pr.commit:{repo}#{number}");
         let sha = self.choice(&commit_key, "");
-        let mut commits = self
-            .fetch(
-                &format!("/repos/{repo}/pulls/{number}/commits?per_page=100"),
-                cx,
-            )
-            .ready()
-            .map(|v| v.list("").to_vec())
-            .unwrap_or_default();
-        // GitLab and Bitbucket list the newest first; read oldest first.
-        if !crate::forge::is_github() {
-            commits.reverse();
+        let (mut commits, _, more) = self.pr_commits(repo, number, cx);
+        let mut at = commits.iter().position(|c| c.s("sha") == sha);
+        // Page on until the chosen commit has loaded, and the one after it,
+        // so the next is a click away.
+        if let Some(id) = more.filter(|_| !sha.is_empty()) {
+            if at.is_none_or(|i| i + 1 == commits.len()) {
+                let next = self.page(&id) + 1;
+                self.pages.insert(id, next);
+                commits = self.pr_commits(repo, number, cx).0;
+                at = commits.iter().position(|c| c.s("sha") == sha);
+            }
         }
-        let at = commits.iter().position(|c| c.s("sha") == sha);
+        let total = pr.i("commits").max(commits.len() as i64);
+        let picker = {
+            let (repo, key) = (repo.to_string(), commit_key.clone());
+            Picker::live(move |hub, cx| hub.commit_picker(&repo, number, &key, total, cx))
+        };
         let comments = self
             .fetch(
                 &format!("/repos/{repo}/pulls/{number}/comments?per_page=100"),
@@ -1427,7 +1495,15 @@ impl Hub {
             "Comments go on the whole diff here: pick All commits to leave one."
         };
         let header = widgets::row()
-            .child(commit_bar(repo, &commit_key, &commits, at, !sha.is_empty()))
+            .child(commit_bar(
+                repo,
+                &commit_key,
+                &commits,
+                at,
+                !sha.is_empty(),
+                total,
+                picker,
+            ))
             .child(div().flex_1().min_w_0().child(widgets::dim(hint)))
             .child(widgets::primary(
                 "review-top",
@@ -1836,25 +1912,12 @@ fn commit_bar(
     commits: &[Value],
     at: Option<usize>,
     one: bool,
+    n: i64,
+    picker: Act,
 ) -> AnyElement {
     let p = palette();
-    let n = commits.len();
     let choose = |sha: String| Act::choose(key.to_string(), sha);
     let short = |c: &Value| c.s("sha").chars().take(7).collect::<String>();
-    let mut picker = Picker::new("Show changes from", "Filter commits…", false).item(
-        PickItem::new("All commits", !one, choose(String::new()))
-            .detail(format!("{n} commits, as one diff")),
-    );
-    for (i, c) in commits.iter().enumerate() {
-        picker = picker.item(
-            PickItem::new(
-                first_line(&c.s("commit.message")),
-                at == Some(i),
-                choose(c.s("sha")),
-            )
-            .detail(format!("{} of {n} · {}", i + 1, short(c))),
-        );
-    }
     let label = match at {
         Some(i) => format!("Commit {} of {n}", i + 1),
         None if one => "One commit".to_string(),
@@ -1885,7 +1948,7 @@ fn commit_bar(
             "pr-commit",
             Some(icon("commit", 14.0, p.text_dim).into_any_element()),
             label,
-            picker.act(),
+            picker,
         ))
         .child(step(
             "pr-commit-prev",

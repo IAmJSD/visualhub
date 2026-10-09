@@ -5,18 +5,27 @@
 //! A multi-choice picker stays open as things are ticked, the way
 //! GitHub's does, and shows the new ticks straight away while the
 //! requests land.
+//!
+//! A live picker builds its items afresh each time it draws, so a list
+//! that loads a page at a time can grow while it's open: scrolling near
+//! the bottom asks for the next page.
 
 use crate::hub::{Act, Hub};
 use crate::ui::{icon, palette};
 use crate::widgets::{self, rgb};
 use gpui::{
     anchored, deferred, div, prelude::FluentBuilder as _, px, AnyElement, Context, FontWeight,
-    InteractiveElement as _, IntoElement as _, ParentElement as _, Pixels, Point,
+    InteractiveElement as _, IntoElement as _, ParentElement as _, Pixels, Point, ScrollHandle,
     StatefulInteractiveElement as _, Styled as _, Window,
 };
 use std::rc::Rc;
 
 const FILTER: &str = "picker-filter";
+/// This close to the bottom of a live picker, the next page loads.
+const NEAR_END: f32 = 120.0;
+
+/// Builds a live picker's items from what has loaded so far.
+pub type PickerFn = Rc<dyn Fn(&mut Hub, &mut Context<Hub>) -> Picker>;
 
 pub struct PickItem {
     pub label: String,
@@ -80,6 +89,10 @@ pub struct Picker {
     pub multi: bool,
     /// Shown while the items are still loading.
     pub loading: bool,
+    /// Rebuilds the picker each time it draws.
+    pub live: Option<PickerFn>,
+    /// The paged list whose next page scrolling near the bottom loads.
+    pub more: Option<String>,
 }
 
 impl Picker {
@@ -90,7 +103,19 @@ impl Picker {
             items: Vec::new(),
             multi,
             loading: false,
+            live: None,
+            more: None,
         }
+    }
+
+    /// A picker built by `build` each time it draws, from whatever has
+    /// loaded by then.
+    pub fn live(build: impl Fn(&mut Hub, &mut Context<Hub>) -> Picker + 'static) -> Act {
+        let build: PickerFn = Rc::new(build);
+        Act::Picker(Rc::new(Picker {
+            live: Some(build),
+            ..Picker::new("", "", false)
+        }))
     }
 
     pub fn item(mut self, item: PickItem) -> Self {
@@ -108,6 +133,8 @@ pub struct PickerState {
     picker: Rc<Picker>,
     /// Ticks as they stand now, by item.
     checked: Vec<bool>,
+    /// The list's scroll, fresh for each opening.
+    scroll: ScrollHandle,
 }
 
 impl Hub {
@@ -119,6 +146,7 @@ impl Hub {
             at,
             checked: picker.items.iter().map(|i| i.checked).collect(),
             picker,
+            scroll: ScrollHandle::new(),
         });
     }
 
@@ -173,10 +201,36 @@ impl Hub {
 
     pub fn render_picker(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = palette();
-        let (at, picker, checked) = {
+        let (at, mut picker, scroll) = {
             let state = self.picker.as_ref()?;
-            (state.at, state.picker.clone(), state.checked.clone())
+            (state.at, state.picker.clone(), state.scroll.clone())
         };
+        if let Some(build) = picker.live.clone() {
+            // Scrolled near the bottom: ask for the next page first.
+            if let Some(id) = &picker.more {
+                // Not before the list's first layout, when it reads as empty.
+                let laid_out = scroll.bounds().size.height > px(0.0);
+                let end = scroll.max_offset().height - px(NEAR_END);
+                if laid_out && -scroll.offset().y >= end {
+                    let next = self.page(id) + 1;
+                    self.pages.insert(id.clone(), next);
+                }
+            }
+            let fresh = Picker {
+                live: Some(build.clone()),
+                ..build(self, cx)
+            };
+            picker = Rc::new(fresh);
+            let state = self.picker.as_mut()?;
+            // Items only ever join at the end, so the ticks so far hold.
+            let from = state.checked.len().min(picker.items.len());
+            state.checked.truncate(picker.items.len());
+            state
+                .checked
+                .extend(picker.items[from..].iter().map(|i| i.checked));
+            state.picker = picker.clone();
+        }
+        let checked = self.picker.as_ref()?.checked.clone();
         // Enter picks the first match.
         self.submits.insert(
             FILTER.into(),
@@ -195,8 +249,9 @@ impl Hub {
             .flex_col()
             .max_h(px(320.0))
             .overflow_y_scroll()
+            .track_scroll(&scroll)
             .py_1();
-        if picker.loading {
+        if picker.loading && picker.items.is_empty() {
             list = list.child(widgets::loading());
         } else if matches.is_empty() {
             list = list.child(
@@ -267,6 +322,10 @@ impl Hub {
                             }),
                     ),
             );
+        }
+
+        if picker.loading && !picker.items.is_empty() {
+            list = list.child(widgets::loading());
         }
 
         let popover = crate::ui::Popover::new("picker")
