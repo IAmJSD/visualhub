@@ -574,7 +574,7 @@ impl Hub {
                     .items_center()
                     .gap_1()
                     .text_size(px(12.0))
-                    .child(meta)
+                    .child(div().min_w_0().child(meta))
                     .child(widgets::dim("·"))
                     .child(mark)
                     .into_any_element(),
@@ -601,6 +601,7 @@ impl Hub {
             .gap_2()
             .child(
                 div()
+                    .min_w_0()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_size(px(widgets::TEXT))
                     .text_color(rgb(p.text))
