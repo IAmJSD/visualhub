@@ -382,7 +382,7 @@ fn desktop_browser(file: &str, text: &str) -> Option<Browser> {
         .filter(|arg| !(arg.len() == 2 && arg.starts_with('%')))
         .collect();
     let name = name?;
-    (!command.is_empty()).then(|| Browser {
+    (!command.is_empty()).then_some(Browser {
         name,
         family,
         launch: Launch::Command(command),
@@ -573,7 +573,7 @@ fn signed_xpi() -> anyhow::Result<PathBuf> {
     let release: serde_json::Value = serde_json::from_str(&text)?;
     let Some(asset) = release
         .list("assets")
-        .into_iter()
+        .iter()
         .find(|a| a.s("name") == SIGNED_XPI)
     else {
         bail!("release v{version} has no {SIGNED_XPI}");
