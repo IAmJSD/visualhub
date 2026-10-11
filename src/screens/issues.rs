@@ -435,20 +435,23 @@ impl Hub {
         let path = format!("/repos/{repo}/issues/{number}");
         let issue = ready!(self.fetch(&path, cx));
         if issue.has("pull_request") {
-            // An issue number that is really a pull request.
-            let route = Route::Pull {
-                repo: repo.to_string(),
-                number,
-                tab: crate::hub::PullTab::Conversation,
-            };
-            return widgets::page()
-                .child(widgets::dim("This is a pull request."))
-                .child(widgets::primary(
-                    "open-pr",
-                    "Open the pull request",
-                    Act::Go(route),
-                ))
-                .into_any_element();
+            // An issue number that is really a pull request (GitHub numbers
+            // both alike, so `#12` can be either): show it as one, in this
+            // page's place rather than as another step back.
+            if self.route
+                == (Route::Issue {
+                    repo: repo.to_string(),
+                    number,
+                })
+            {
+                self.route = Route::Pull {
+                    repo: repo.to_string(),
+                    number,
+                    tab: crate::hub::PullTab::Conversation,
+                };
+                cx.notify();
+            }
+            return self.pull(repo, number, crate::hub::PullTab::Conversation, cx);
         }
         let header = self.issue_header(repo, &issue, false, cx);
         let timeline = self.issue_timeline(repo, number, &issue, cx);
