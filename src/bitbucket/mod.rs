@@ -290,6 +290,7 @@ pub fn send(c: &Client, method: &str, path: &str, body: Option<&Value>) -> Resul
         scopes: None,
         accepted: None,
         total: None,
+        user: None,
     };
     match rest(c, method, path, body) {
         Ok(value) => Ok(reply(200, value.to_string())),

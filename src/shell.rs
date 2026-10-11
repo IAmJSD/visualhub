@@ -198,6 +198,10 @@ impl Hub {
                 ("Search", "search", Route::Search, None),
                 ("Settings", "settings", Route::Settings, None),
             ]
+            .into_iter()
+            // Data Center has no snippets.
+            .filter(|(name, ..)| *name != "Snippets" || forge::is_bitbucket_cloud())
+            .collect()
         } else if gitlab {
             vec![
                 ("Home", "home", Route::Home, None),
@@ -508,7 +512,12 @@ impl Hub {
     /// The "+" menu: what can be made from here.
     fn new_menu(&self) -> Act {
         let web = forge::web();
-        let mut entries = if forge::is_bitbucket() {
+        let mut entries = if forge::is_datacenter() {
+            vec![
+                MenuEntry::item("New repository", Act::Go(Route::NewRepo { owner: None })),
+                MenuEntry::item("New project", Act::Url(format!("{web}/projects?create"))),
+            ]
+        } else if forge::is_bitbucket() {
             vec![
                 MenuEntry::item("New repository", Act::Go(Route::NewRepo { owner: None })),
                 MenuEntry::item("New snippet", Act::Url(format!("{web}/snippets/new"))),
@@ -653,6 +662,13 @@ impl Hub {
         let bitbucket = forge::is_bitbucket();
         let elsewhere = gitlab || bitbucket;
         let content = match &route {
+            Route::Job { .. } | Route::Run { .. } if forge::is_datacenter() => self.gl_elsewhere(
+                &route,
+                "Pipelines (a Data Center's builds report their statuses on commits)",
+            ),
+            Route::Gists | Route::Gist { .. } if forge::is_datacenter() => {
+                self.gl_elsewhere(&route, "Snippets")
+            }
             Route::Job { repo, id } if bitbucket => self.bb_step(repo, *id, cx),
             Route::Job { repo, id } => self.gl_job(repo, *id, cx),
             // Bitbucket's issues are gone; its numbers are pull requests'.
@@ -874,14 +890,16 @@ impl Hub {
         let chosen = self.choice("signin.forge", "github");
         let gitlab = chosen == "gitlab";
         let bitbucket = chosen == "bitbucket";
-        let host = {
-            let typed = self.field_text("signin.host");
-            forge::normalize_host(if typed.trim().is_empty() {
-                "gitlab.com"
-            } else {
-                &typed
-            })
-        };
+        let typed = self.field_text("signin.host");
+        let host = forge::normalize_host(if typed.trim().is_empty() {
+            "gitlab.com"
+        } else {
+            &typed
+        });
+        // Bitbucket at an address of its own is a Data Center.
+        let datacenter = bitbucket
+            && !typed.trim().is_empty()
+            && forge::normalize_host(&typed) != forge::BITBUCKET_HOST;
         let sign_in = Act::run(move |hub, _, cx| {
             let token = hub.field_text("token");
             let host = hub.field_text("signin.host");
@@ -896,7 +914,15 @@ impl Hub {
         });
         self.submits.insert("token".into(), sign_in.clone());
         self.submits.insert("signin.host".into(), sign_in.clone());
-        let (token_url, token_hint, picked_up, forge_name) = if bitbucket {
+        let (token_url, token_hint, picked_up, forge_name) = if datacenter {
+            let site = forge::Account::new(Forge::DataCenter, &host, "").web();
+            (
+                format!("{site}/plugins/servlet/access-tokens/manage"),
+                "BBDC-… or username:token",
+                "Make an HTTP access token with project and repository admin permissions. VisualHub also picks up BITBUCKET_TOKEN automatically when BITBUCKET_HOST names your Data Center.",
+                "Bitbucket",
+            )
+        } else if bitbucket {
             (
                 "https://id.atlassian.com/manage-profile/security/api-tokens".to_string(),
                 "ATATT… or email:ATATT…",
@@ -947,7 +973,17 @@ impl Hub {
             );
         } else {
             let input = self.secret_input("token", token_hint, cx).w_full();
-            let host_input = self.input("signin.host", "gitlab.com", cx).w_full();
+            let host_input = self
+                .input(
+                    "signin.host",
+                    if bitbucket {
+                        "bitbucket.org"
+                    } else {
+                        "gitlab.com"
+                    },
+                    cx,
+                )
+                .w_full();
             card = card
                 .child(widgets::chips(vec![
                     (
@@ -967,11 +1003,11 @@ impl Hub {
                     ),
                 ]))
                 .child(div().child(if bitbucket {
-                    format!("Sign in to Bitbucket Cloud with a token. {picked_up}")
+                    format!("Sign in to Bitbucket Cloud or a Bitbucket Data Center with a token. {picked_up}")
                 } else {
                     format!("Sign in with a personal access token. {picked_up}")
                 }))
-                .when(gitlab, |c| {
+                .when(gitlab || bitbucket, |c| {
                     c.child(
                         div()
                             .flex()
@@ -979,7 +1015,11 @@ impl Hub {
                             .gap_1()
                             .child(widgets::h3("Instance"))
                             .child(host_input)
-                            .child(widgets::faint("gitlab.com, or your own GitLab's address.")),
+                            .child(widgets::faint(if bitbucket {
+                                "Leave empty for Bitbucket Cloud, or give your Bitbucket Data Center's address."
+                            } else {
+                                "gitlab.com, or your own GitLab's address."
+                            })),
                     )
                 })
                 .child(
@@ -987,7 +1027,9 @@ impl Hub {
                         .flex()
                         .flex_col()
                         .gap_1()
-                        .child(widgets::h3(if bitbucket {
+                        .child(widgets::h3(if datacenter {
+                            "HTTP access token"
+                        } else if bitbucket {
                             "API token"
                         } else {
                             "Personal access token"
@@ -1037,8 +1079,10 @@ impl Hub {
                 .child(widgets::faint(format!(
                     "The token is stored in your user configuration folder and never \
                      leaves this machine except to talk to {}.",
-                    if gitlab {
+                    if gitlab || datacenter {
                         host.trim_start_matches("http://").to_string()
+                    } else if bitbucket {
+                        "api.bitbucket.org".to_string()
                     } else {
                         "api.github.com".to_string()
                     }

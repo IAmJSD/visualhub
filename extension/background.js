@@ -25,7 +25,6 @@ const ICONS = {
 const TITLES = {
   open: "Open in VisualHub",
   elsewhere: "VisualHub doesn't have this page",
-  datacenter: "VisualHub doesn't work with Bitbucket Data Center",
   unknown: "VisualHub can't open this page",
 };
 

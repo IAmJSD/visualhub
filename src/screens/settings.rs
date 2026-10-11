@@ -57,14 +57,45 @@ const GITLAB_SECTIONS: [(&str, &str); 9] = [
     ("updates", "Updates"),
 ];
 
+/// A Bitbucket Data Center account's sections: its administrator keeps
+/// the rest.
+const DATACENTER_SECTIONS: [(&str, &str); 7] = [
+    ("profile", "Profile"),
+    ("emails", "Email"),
+    ("ssh", "SSH keys"),
+    ("gpg", "GPG keys"),
+    ("session", "Session"),
+    ("browser", "Browser extension"),
+    ("updates", "Updates"),
+];
+
 impl Hub {
     pub fn settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let section = self.choice("settings.section", "profile");
         let gitlab = crate::forge::is_gitlab();
-        let bitbucket = crate::forge::is_bitbucket();
+        // Bitbucket Cloud: its account is an Atlassian one.
+        let bitbucket = crate::forge::is_bitbucket_cloud();
+        let datacenter = crate::forge::is_datacenter();
         let web = crate::forge::web();
         let body = match section.as_str() {
             "tokens" if gitlab => self.gl_tokens(cx),
+            "emails" if datacenter => {
+                let spec = ListSpec::new("/user/emails", |e| {
+                    Row::new(e.s("email"))
+                        .icon("mail", widgets::gray())
+                        .tag("Primary", widgets::green())
+                        .inline()
+                })
+                .empty("No email address.");
+                let list = self.list(&spec, cx);
+                widgets::col()
+                    .gap_3()
+                    .child(widgets::dim(
+                        "Your email address is your Bitbucket administrator's to change.",
+                    ))
+                    .child(list)
+                    .into_any_element()
+            }
             // Bitbucket shows the Atlassian account's emails, changed there.
             "emails" if bitbucket => {
                 let spec = ListSpec::new("/user/emails", |e| {
@@ -430,7 +461,9 @@ impl Hub {
                         .child(widgets::btn(
                             "tokens",
                             format!("Manage tokens on {}", crate::forge::name()),
-                            Act::Url(if bitbucket {
+                            Act::Url(if datacenter {
+                                format!("{web}/plugins/servlet/access-tokens/manage")
+                            } else if bitbucket {
                                 "https://id.atlassian.com/manage-profile/security/api-tokens".into()
                             } else if gitlab {
                                 format!("{web}/-/user_settings/personal_access_tokens")
@@ -520,7 +553,9 @@ impl Hub {
                                 .child(widgets::btn(
                                     "change-avatar",
                                     "Change picture",
-                                    Act::Url(if bitbucket {
+                                    Act::Url(if datacenter {
+                                        format!("{web}/account")
+                                    } else if bitbucket {
                                         ATLASSIAN_PROFILE.into()
                                     } else if gitlab {
                                         format!("{web}/-/user_settings/profile")
@@ -531,7 +566,13 @@ impl Hub {
                         ),
                     )
                     // GitLab's API doesn't let you edit your own profile.
-                    .child(div().pt_3().child(if bitbucket {
+                    .child(div().pt_3().child(if datacenter {
+                        widgets::primary(
+                            "edit-profile",
+                            "Edit profile on Bitbucket",
+                            Act::Url(format!("{web}/account")),
+                        )
+                    } else if bitbucket {
                         widgets::primary(
                             "edit-profile",
                             "Edit profile at Atlassian",
@@ -550,7 +591,9 @@ impl Hub {
             }
         };
         let mut nav = widgets::col().gap_1().w(gpui::px(200.0)).flex_none();
-        let sections: &[(&str, &str)] = if bitbucket {
+        let sections: &[(&str, &str)] = if datacenter {
+            &DATACENTER_SECTIONS
+        } else if bitbucket {
             &BITBUCKET_SECTIONS
         } else if gitlab {
             &GITLAB_SECTIONS

@@ -10,6 +10,7 @@ mod autoscroll;
 mod bitbucket;
 mod browsers;
 mod cli;
+mod datacenter;
 mod diff;
 mod forge;
 mod form;

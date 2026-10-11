@@ -1,6 +1,7 @@
 // Which pages VisualHub can open: the same answer as `route_for_url` in
-// src/hub.rs and `gitlab_route`/`bitbucket_route` in src/forge.rs. Keep
-// them in step, or the button lights up on pages the app turns away.
+// src/hub.rs and `gitlab_route`/`bitbucket_route`/`datacenter_route` in
+// src/forge.rs. Keep them in step, or the button lights up on pages the
+// app turns away.
 // And how to tell a self-hosted forge by its page.
 
 (function () {
@@ -143,6 +144,41 @@
     }
   }
 
+  // A Bitbucket Data Center: `/projects/KEY/repos/slug/…`, a person's
+  // `/users/name/repos/slug/…`, and the pages around them.
+  function datacenter(path) {
+    const parts = segments(path);
+    const [first, second, third] = parts;
+    if (parts.length === 0 || first === "dashboard" || first === "repos") return true;
+    if (first === "account" || first === "profile") return true;
+    if (first === "plugins") return second === "servlet" && third === "search";
+    let page;
+    if (first === "projects") {
+      if (parts.length === 2 || (parts.length === 3 && third === "repos")) return true;
+      if (third !== "repos" || parts.length < 4) return false;
+      page = parts.slice(4);
+    } else if (first === "users") {
+      if (parts.length === 2 || (parts.length === 3 && third === "repos")) return true;
+      if (third !== "repos" || parts.length < 4) return false;
+      page = parts.slice(4);
+    } else {
+      return false;
+    }
+    switch (page[0]) {
+      case undefined:
+      case "browse":
+      case "pull-requests":
+      case "commits":
+      case "branches":
+      case "tags":
+      case "settings":
+      case "forks":
+        return true;
+      default:
+        return false;
+    }
+  }
+
   const PUBLIC = [
     { root: "https://github.com", forge: "github" },
     { root: "https://gitlab.com", forge: "gitlab" },
@@ -154,7 +190,6 @@
   // Data Center). `state` is:
   //   "open"        VisualHub shows this page
   //   "elsewhere"   a forge's page VisualHub doesn't have
-  //   "datacenter"  Bitbucket Data Center, which VisualHub can't sign in to
   //   "unknown"     not a forge VisualHub knows of (yet)
   // and `forge` and `root` say which site it's on.
   function classify(url, sites) {
@@ -179,8 +214,8 @@
     if (!site) return { state: "unknown" };
     const root = site.root.replace(/\/+$/, "");
     const path = (parsed.origin + parsed.pathname).slice(root.length) + parsed.search + parsed.hash;
-    const page = { github, gitlab, bitbucket }[site.forge];
-    const state = !page ? "datacenter" : page(path) ? "open" : "elsewhere";
+    const page = { github, gitlab, bitbucket, datacenter }[site.forge];
+    const state = page && page(path) ? "open" : "elsewhere";
     return { state, forge: site.forge, root };
   }
 
@@ -204,7 +239,11 @@
       content('meta[name="application-name"]') === "Bitbucket" ||
       document.body?.classList.contains("bitbucket-theme")
     ) {
-      return { forge: "datacenter", root: location.origin };
+      // It may live under a path, which its search link's address shows.
+      const SEARCH = "/plugins/servlet/opensearch-descriptor";
+      const search = document.querySelector('link[rel="search"]')?.href || "";
+      const root = search.endsWith(SEARCH) ? search.slice(0, -SEARCH.length) : location.origin;
+      return { forge: "datacenter", root };
     }
     return null;
   }

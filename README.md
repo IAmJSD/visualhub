@@ -6,7 +6,8 @@ A native GitHub, GitLab and Bitbucket client written in Rust on
 [GPUI](https://github.com/IAmJSD/gpui) (the IAmJSD fork). Its widgets are
 adapted from [Schist](https://github.com/Infrawrench/schist)'s widget kit.
 VisualHub covers what you do on github.com, except editing code, and the same
-on gitlab.com or your own GitLab, and on Bitbucket Cloud.
+on gitlab.com or your own GitLab, and on Bitbucket Cloud or a Bitbucket Data
+Center.
 Files, diffs, logs and gists are read-only. Everything else can be done from
 the app.
 
@@ -98,6 +99,25 @@ either; those pages don't show, and the Home feed lists the open pull requests
 in your repositories instead. Bitbucket's API can't look people up by the
 name it shows, so VisualHub knows people by the nickname on their work.
 
+### Bitbucket Data Center
+
+Sign in to a Bitbucket Data Center (once Bitbucket Server) from the Bitbucket
+option by giving its address (`git.example.com`, or `example.com/bitbucket`
+for one served under a path) and an HTTP access token with project and
+repository admin permissions, or `username:token`. It gets the same screens as
+Bitbucket Cloud, over the instance's own REST API: repositories across your
+projects (a repository is `PROJECT/slug`, and your own are under `~YOU`),
+files, pull requests with their diffs, threaded and line comments, approvals
+and needs-work reviews, declining, reopening and merging (merge commit, squash
+or rebase), drafts, what blocks a merge in the instance's own words, build
+statuses as checks, branches, tags, comparisons, projects as organizations,
+people by their usernames, and search across your pull requests and
+repositories. Its repository settings cover details and visibility, the
+default branch, who has access, webhooks and deploy keys, and rename and
+delete; branch permissions and merge checks open on the site. Its builds run
+elsewhere and report statuses, so there are no Pipelines pages, nor snippets,
+issues (Jira's), stars or notifications.
+
 Some things GitHub only offers in the browser (billing, OAuth app approval,
 uploading avatars), as does GitLab (editing your profile). For those,
 VisualHub opens the right page on the site, and every screen has a button that
@@ -127,9 +147,9 @@ bitbucket.org by their addresses, and a self-hosted GitLab by its pages
 also gives a GitLab under a path its root): it looks at each other site
 once, in the browser, so it asks to read every site. A page on a GitLab
 VisualHub isn't signed in to opens the sign-in with that GitLab filled in,
-then the page. Bitbucket Data Center is recognised too, and its button
-says VisualHub doesn't sign in to it (it speaks Bitbucket Cloud's API
-only).
+then the page. A Bitbucket Data Center is recognised the same way (its
+`application-name`, and its search link, which gives one under a path its
+root), and opens in VisualHub's Bitbucket sign-in with its address.
 
 No browser takes an extension from outside its store in one click, so:
 
@@ -161,7 +181,8 @@ one you used last:
    logins (`glab config get token`)
 4. `BITBUCKET_TOKEN` (or `BITBUCKET_API_TOKEN`, with `BITBUCKET_EMAIL` if it's
    set), and `BITBUCKET_ACCESS_TOKEN` for a workspace or repository access
-   token
+   token; with `BITBUCKET_HOST` naming a Bitbucket Data Center, the token is
+   that instance's
 
 If none of those work, or to add another account, paste a personal access
 token. For GitHub the sign-in screen links to a classic-token page with every
@@ -231,7 +252,10 @@ all.
   GitHub's API paths; on a GitLab account the client sends them here, where
   each is matched to GitLab's API and the answer reshaped into GitHub's
   fields. The few GraphQL queries the screens send are answered the same way.
-  `src/bitbucket/` does the same from Bitbucket Cloud's API 2.0.
+  `src/bitbucket/` does the same from Bitbucket Cloud's API 2.0, and
+  `src/datacenter/` from a Bitbucket Data Center's REST API. Each has a live
+  test (`cargo test bitbucket_live -- --ignored`, and `datacenter_live` with
+  `VISUALHUB_DC_HOST`, `VISUALHUB_DC_TOKEN` and `VISUALHUB_DC_OTHER` set).
   `src/forge.rs` holds what the screens draw differently: each forge's words
   and links, and GitLab's nested project paths.
 - `src/link.rs`: `visualhub://` links. macOS hands them to the running app;

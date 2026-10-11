@@ -167,10 +167,10 @@ impl Route {
         match self {
             Route::Home => "Home".into(),
             Route::Notifications if crate::forge::is_gitlab() => "To-Do List".into(),
-            Route::Run { repo, id } if crate::forge::is_bitbucket() => {
+            Route::Run { repo, id } if crate::forge::is_bitbucket_cloud() => {
                 format!("{repo} pipeline #{id}")
             }
-            Route::Job { repo, id } if crate::forge::is_bitbucket() => {
+            Route::Job { repo, id } if crate::forge::is_bitbucket_cloud() => {
                 let (build, step) = crate::forge::job_step(*id);
                 format!("{repo} pipeline #{build} step {step}")
             }
@@ -227,6 +227,9 @@ impl Route {
         let w = crate::forge::web();
         if crate::forge::is_gitlab() {
             return crate::forge::gitlab_url(self, &w);
+        }
+        if crate::forge::is_datacenter() {
+            return crate::forge::datacenter_url(self, &w);
         }
         if crate::forge::is_bitbucket() {
             return crate::forge::bitbucket_url(self, &w);
@@ -294,6 +297,9 @@ impl Route {
 pub fn route_for_url(url: &str) -> Option<Route> {
     if crate::forge::is_gitlab() {
         return crate::forge::gitlab_route(url, &crate::forge::web());
+    }
+    if crate::forge::is_datacenter() {
+        return crate::forge::datacenter_route(url, &crate::forge::web());
     }
     if crate::forge::is_bitbucket() {
         return crate::forge::bitbucket_route(url, &crate::forge::web());
@@ -778,6 +784,19 @@ fn check_account(account: &Account) -> Result<(Value, String), String> {
                 _ => Err(format!("Bitbucket refused the token: {}", crate::api::failure(&reply))),
             }
         }
+        Forge::DataCenter => {
+            // The instance says who a token belongs to; a token it doesn't
+            // know reads as no one.
+            let me = client.json("GET", "/user", None).map_err(|e| {
+                format!(
+                    "{} refused the token: {e:#} Make an HTTP access token under your \
+                     account's Manage account ▸ HTTP access tokens, with project and \
+                     repository admin permissions, or paste username:token.",
+                    account.host_name()
+                )
+            })?;
+            Ok((me, String::new()))
+        }
     }
 }
 
@@ -1075,13 +1094,22 @@ impl Hub {
             self.toast("VisualHub doesn't know that site.", true, cx);
             return;
         };
-        // A GitLab is signed in to at its root, which may be under a path.
+        // A GitLab or a Bitbucket Data Center is signed in to at its root,
+        // which may be under a path.
         let root = handed.root.clone().unwrap_or(origin);
         let host = root.strip_prefix("https://").unwrap_or(&root).to_string();
+        // Data Center is Bitbucket at an address of its own.
+        let chip = if forge == Forge::DataCenter {
+            Forge::Bitbucket
+        } else {
+            forge
+        };
         self.choices
-            .insert("signin.forge".into(), forge.key().to_string());
-        if forge == Forge::GitLab {
-            self.set_field("signin.host", host.clone());
+            .insert("signin.forge".into(), chip.key().to_string());
+        match forge {
+            Forge::GitLab | Forge::DataCenter => self.set_field("signin.host", host.clone()),
+            Forge::Bitbucket => self.set_field("signin.host", ""),
+            Forge::GitHub => {}
         }
         self.pending_open = Some(handed);
         if matches!(self.auth, Auth::SignedIn) {
@@ -1165,6 +1193,17 @@ impl Hub {
         token: String,
         cx: &mut Context<Self>,
     ) {
+        // Bitbucket at an address other than bitbucket.org's is a Data
+        // Center.
+        let named = crate::forge::normalize_host(&host);
+        let forge = if forge == Forge::Bitbucket
+            && !host.trim().is_empty()
+            && named != crate::forge::BITBUCKET_HOST
+        {
+            Forge::DataCenter
+        } else {
+            forge
+        };
         let account = Account::new(
             forge,
             if forge == Forge::GitHub {
@@ -1677,7 +1716,7 @@ impl Hub {
     /// front. Bitbucket allows far fewer requests an hour, so it waits
     /// longer.
     fn tick(&mut self, cx: &mut Context<Self>) {
-        let every = if crate::forge::is_bitbucket() {
+        let every = if crate::forge::is_bitbucket_cloud() {
             180
         } else {
             60

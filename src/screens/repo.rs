@@ -238,7 +238,13 @@ fn gitlab_protection_form(repo: &str, branch: &str) -> Act {
 /// A source archive's address: a branch's (`tag` false) or a tag's.
 fn archive_url(repo: &str, git_ref: &str, format: &str, tag: bool) -> String {
     let web = crate::forge::web();
-    if crate::forge::is_bitbucket() {
+    if crate::forge::is_datacenter() {
+        format!(
+            "{web}{}/archive?at={}&format={format}",
+            crate::datacenter::repo_api(repo),
+            enc(git_ref)
+        )
+    } else if crate::forge::is_bitbucket() {
         format!("{web}/{repo}/get/{}.{format}", enc(git_ref))
     } else if crate::forge::is_gitlab() {
         let name = crate::forge::split_repo(repo).1;
@@ -422,13 +428,16 @@ impl Hub {
             ));
         }
         if crate::forge::is_bitbucket() {
-            items.extend([
-                TabItem::new(
+            // A Data Center's builds run elsewhere and report on commits.
+            if crate::forge::is_bitbucket_cloud() {
+                items.push(TabItem::new(
                     "Pipelines",
                     "play",
                     tab == RepoTab::Actions,
                     go(RepoTab::Actions),
-                ),
+                ));
+            }
+            items.extend([
                 TabItem::new(
                     "Branches",
                     "branch",
@@ -546,7 +555,19 @@ impl Hub {
         }
         let default_branch = info.s("default_branch");
         let body = match tab {
-            RepoTab::Actions if bitbucket => self.bb_pipelines(repo, &default_branch, cx),
+            RepoTab::Settings if crate::forge::is_datacenter() => {
+                self.dc_repo_settings(repo, &info, cx)
+            }
+            RepoTab::Actions if crate::forge::is_datacenter() => self.gl_elsewhere(
+                &Route::Repo {
+                    repo: repo.to_string(),
+                    tab,
+                },
+                "Pipelines (a Data Center's builds run elsewhere and report on commits)",
+            ),
+            RepoTab::Actions if crate::forge::is_bitbucket_cloud() => {
+                self.bb_pipelines(repo, &default_branch, cx)
+            }
             RepoTab::Settings if bitbucket => self.bb_repo_settings(repo, &info, cx),
             RepoTab::Issues
             | RepoTab::Releases
@@ -1755,7 +1776,17 @@ impl Hub {
         let is_markdown = lower.ends_with(".md") || lower.ends_with(".markdown");
         let gitlab = crate::forge::is_gitlab();
         let bitbucket = crate::forge::is_bitbucket();
-        let raw_url = if bitbucket {
+        let datacenter = crate::forge::is_datacenter();
+        let dc_raw = format!(
+            "{}{}/raw/{}?at={}",
+            crate::forge::web(),
+            crate::datacenter::repo_api(repo),
+            enc_path(path),
+            enc(git_ref)
+        );
+        let raw_url = if datacenter {
+            dc_raw.clone()
+        } else if bitbucket {
             format!("{}/{repo}/raw/{git_ref}/{path}", crate::forge::web())
         } else if gitlab {
             format!("{}/{repo}/-/raw/{git_ref}/{path}", crate::forge::web())
@@ -1764,7 +1795,9 @@ impl Hub {
         };
         // GitLab's API serves a private project's file to the token too.
         // Bitbucket's API serves a private repository's file to the token.
-        let image_url = if bitbucket {
+        let image_url = if datacenter {
+            dc_raw.clone()
+        } else if bitbucket {
             format!(
                 "{}/repositories/{repo}/src/{}/{}",
                 crate::forge::BITBUCKET_API,
@@ -1782,7 +1815,14 @@ impl Hub {
         } else {
             raw_url.clone()
         };
-        let blame_url = if bitbucket {
+        let blame_url = if datacenter {
+            format!(
+                "{}/browse/{}?at={}&blame=true",
+                crate::forge::datacenter_repo_web(repo, &crate::forge::web()),
+                enc_path(path),
+                enc(git_ref)
+            )
+        } else if bitbucket {
             format!("{}/{repo}/annotate/{git_ref}/{path}", crate::forge::web())
         } else if gitlab {
             format!("{}/{repo}/-/blame/{git_ref}/{path}", crate::forge::web())

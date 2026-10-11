@@ -21,10 +21,9 @@ impl Hub {
                  and Bitbucket pages VisualHub can show, and a click opens the page here.",
             ))
             .child(widgets::faint(
-                "It also lights up on self-hosted GitLab, which it recognises from the page, so it \
-                 asks to read every site. The check happens in the browser, once per site, and \
-                 nothing is sent anywhere. Bitbucket Data Center is recognised too, but VisualHub \
-                 only signs in to Bitbucket Cloud.",
+                "It also lights up on self-hosted GitLab and Bitbucket Data Center, which it \
+                 recognises from the page, so it asks to read every site. The check happens in \
+                 the browser, once per site, and nothing is sent anywhere.",
             ));
         let mut list = widgets::card();
         match &self.browsers {

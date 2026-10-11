@@ -1,9 +1,11 @@
-//! Which forge an account lives on -- GitHub, a GitLab instance, or
-//! Bitbucket Cloud -- and what the screens draw differently because of it.
+//! Which forge an account lives on -- GitHub, a GitLab instance, Bitbucket
+//! Cloud or a Bitbucket Data Center -- and what the screens draw
+//! differently because of it.
 //!
 //! The screens are written against GitHub's API and GitHub's words. On a
 //! GitLab or Bitbucket account the client translates those requests
-//! ([`crate::gitlab`], [`crate::bitbucket`]), so most pages need nothing
+//! ([`crate::gitlab`], [`crate::bitbucket`], [`crate::datacenter`]), so
+//! most pages need nothing
 //! from here. What they do need is what they
 //! draw themselves: what a pull request is called, where a page lives on
 //! the web, how a link reads back as a page, and where a repository's path
@@ -17,6 +19,8 @@ pub enum Forge {
     GitHub,
     GitLab,
     Bitbucket,
+    /// Bitbucket Data Center (once Bitbucket Server), on a host of its own.
+    DataCenter,
 }
 
 impl Forge {
@@ -24,7 +28,7 @@ impl Forge {
         match self {
             Forge::GitHub => "GitHub",
             Forge::GitLab => "GitLab",
-            Forge::Bitbucket => "Bitbucket",
+            Forge::Bitbucket | Forge::DataCenter => "Bitbucket",
         }
     }
 
@@ -34,6 +38,7 @@ impl Forge {
             Forge::GitHub => "github",
             Forge::GitLab => "gitlab",
             Forge::Bitbucket => "bitbucket",
+            Forge::DataCenter => "datacenter",
         }
     }
 
@@ -42,6 +47,7 @@ impl Forge {
             "github" => Some(Forge::GitHub),
             "gitlab" => Some(Forge::GitLab),
             "bitbucket" => Some(Forge::Bitbucket),
+            "datacenter" => Some(Forge::DataCenter),
             _ => None,
         }
     }
@@ -51,9 +57,10 @@ impl Forge {
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Account {
     pub forge: Forge,
-    /// `github.com`, `gitlab.com`, a self-managed GitLab's host, or
-    /// `bitbucket.org`. An `http://` prefix is kept for instances without
-    /// TLS.
+    /// `github.com`, `gitlab.com`, a self-managed GitLab's host,
+    /// `bitbucket.org`, or a Bitbucket Data Center's. An `http://` prefix
+    /// is kept for instances without TLS, and a path for one served under
+    /// it (`example.com/bitbucket`).
     pub host: String,
     pub token: String,
 }
@@ -86,6 +93,7 @@ impl Account {
             Forge::GitHub => "https://api.github.com".into(),
             Forge::GitLab => format!("{}/api/v4", self.web()),
             Forge::Bitbucket => BITBUCKET_API.into(),
+            Forge::DataCenter => format!("{}/rest/api/latest", self.web()),
         }
     }
 
@@ -150,8 +158,20 @@ pub fn is_gitlab() -> bool {
     current() == Forge::GitLab
 }
 
+/// Bitbucket, Cloud or Data Center: no issue tracker, reactions, labels or
+/// stars, and `#12` is a pull request.
 pub fn is_bitbucket() -> bool {
+    matches!(current(), Forge::Bitbucket | Forge::DataCenter)
+}
+
+/// Bitbucket Cloud alone: Pipelines, workspaces, snippets, an Atlassian
+/// account.
+pub fn is_bitbucket_cloud() -> bool {
     current() == Forge::Bitbucket
+}
+
+pub fn is_datacenter() -> bool {
+    current() == Forge::DataCenter
 }
 
 pub fn is_github() -> bool {
@@ -254,6 +274,7 @@ pub fn orgs_title() -> &'static str {
         Forge::GitHub => "Organizations",
         Forge::GitLab => "Groups",
         Forge::Bitbucket => "Workspaces",
+        Forge::DataCenter => "Projects",
     }
 }
 
@@ -270,7 +291,7 @@ pub fn cli() -> Option<&'static str> {
     match current() {
         Forge::GitHub => Some("gh"),
         Forge::GitLab => Some("glab"),
-        Forge::Bitbucket => None,
+        Forge::Bitbucket | Forge::DataCenter => None,
     }
 }
 
@@ -389,6 +410,11 @@ pub fn repo_of(url: &str) -> String {
     let rest = rest.split(['?', '#']).next().unwrap_or("");
     if let Some((repo, _)) = rest.split_once("/-/") {
         return repo.to_string();
+    }
+    if is_datacenter() {
+        if let Some(repo) = datacenter_repo_of(rest) {
+            return repo;
+        }
     }
     let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
     if parts.len() < 2 {
@@ -766,6 +792,194 @@ pub fn bitbucket_route(url: &str, w: &str) -> Option<Route> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// Pages on a Bitbucket Data Center.
+//
+// A repository is its project's key and its slug, `WID/widget`; a person's
+// own repositories are in the project `~NAME`, and their pages live under
+// `/users/name/` rather than `/projects/KEY/`.
+
+/// A repository's pages on the site at `w`: `…/projects/WID/repos/widget`
+/// or `…/users/ada/repos/notes`.
+pub fn datacenter_repo_web(repo: &str, w: &str) -> String {
+    let (key, slug) = repo.split_once('/').unwrap_or((repo, ""));
+    match key.strip_prefix('~') {
+        Some(user) => format!("{w}/users/{}/repos/{slug}", user.to_lowercase()),
+        None => format!("{w}/projects/{key}/repos/{slug}"),
+    }
+}
+
+/// The repository a path on the site names (`projects/WID/repos/widget/…`
+/// or `users/ada/repos/notes/…`), as `WID/widget` or `~ADA/notes`.
+fn datacenter_repo_of(rest: &str) -> Option<String> {
+    let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
+    match parts.as_slice() {
+        ["projects", key, "repos", slug, ..] => Some(format!("{key}/{slug}")),
+        ["users", user, "repos", slug, ..] => Some(format!("~{}/{slug}", user.to_uppercase())),
+        _ => None,
+    }
+}
+
+/// The page for `route` on the Bitbucket Data Center at `w`. Its issues
+/// are Jira's, so an issue's number is a pull request's.
+pub fn datacenter_url(route: &Route, w: &str) -> String {
+    let at = |git_ref: &str| format!("?at={}", crate::json::enc(git_ref));
+    match route {
+        Route::Home | Route::Notifications | Route::Issues | Route::Pulls => {
+            format!("{w}/dashboard")
+        }
+        Route::Repos => format!("{w}/repos"),
+        Route::Repo { repo, tab } => {
+            let base = datacenter_repo_web(repo, w);
+            let suffix = match tab {
+                RepoTab::Pulls | RepoTab::Issues => "/pull-requests",
+                RepoTab::Branches => "/branches",
+                RepoTab::Tags | RepoTab::Releases | RepoTab::Packages => "/tags",
+                RepoTab::Commits => "/commits",
+                RepoTab::Settings => "/settings",
+                RepoTab::Code
+                | RepoTab::Actions
+                | RepoTab::Insights
+                | RepoTab::Discussions
+                | RepoTab::Projects
+                | RepoTab::Security => "/browse",
+            };
+            format!("{base}{suffix}")
+        }
+        Route::Tree {
+            repo,
+            git_ref,
+            path,
+            ..
+        } => format!(
+            "{}/browse/{path}{}",
+            datacenter_repo_web(repo, w),
+            at(git_ref)
+        ),
+        Route::Issue { repo, number } | Route::Conflicts { repo, number } => format!(
+            "{}/pull-requests/{number}/overview",
+            datacenter_repo_web(repo, w)
+        ),
+        Route::Pull { repo, number, tab } => {
+            let suffix = match tab {
+                PullTab::Files => "diff",
+                PullTab::Commits => "commits",
+                PullTab::Conversation | PullTab::Checks => "overview",
+            };
+            format!(
+                "{}/pull-requests/{number}/{suffix}",
+                datacenter_repo_web(repo, w)
+            )
+        }
+        Route::Commit { repo, sha } => {
+            format!("{}/commits/{sha}", datacenter_repo_web(repo, w))
+        }
+        Route::Compare { repo, base, head } => format!(
+            "{}/compare/commits?sourceBranch={}&targetBranch={}",
+            datacenter_repo_web(repo, w),
+            crate::json::enc(&format!("refs/heads/{head}")),
+            crate::json::enc(&format!("refs/heads/{base}"))
+        ),
+        Route::Run { repo, .. } | Route::Job { repo, .. } | Route::Release { repo, .. } => {
+            format!("{}/browse", datacenter_repo_web(repo, w))
+        }
+        Route::Discussion { repo, .. } => format!("{}/browse", datacenter_repo_web(repo, w)),
+        Route::Org { login } | Route::Team { org: login, .. } => match login.strip_prefix('~') {
+            Some(user) => format!("{w}/users/{}", user.to_lowercase()),
+            None => format!("{w}/projects/{login}"),
+        },
+        Route::User { login } => format!("{w}/users/{login}"),
+        Route::NewRepo { .. } => format!("{w}/projects"),
+        Route::Search => format!("{w}/plugins/servlet/search"),
+        Route::Settings => format!("{w}/account"),
+        Route::Gists
+        | Route::NewGist
+        | Route::Gist { .. }
+        | Route::Projects
+        | Route::Project { .. }
+        | Route::Codespaces
+        | Route::Packages => w.to_string(),
+    }
+}
+
+/// The page a link on the Bitbucket Data Center at `w` points at, when
+/// the app has one.
+pub fn datacenter_route(url: &str, w: &str) -> Option<Route> {
+    let rest = url.strip_prefix(w)?;
+    if !(rest.is_empty() || rest.starts_with('/')) {
+        return None;
+    }
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let path = path.split('#').next().unwrap_or("");
+    let at = query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("at="))
+        .map(|r| {
+            let r = crate::gitlab::decode(r);
+            r.trim_start_matches("refs/heads/")
+                .trim_start_matches("refs/tags/")
+                .to_string()
+        });
+    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+    let num = |s: &str| s.parse::<u64>().ok();
+    let (repo, page): (String, &[&str]) = match parts.as_slice() {
+        [] | ["dashboard", ..] => return Some(Route::Home),
+        ["repos", ..] => return Some(Route::Repos),
+        ["account", ..] | ["profile", ..] => return Some(Route::Settings),
+        ["plugins", "servlet", "search", ..] => return Some(Route::Search),
+        ["projects", key] | ["projects", key, "repos"] => {
+            return Some(Route::Org {
+                login: key.to_string(),
+            })
+        }
+        ["projects", key, "repos", slug, page @ ..] => (format!("{key}/{slug}"), page),
+        ["users", user, "repos", slug, page @ ..] => {
+            (format!("~{}/{slug}", user.to_uppercase()), page)
+        }
+        ["users", user] | ["users", user, "repos"] => {
+            return Some(Route::User {
+                login: user.to_string(),
+            })
+        }
+        _ => return None,
+    };
+    let tab = |tab: RepoTab| Route::Repo {
+        repo: repo.clone(),
+        tab,
+    };
+    Some(match page {
+        [] | ["browse"] if at.is_none() => tab(RepoTab::Code),
+        ["browse", path @ ..] => Route::Tree {
+            repo: repo.clone(),
+            git_ref: at.unwrap_or_default(),
+            path: path.join("/"),
+            // The site doesn't say; a path with a dot in its last part is
+            // most likely a file.
+            file: path.last().is_some_and(|p| p.contains('.')),
+        },
+        ["pull-requests", n, rest @ ..] if num(n).is_some() => Route::Pull {
+            repo,
+            number: num(n)?,
+            tab: match rest.first().copied() {
+                Some("diff") => PullTab::Files,
+                Some("commits") => PullTab::Commits,
+                _ => PullTab::Conversation,
+            },
+        },
+        ["pull-requests", ..] => tab(RepoTab::Pulls),
+        ["commits", sha, ..] => Route::Commit {
+            repo,
+            sha: sha.to_string(),
+        },
+        ["commits"] => tab(RepoTab::Commits),
+        ["branches", ..] => tab(RepoTab::Branches),
+        ["tags", ..] => tab(RepoTab::Tags),
+        ["settings", ..] => tab(RepoTab::Settings),
+        ["forks", ..] => tab(RepoTab::Insights),
+        _ => return None,
+    })
+}
+
 /// GitLab names a release by its tag; the app's routes number them. The
 /// number is the tag's hash, kept within the integers JSON carries
 /// exactly, which the client turns back into the tag by looking.
@@ -782,6 +996,49 @@ pub fn release_id(tag: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn datacenter_pages_round_trip() {
+        let w = "https://git.example.com/bitbucket";
+        let pull = Route::Pull {
+            repo: "WID/widget".into(),
+            number: 3,
+            tab: PullTab::Files,
+        };
+        let url = datacenter_url(&pull, w);
+        assert_eq!(
+            url,
+            "https://git.example.com/bitbucket/projects/WID/repos/widget/pull-requests/3/diff"
+        );
+        assert_eq!(datacenter_route(&url, w), Some(pull));
+        let mine = Route::Repo {
+            repo: "~ADA/notes".into(),
+            tab: RepoTab::Code,
+        };
+        let url = datacenter_url(&mine, w);
+        assert_eq!(url, format!("{w}/users/ada/repos/notes/browse"));
+        assert_eq!(datacenter_route(&url, w), Some(mine));
+        assert_eq!(
+            datacenter_route(&format!("{w}/projects/WID/repos/widget/browse/src/main.rs?at=refs%2Fheads%2Ffeature%2Fx"), w),
+            Some(Route::Tree {
+                repo: "WID/widget".into(),
+                git_ref: "feature/x".into(),
+                path: "src/main.rs".into(),
+                file: true,
+            })
+        );
+        assert_eq!(
+            datacenter_route(&format!("{w}/projects/WID"), w),
+            Some(Route::Org {
+                login: "WID".into()
+            })
+        );
+        assert_eq!(
+            datacenter_route("https://elsewhere.com/projects/WID", w),
+            None
+        );
+        assert_eq!(datacenter_route(&format!("{w}/admin/users"), w), None);
+    }
 
     #[test]
     fn repository_paths_nest() {

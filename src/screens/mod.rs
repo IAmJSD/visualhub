@@ -5,6 +5,7 @@ pub mod bitbucket;
 pub mod common;
 pub mod conflicts;
 pub mod create;
+pub mod datacenter;
 pub mod discussions;
 pub mod extension;
 pub mod gists;

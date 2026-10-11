@@ -64,8 +64,18 @@ test("self-hosted GitLab", () => {
 });
 
 test("Bitbucket Data Center", () => {
-  const sites = [{ root: "https://bitbucket.example.com", forge: "datacenter" }];
-  assert.equal(state("https://bitbucket.example.com/projects/A/repos/b", sites), "datacenter");
+  const sites = [{ root: "https://git.example.com/bitbucket", forge: "datacenter" }];
+  const w = "https://git.example.com/bitbucket";
+  yes(`${w}/projects/WID/repos/widget`, sites);
+  yes(`${w}/projects/WID/repos/widget/browse/src/main.rs?at=refs%2Fheads%2Fmain`, sites);
+  yes(`${w}/projects/WID/repos/widget/pull-requests/3/diff`, sites);
+  yes(`${w}/users/ada/repos/notes/browse`, sites);
+  yes(`${w}/projects/WID`, sites);
+  yes(`${w}/dashboard`, sites);
+  assert.equal(state(`${w}/projects/WID/repos/widget/wiki`, sites), "elsewhere");
+  assert.equal(state(`${w}/admin/users`, sites), "elsewhere");
+  assert.equal(classify(`${w}/projects/WID/repos/widget`, sites).forge, "datacenter");
+  assert.equal(state("https://git.example.com/other/thing", sites), "unknown");
 });
 
 // `probe` reads the page it's run in: a stand-in document will do.
@@ -98,6 +108,13 @@ test("telling forges by their pages", () => {
     forge: "datacenter",
     root: "https://x.test",
   });
+  globalThis.document.querySelector = (selector) =>
+    selector === 'link[rel="search"]'
+      ? { href: "https://x.test/bitbucket/plugins/servlet/opensearch-descriptor" }
+      : selector.includes("application-name")
+        ? { getAttribute: () => "Bitbucket" }
+        : null;
+  assert.deepEqual(probe(), { forge: "datacenter", root: "https://x.test/bitbucket" });
   assert.equal(page({ meta: { "og:site_name": "Example" }, manifest: "https://x.test/manifest.json" }), null);
 });
 

@@ -230,7 +230,12 @@ impl Builder {
                 crate::json::enc(&path),
                 crate::json::enc(git_ref)
             ),
-            (None, Some(root)) => format!("{root}/{path}"),
+            // A root may carry a query (a Data Center's `?at=ref`), which
+            // goes after the path.
+            (None, Some(root)) => match root.split_once('?') {
+                Some((base, query)) => format!("{base}/{path}?{query}"),
+                None => format!("{root}/{path}"),
+            },
             (None, None) => path,
         }
     }
@@ -270,6 +275,20 @@ impl Hub {
             repo: self.route.repo().map(str::to_string),
             raw_root: match &self.route {
                 _ if crate::forge::is_gitlab() => None,
+                // A Data Center serves a repository's files to the token.
+                Route::Repo { repo, .. } if crate::forge::is_datacenter() => Some(format!(
+                    "{}{}/raw",
+                    crate::forge::web(),
+                    crate::datacenter::repo_api(repo)
+                )),
+                Route::Tree { repo, git_ref, .. } if crate::forge::is_datacenter() => {
+                    Some(format!(
+                        "{}{}/raw?at={}",
+                        crate::forge::web(),
+                        crate::datacenter::repo_api(repo),
+                        crate::json::enc(git_ref)
+                    ))
+                }
                 // Bitbucket's API serves a private repository's images to
                 // the token.
                 Route::Repo { repo, .. } if crate::forge::is_bitbucket() => Some(format!(
@@ -1332,6 +1351,10 @@ fn autolink(b: &mut Builder, text: &str, flags: Flags) {
                     Some(repo) if !digits.is_empty() && ends_word => {
                         let url = match (crate::forge::is_gitlab(), mark) {
                             // Bitbucket's numbers are pull requests'.
+                            _ if crate::forge::is_datacenter() => format!(
+                                "{}/pull-requests/{digits}/overview",
+                                crate::forge::datacenter_repo_web(repo, &web)
+                            ),
                             _ if crate::forge::is_bitbucket() => {
                                 format!("{web}/{repo}/pull-requests/{digits}")
                             }

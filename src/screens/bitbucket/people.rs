@@ -21,6 +21,8 @@ impl Hub {
             return self.bb_workspace(login, cx);
         }
         let is_me = user.s("login") == self.login();
+        // A Data Center lists anyone's own repositories.
+        let shows_repos = is_me || crate::forge::is_datacenter();
         let avatar = self.avatar_of(&user, 96.0, cx);
         let tab_key = format!("user.tab:{login}");
         let tab = self.choice(&tab_key, if is_me { "repos" } else { "pulls" });
@@ -30,20 +32,28 @@ impl Hub {
             tab == "pulls",
             Act::choose(&tab_key, "pulls"),
         )];
-        if is_me {
+        if shows_repos {
             tabs.insert(
                 0,
                 widgets::TabItem::new(
-                    "Your repositories",
+                    if is_me {
+                        "Your repositories"
+                    } else {
+                        "Repositories"
+                    },
                     "repo",
                     tab == "repos",
                     Act::choose(&tab_key, "repos"),
                 ),
             );
         }
-        let body = if tab == "repos" && is_me {
-            let spec =
-                ListSpec::new("/user/repos?sort=pushed", repo_row).empty("No repositories yet.");
+        let body = if tab == "repos" && shows_repos {
+            let path = if is_me && !crate::forge::is_datacenter() {
+                "/user/repos?sort=pushed".to_string()
+            } else {
+                format!("/users/{login}/repos")
+            };
+            let spec = ListSpec::new(path, repo_row).empty("No repositories yet.");
             self.list(&spec, cx)
         } else {
             let spec =
@@ -125,7 +135,14 @@ impl Hub {
                             .gap_1()
                             .flex_1()
                             .child(widgets::title(ws.s("name")))
-                            .child(widgets::dim(format!("{slug}  ·  workspace"))),
+                            .child(widgets::dim(format!(
+                                "{slug}  ·  {}",
+                                if crate::forge::is_datacenter() {
+                                    "project"
+                                } else {
+                                    "workspace"
+                                }
+                            ))),
                     )
                     .child(widgets::go_btn("ws-new-repo", "New repository", new_repo))
                     .child(
