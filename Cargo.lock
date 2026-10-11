@@ -6650,7 +6650,9 @@ name = "visualhub"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
  "base64 0.22.1",
+ "crc32fast",
  "crypto_box",
  "diffy",
  "emojis",

@@ -33,6 +33,10 @@ sha2 = "0.10"
 sha1_smol = "1"
 # Emoji by shortcode (":tada:"), as GitHub and GitLab name them.
 emojis = "0.9"
+# Pages handed over by visualhub:// links, from the thread that takes them.
+async-channel = "2"
+# The Firefox add-on is a zip, built here when no signed one is at hand.
+crc32fast = "1"
 
 [build-dependencies]
 # The Windows executable's icon; only used when building for Windows.

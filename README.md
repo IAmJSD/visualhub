@@ -113,6 +113,42 @@ opens it there.
 | `Ctrl+Enter` | Send the comment you're writing |
 | `Enter` / `Esc` | Submit / close a dialog; `Tab` moves between fields |
 
+### Browser extension
+
+Settings ▸ Browser extension lists the Chromium and Firefox browsers on the
+computer (Chrome, Edge, Brave, Arc, Dia, Vivaldi, Opera, Helium, Firefox,
+Zen, LibreWolf, Floorp and the rest are found by what they're built on, not
+by name) and installs VisualHub's toolbar button in any of them. The button
+is lit on a GitHub, GitLab or Bitbucket page VisualHub can show and grey
+everywhere else; a click opens the page in the app through a
+`visualhub://open?url=…` link. It knows github.com, gitlab.com and
+bitbucket.org by their addresses, and a self-hosted GitLab by its pages
+(`og:site_name`, and the web manifest at `<root>/-/manifest.json`, which
+also gives a GitLab under a path its root): it looks at each other site
+once, in the browser, so it asks to read every site. A page on a GitLab
+VisualHub isn't signed in to opens the sign-in with that GitLab filled in,
+then the page. Bitbucket Data Center is recognised too, and its button
+says VisualHub doesn't sign in to it (it speaks Bitbucket Cloud's API
+only).
+
+No browser takes an extension from outside its store in one click, so:
+
+- **Chromium browsers:** VisualHub writes the extension, unpacked, to
+  `browser-extension/chromium` in its config directory, copies that path
+  and opens the browser's extensions page. Turn on Developer mode, click
+  Load unpacked and paste the path. VisualHub keeps the folder up to date.
+- **Firefox browsers:** VisualHub opens the add-on in the browser, which
+  asks whether to add it. Release builds of Firefox only add signed
+  add-ons. A release signs `VisualHub-firefox.xpi` on addons.mozilla.org's
+  unlisted channel (not a store listing) when the `AMO_JWT_ISSUER` and
+  `AMO_JWT_SECRET` secrets are set, and VisualHub downloads it. Without
+  one, it builds an unsigned copy, which only browsers that allow unsigned
+  add-ons take.
+
+The extension's source is `extension/`; `node --test
+extension/supported.test.js` checks its idea of which pages VisualHub has
+against the app's, and `extension/icons.sh` redraws its icons.
+
 ## Signing in
 
 VisualHub signs in to every account it finds a working token for, and shows the
@@ -198,6 +234,10 @@ all.
   `src/bitbucket/` does the same from Bitbucket Cloud's API 2.0.
   `src/forge.rs` holds what the screens draw differently: each forge's words
   and links, and GitLab's nested project paths.
+- `src/link.rs`: `visualhub://` links. macOS hands them to the running app;
+  on Linux and Windows a second copy passes its link to the first over a
+  loopback socket and exits. `src/browsers.rs` finds the browsers and
+  installs the extension in them.
 - `src/hub.rs`: the single view. Pages call `fetch(path)`, which returns the
   cached value or starts a request and redraws when it arrives. Every click is
   an `Act`. A write is a `Req` that lists the cache prefixes it makes stale, so

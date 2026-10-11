@@ -17,5 +17,14 @@
     <key>LSMinimumSystemVersion</key><string>@MIN_MACOS@</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key><string>MIT licensed.</string>
+    <!-- visualhub://open?url=<a page>: how the browser extension hands
+         the app a page (src/link.rs). -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>com.infrawrench.visualhub</string>
+            <key>CFBundleURLSchemes</key><array><string>visualhub</string></array>
+        </dict>
+    </array>
 </dict>
 </plist>

@@ -864,6 +864,17 @@ pub struct Hub {
     refreshed: std::time::Instant,
     /// Whether the window is in front, where background refreshes happen.
     window_active: bool,
+    /// A page handed over from outside (the browser extension, a
+    /// `visualhub://` link, `VISUALHUB_OPEN`) before the accounts were
+    /// known, or while signing in to the site it's on, to show after.
+    pending_open: Option<crate::link::Handed>,
+    /// The browsers Settings ▸ Browser extension found, once it has looked.
+    pub browsers: Option<Vec<crate::browsers::Browser>>,
+    pub looking_for_browsers: bool,
+    /// The browser the extension is being put in, while that's under way.
+    pub extension_busy: Option<String>,
+    /// What installing the extension in a browser left to do, by its name.
+    pub extension_installed: Option<(String, crate::browsers::Installed)>,
 }
 
 impl Hub {
@@ -888,6 +899,21 @@ impl Hub {
                 .await;
             if this.update(cx, |hub, cx| hub.tick(cx)).is_err() {
                 break;
+            }
+        })
+        .detach();
+        // Pages handed over while the app runs; the window comes forward
+        // to show each.
+        cx.spawn_in(window, async move |this, cx| {
+            let pages = crate::link::receiver();
+            while let Ok(page) = pages.recv().await {
+                let shown = this.update_in(cx, |hub, window, cx| {
+                    window.activate_window();
+                    hub.open_from_outside(page, cx);
+                });
+                if shown.is_err() {
+                    break;
+                }
             }
         })
         .detach();
@@ -937,6 +963,11 @@ impl Hub {
             open: HashSet::new(),
             refreshed: std::time::Instant::now(),
             window_active: true,
+            pending_open: crate::link::initial().and_then(|link| crate::link::page(&link)),
+            browsers: None,
+            looking_for_browsers: false,
+            extension_busy: None,
+            extension_installed: None,
         };
         hub.discover(cx);
         hub.check_for_update_at_launch(cx);
@@ -979,13 +1010,20 @@ impl Hub {
                     hub.auth = Auth::SignedOut {
                         error: (!errors.is_empty()).then(|| errors.join(" ")),
                     };
+                    if let Some(handed) = hub.pending_open.take() {
+                        hub.no_account_for(handed, cx);
+                    }
                 } else {
-                    let open = std::env::var("VISUALHUB_OPEN").unwrap_or_default();
                     let last = api::last_account();
-                    let index = hub
-                        .accounts
-                        .iter()
-                        .position(|k| !open.is_empty() && open.starts_with(&k.account.web()))
+                    let for_open = hub
+                        .pending_open
+                        .as_ref()
+                        .and_then(|h| hub.account_for(&h.url));
+                    let unsigned = for_open
+                        .is_none()
+                        .then(|| hub.pending_open.take())
+                        .flatten();
+                    let index = for_open
                         .or_else(|| {
                             hub.accounts
                                 .iter()
@@ -993,12 +1031,118 @@ impl Hub {
                         })
                         .unwrap_or(0);
                     hub.switch_to(index, cx);
+                    // Coming back to an account (after adding another)
+                    // keeps its page; one handed over meanwhile is shown.
+                    hub.show_pending(cx);
+                    // A page on a site no account is for leads to signing
+                    // in there, over the account shown meanwhile.
+                    if let Some(handed) = unsigned {
+                        hub.no_account_for(handed, cx);
+                    }
+                    hub.refresh_extension(cx);
                 }
                 cx.notify();
             })
             .ok();
         })
         .detach();
+    }
+
+    /// The account whose pages `url` is on: the one showing when it is,
+    /// as there can be several on one forge.
+    fn account_for(&self, url: &str) -> Option<usize> {
+        let on = |k: &Known| {
+            let web = k.account.web();
+            url == web || url.starts_with(&format!("{web}/"))
+        };
+        self.accounts
+            .iter()
+            .position(|k| Some(&k.account) == self.current.as_ref() && on(k))
+            .or_else(|| self.accounts.iter().position(on))
+    }
+
+    /// A page on a site no account is signed in to: offer to sign in
+    /// there, and show the page after.
+    fn no_account_for(&mut self, handed: crate::link::Handed, cx: &mut Context<Self>) {
+        let origin = handed.url.split('/').take(3).collect::<Vec<_>>().join("/");
+        let forge = handed.forge.or(match origin.as_str() {
+            "https://github.com" => Some(Forge::GitHub),
+            "https://gitlab.com" => Some(Forge::GitLab),
+            "https://bitbucket.org" => Some(Forge::Bitbucket),
+            _ => None,
+        });
+        let Some(forge) = forge else {
+            self.toast("VisualHub doesn't know that site.", true, cx);
+            return;
+        };
+        // A GitLab is signed in to at its root, which may be under a path.
+        let root = handed.root.clone().unwrap_or(origin);
+        let host = root.strip_prefix("https://").unwrap_or(&root).to_string();
+        self.choices
+            .insert("signin.forge".into(), forge.key().to_string());
+        if forge == Forge::GitLab {
+            self.set_field("signin.host", host.clone());
+        }
+        self.pending_open = Some(handed);
+        if matches!(self.auth, Auth::SignedIn) {
+            self.add_account(cx);
+        }
+        self.toast(
+            format!("Sign in to {host} to open its pages in VisualHub."),
+            false,
+            cx,
+        );
+    }
+
+    /// Show the page that was waiting on signing in, if there is one.
+    fn show_pending(&mut self, cx: &mut Context<Self>) {
+        let Some(handed) = self.pending_open.take() else {
+            return;
+        };
+        match route_for_url(&handed.url) {
+            Some(route) => self.go(route, cx),
+            None => self.toast("VisualHub doesn't have that page.", true, cx),
+        }
+    }
+
+    /// Show a page handed over from outside the app: on the account it
+    /// belongs to, once the accounts are known, or after signing in to
+    /// its site.
+    pub fn open_from_outside(&mut self, handed: crate::link::Handed, cx: &mut Context<Self>) {
+        if matches!(self.auth, Auth::Checking) {
+            self.pending_open = Some(handed);
+            return;
+        }
+        let Some(index) = self.account_for(&handed.url) else {
+            self.no_account_for(handed, cx);
+            return;
+        };
+        self.switch_to(index, cx);
+        self.pending_open = Some(handed);
+        self.show_pending(cx);
+    }
+
+    /// The self-managed GitLab instances signed in to, which the browser
+    /// extension lights up on besides the public forges.
+    pub fn extension_hosts(&self) -> Vec<String> {
+        let mut webs: Vec<String> = self
+            .accounts
+            .iter()
+            .filter(|k| k.account.forge == Forge::GitLab && k.account.host != "gitlab.com")
+            .map(|k| k.account.web())
+            .collect();
+        webs.sort();
+        webs.dedup();
+        webs
+    }
+
+    /// Bring an extension installed by an older version, or for other
+    /// accounts, up to date.
+    fn refresh_extension(&mut self, cx: &mut Context<Self>) {
+        let webs = self.extension_hosts();
+        cx.background_executor()
+            .spawn(async move { crate::browsers::refresh_installed(&webs) })
+            .detach();
     }
 
     /// Add `known`, or update the account it already is.
@@ -1061,6 +1205,7 @@ impl Hub {
                         if let Some(index) = hub.accounts.iter().position(|k| k.account == account)
                         {
                             hub.switch_to(index, cx);
+                            hub.show_pending(cx);
                         }
                     }
                     Err(e) => hub.sign_in_failed(format!("{e:#}")),
@@ -1098,6 +1243,7 @@ impl Hub {
 
     pub fn cancel_adding(&mut self, cx: &mut Context<Self>) {
         self.adding = None;
+        self.pending_open = None;
         cx.notify();
     }
 
@@ -1132,11 +1278,13 @@ impl Hub {
             }
             None => {
                 self.recent = api::load_recent(&known.account, &known.me.s("login"));
-                // VISUALHUB_OPEN=<a page's URL> starts on that page, for
-                // screenshots and for working on one screen.
+                // A page asked for at launch (VISUALHUB_OPEN=<a page's
+                // URL>, for screenshots and working on one screen, or a
+                // visualhub:// link) starts there.
                 self.route = first
-                    .then(|| std::env::var("VISUALHUB_OPEN").ok())
+                    .then(|| self.pending_open.take())
                     .flatten()
+                    .map(|handed| handed.url)
                     .and_then(|url| route_for_url(&url))
                     .unwrap_or(Route::Home);
                 true

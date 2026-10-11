@@ -6,6 +6,7 @@ pub mod common;
 pub mod conflicts;
 pub mod create;
 pub mod discussions;
+pub mod extension;
 pub mod gists;
 pub mod gitlab;
 pub mod home;

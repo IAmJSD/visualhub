@@ -1,5 +1,6 @@
 //! Your account: profile, emails, keys, social accounts, blocked users,
-//! interaction limits, installed apps, the session, and updates.
+//! interaction limits, installed apps, the session, the browser
+//! extension, and updates.
 
 use super::common::user_row;
 use crate::form::{Field, FormSpec};
@@ -13,7 +14,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{div, AnyElement, Context, IntoElement as _, ParentElement as _, Styled as _};
 use serde_json::json;
 
-const SECTIONS: [(&str, &str); 11] = [
+const SECTIONS: [(&str, &str); 12] = [
     ("profile", "Public profile"),
     ("emails", "Emails"),
     ("ssh", "SSH keys"),
@@ -24,16 +25,18 @@ const SECTIONS: [(&str, &str); 11] = [
     ("limits", "Interaction limits"),
     ("apps", "Applications"),
     ("session", "Session"),
+    ("browser", "Browser extension"),
     ("updates", "Updates"),
 ];
 
 /// Bitbucket's account sections: the rest is the Atlassian account's.
-const BITBUCKET_SECTIONS: [(&str, &str); 6] = [
+const BITBUCKET_SECTIONS: [(&str, &str); 7] = [
     ("profile", "Profile"),
     ("emails", "Emails"),
     ("ssh", "SSH keys"),
     ("gpg", "GPG keys"),
     ("session", "Session"),
+    ("browser", "Browser extension"),
     ("updates", "Updates"),
 ];
 
@@ -42,7 +45,7 @@ const ATLASSIAN_PROFILE: &str = "https://id.atlassian.com/manage-profile/profile
 
 /// GitLab's account sections: no social accounts, blocks, interaction
 /// limits or apps to list, and its own access tokens.
-const GITLAB_SECTIONS: [(&str, &str); 8] = [
+const GITLAB_SECTIONS: [(&str, &str); 9] = [
     ("profile", "Profile"),
     ("emails", "Emails"),
     ("ssh", "SSH keys"),
@@ -50,6 +53,7 @@ const GITLAB_SECTIONS: [(&str, &str); 8] = [
     ("gpg", "GPG keys"),
     ("tokens", "Access tokens"),
     ("session", "Session"),
+    ("browser", "Browser extension"),
     ("updates", "Updates"),
 ];
 
@@ -95,6 +99,7 @@ impl Hub {
                     .child(list)
                     .into_any_element()
             }
+            "browser" => self.browser_extension(cx),
             "updates" => {
                 let at_launch = crate::update::check_at_launch();
                 widgets::col()

@@ -157,8 +157,48 @@ jobs:
           name: visualhub-windows-x86_64
           path: dist/*
 
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Test
+        run: node --test extension/supported.test.js
+
+      # Release builds of Firefox only add signed add-ons. Signing on
+      # addons.mozilla.org's unlisted channel is for self-distribution: it
+      # signs the file without listing it in the store. Without the AMO
+      # API key the release has no signed add-on, and the app builds an
+      # unsigned one, which only some Firefox builds accept.
+      - name: Sign the Firefox add-on
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          set -eo pipefail
+          mkdir -p dist
+          if [ -z "${AMO_JWT_ISSUER}" ]; then
+            echo "No AMO_JWT_ISSUER secret; the release will have no signed Firefox add-on."
+            exit 0
+          fi
+          ./extension/build.sh firefox "$RUNNER_TEMP/firefox"
+          npx --yes web-ext@8 sign --channel=unlisted \
+            --source-dir "$RUNNER_TEMP/firefox" --artifacts-dir "$RUNNER_TEMP/signed" \
+            --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET"
+          # The name src/browsers.rs looks for.
+          mv "$RUNNER_TEMP"/signed/*.xpi dist/VisualHub-firefox.xpi
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: visualhub-extension
+          path: dist/*
+          if-no-files-found: ignore
+
   publish:
-    needs: [macos, linux, windows]
+    needs: [macos, linux, windows, extension]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:

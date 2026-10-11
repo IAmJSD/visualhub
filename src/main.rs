@@ -8,6 +8,7 @@ mod api;
 mod assets;
 mod autoscroll;
 mod bitbucket;
+mod browsers;
 mod cli;
 mod diff;
 mod forge;
@@ -16,6 +17,7 @@ mod gitlab;
 mod highlight;
 mod hub;
 mod json;
+mod link;
 mod macos_menu;
 mod markdown;
 mod picker;
@@ -36,7 +38,20 @@ use gpui::{
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    // Linux and Windows start a copy for each visualhub:// link; when one
+    // is already running, it shows the page instead.
+    if let Some(page) = link::initial() {
+        if link::forward(&page) {
+            return;
+        }
+    }
+    link::listen();
     let app = Application::new().with_assets(assets::Assets);
+    app.on_open_urls(|urls| {
+        for url in urls {
+            link::deliver(&url);
+        }
+    });
     app.run(|cx: &mut App| {
         macos_menu::install(cx);
         let bounds = Bounds::centered(None, size(px(1400.0), px(900.0)), cx);

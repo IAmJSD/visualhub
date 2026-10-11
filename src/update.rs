@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Where releases are published.
+pub const RELEASES_REPO: &str = "iamjsd/visualhub";
 const RELEASES_API: &str = "https://api.github.com/repos/iamjsd/visualhub/releases/latest";
 pub const RELEASES_PAGE: &str = "https://github.com/iamjsd/visualhub/releases";
 

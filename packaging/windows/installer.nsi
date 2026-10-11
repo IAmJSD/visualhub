@@ -39,6 +39,12 @@ Section "VisualHub"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VisualHub" \
     "DisplayIcon" "$INSTDIR\visualhub.ico"
 
+  ; visualhub://open?url=<a page>, from the browser extension.
+  WriteRegStr HKLM "Software\Classes\visualhub" "" "URL:VisualHub"
+  WriteRegStr HKLM "Software\Classes\visualhub" "URL Protocol" ""
+  WriteRegStr HKLM "Software\Classes\visualhub\DefaultIcon" "" "$INSTDIR\visualhub.ico"
+  WriteRegStr HKLM "Software\Classes\visualhub\shell\open\command" "" '"$INSTDIR\visualhub.exe" "%1"'
+
   CreateShortcut "$SMPROGRAMS\VisualHub.lnk" "$INSTDIR\visualhub.exe" "" "$INSTDIR\visualhub.ico"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 SectionEnd
@@ -51,5 +57,6 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\VisualHub.lnk"
   RMDir "$INSTDIR"
   DeleteRegKey HKLM "Software\VisualHub"
+  DeleteRegKey HKLM "Software\Classes\visualhub"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VisualHub"
 SectionEnd
